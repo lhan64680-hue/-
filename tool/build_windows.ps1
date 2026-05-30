@@ -30,8 +30,13 @@ if ($context.HasFfmpeg) {
     Remove-Item env:FFMPEG_DEV_ROOT
 }
 
-Invoke-VcVarsCommand "cmake --preset $configurePreset"
-Invoke-VcVarsCommand "cmake --build --preset $buildPreset --config $Configuration"
+Push-Location $projectRoot
+try {
+    Invoke-VcVarsCommand "cmake --preset $configurePreset"
+    Invoke-VcVarsCommand "cmake --build --preset $buildPreset --config $Configuration"
+} finally {
+    Pop-Location
+}
 
 $version = Get-NextDistVersion -DistRoot (Join-Path $context.RepoRoot "dist")
 $distDir = Join-Path $context.RepoRoot "dist\$version"
@@ -42,16 +47,21 @@ $binaryCandidates = @(
     (Join-Path $buildDir "src\app\CineVault.exe")
 )
 
-$copied = $false
+$exePath = $null
 foreach ($candidate in $binaryCandidates) {
     if (Test-Path $candidate) {
-        Copy-Item $candidate -Destination $distDir -Force
-        $copied = $true
+        $exePath = $candidate
+        break
     }
 }
 
-if (-not $copied) {
+if ($null -eq $exePath) {
     throw "Build completed but CineVault.exe was not found."
 }
+
+Copy-Item $exePath -Destination $distDir -Force
+$deployedExe = Join-Path $distDir "CineVault.exe"
+$deployMode = if ($Configuration -ieq "Debug") { "--debug" } else { "--release" }
+Invoke-VcVarsCommand "`"$($context.WindeployQt)`" $deployMode --qmldir `"$projectRoot\src\ui\qml`" `"$deployedExe`""
 
 Write-Host $distDir

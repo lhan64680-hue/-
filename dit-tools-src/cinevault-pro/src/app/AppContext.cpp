@@ -1,5 +1,13 @@
 #include "app/AppContext.h"
 
+#if CINEVAULT_BUILD_MINIMAL_GUI
+#include "ui/viewmodels/MinimalImportWorkspaceViewModel.h"
+#include "ui/viewmodels/MinimalInspectorViewModel.h"
+#include "ui/viewmodels/MinimalJobTimelineViewModel.h"
+#include "ui/viewmodels/MinimalLibraryWorkspaceViewModel.h"
+#include "ui/viewmodels/MinimalShellViewModel.h"
+#include "ui/viewmodels/MinimalSourceRailViewModel.h"
+#else
 #include "application/ImportService.h"
 #include "application/JobService.h"
 #include "application/LibraryQueryService.h"
@@ -17,12 +25,27 @@
 #include "ui/viewmodels/LibraryWorkspaceViewModel.h"
 #include "ui/viewmodels/ShellViewModel.h"
 #include "ui/viewmodels/SourceRailViewModel.h"
+#endif
 
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 
 AppContext::AppContext(QObject *parent)
     : QObject(parent)
+#if CINEVAULT_BUILD_MINIMAL_GUI
+    , m_shellViewModel(new MinimalShellViewModel(this))
+    , m_sourceRailViewModel(new MinimalSourceRailViewModel(this))
+    , m_importWorkspaceViewModel(new MinimalImportWorkspaceViewModel(this))
+    , m_libraryWorkspaceViewModel(new MinimalLibraryWorkspaceViewModel(this))
+    , m_inspectorViewModel(new MinimalInspectorViewModel(m_sourceRailViewModel, m_libraryWorkspaceViewModel, this))
+    , m_jobTimelineViewModel(new MinimalJobTimelineViewModel(this))
+{
+    connect(m_shellViewModel, &MinimalShellViewModel::searchRequested, m_libraryWorkspaceViewModel, &MinimalLibraryWorkspaceViewModel::setSearchText);
+    connect(m_sourceRailViewModel, &MinimalSourceRailViewModel::sourceSelected, m_libraryWorkspaceViewModel, &MinimalLibraryWorkspaceViewModel::setSourceFilter);
+    connect(m_sourceRailViewModel, &MinimalSourceRailViewModel::sourceSelected, m_inspectorViewModel, &MinimalInspectorViewModel::showSource);
+    connect(m_libraryWorkspaceViewModel, &MinimalLibraryWorkspaceViewModel::assetSelected, m_inspectorViewModel, &MinimalInspectorViewModel::showAsset);
+}
+#else
     , m_databaseManager(new DatabaseManager(this))
     , m_searchEngine(new SearchEngine)
     , m_ffmpegAdapter(new FFmpegAdapter)
@@ -54,6 +77,7 @@ AppContext::AppContext(QObject *parent)
     connect(m_sourceRailViewModel, &SourceRailViewModel::sourceSelected, m_inspectorViewModel, &InspectorViewModel::showSource);
     connect(m_libraryWorkspaceViewModel, &LibraryWorkspaceViewModel::assetSelected, m_inspectorViewModel, &InspectorViewModel::showAsset);
 }
+#endif
 
 void AppContext::expose(QQmlApplicationEngine &engine)
 {

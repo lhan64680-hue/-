@@ -60,7 +60,7 @@ Rectangle {
                 Text {
                     Layout.alignment: Qt.AlignHCenter
                     horizontalAlignment: Text.AlignHCenter
-                    text: viewModel.summaryText
+                    text: shellVm.lastMessage.length > 0 ? shellVm.lastMessage : viewModel.summaryText
                     color: Theme.text
                     wrapMode: Text.Wrap
                 }

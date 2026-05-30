@@ -15,6 +15,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "QT_ROOT": "$env{QT_ROOT}",
         "FFMPEG_DEV_ROOT": "$env{FFMPEG_DEV_ROOT}",
+        "CINEVAULT_BUILD_MINIMAL_GUI": "ON",
         "CINEVAULT_ENABLE_FFMPEG": "OFF"
       }
     },
@@ -40,6 +41,7 @@
       "binaryDir": "${sourceDir}/build/windows-msvc-release-ffmpeg",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "CINEVAULT_BUILD_MINIMAL_GUI": "OFF",
         "CINEVAULT_ENABLE_FFMPEG": "ON"
       }
     },
@@ -49,6 +51,7 @@
       "binaryDir": "${sourceDir}/build/windows-msvc-debug-ffmpeg",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "CINEVAULT_BUILD_MINIMAL_GUI": "OFF",
         "CINEVAULT_ENABLE_FFMPEG": "ON"
       }
     }

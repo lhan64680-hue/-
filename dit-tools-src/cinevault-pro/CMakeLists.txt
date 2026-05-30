@@ -10,6 +10,7 @@ set(CMAKE_AUTOUIC ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
+option(CINEVAULT_BUILD_MINIMAL_GUI "Build the milestone A minimal GUI shell" ON)
 option(CINEVAULT_ENABLE_FFMPEG "Enable FFmpeg-backed media modules" OFF)
 set(QT_ROOT "" CACHE PATH "Qt 6 kit root directory")
 set(FFMPEG_DEV_ROOT "" CACHE PATH "FFmpeg development package root directory")
@@ -18,21 +19,28 @@ if(QT_ROOT AND EXISTS "${QT_ROOT}")
     list(APPEND CMAKE_PREFIX_PATH "${QT_ROOT}")
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS
+set(CINEVAULT_QT_COMPONENTS
     Core
     Gui
     Qml
     Quick
     QuickControls2
-    Sql
-    Concurrent
     Widgets
 )
+
+if(NOT CINEVAULT_BUILD_MINIMAL_GUI)
+    list(APPEND CINEVAULT_QT_COMPONENTS
+        Sql
+        Concurrent
+    )
+endif()
+
+find_package(Qt6 6.5 REQUIRED COMPONENTS ${CINEVAULT_QT_COMPONENTS})
 
 qt_standard_project_setup(REQUIRES 6.5)
 
 set(CINEVAULT_HAS_FFMPEG OFF)
-if(CINEVAULT_ENABLE_FFMPEG)
+if(CINEVAULT_ENABLE_FFMPEG AND NOT CINEVAULT_BUILD_MINIMAL_GUI)
     find_package(FFmpeg REQUIRED)
     set(CINEVAULT_HAS_FFMPEG ON)
 endif()
@@ -49,6 +57,31 @@ set(APP_SOURCES
     src/shared/Paths.cpp
     src/shared/Formatters.h
     src/shared/Formatters.cpp
+    src/ui/models/SourceRootListModel.h
+    src/ui/models/SourceRootListModel.cpp
+    src/ui/models/AssetListModel.h
+    src/ui/models/AssetListModel.cpp
+    src/ui/models/JobListModel.h
+    src/ui/models/JobListModel.cpp
+)
+
+if(CINEVAULT_BUILD_MINIMAL_GUI)
+    list(APPEND APP_SOURCES
+        src/ui/viewmodels/MinimalShellViewModel.h
+        src/ui/viewmodels/MinimalShellViewModel.cpp
+        src/ui/viewmodels/MinimalSourceRailViewModel.h
+        src/ui/viewmodels/MinimalSourceRailViewModel.cpp
+        src/ui/viewmodels/MinimalImportWorkspaceViewModel.h
+        src/ui/viewmodels/MinimalImportWorkspaceViewModel.cpp
+        src/ui/viewmodels/MinimalLibraryWorkspaceViewModel.h
+        src/ui/viewmodels/MinimalLibraryWorkspaceViewModel.cpp
+        src/ui/viewmodels/MinimalInspectorViewModel.h
+        src/ui/viewmodels/MinimalInspectorViewModel.cpp
+        src/ui/viewmodels/MinimalJobTimelineViewModel.h
+        src/ui/viewmodels/MinimalJobTimelineViewModel.cpp
+    )
+else()
+    list(APPEND APP_SOURCES
     src/infrastructure/config/AppSettings.h
     src/infrastructure/config/AppSettings.cpp
     src/infrastructure/logging/Logger.h
@@ -77,12 +110,6 @@ set(APP_SOURCES
     src/application/LibraryQueryService.cpp
     src/infrastructure/ffmpeg/FFmpegAdapter.h
     src/infrastructure/ffmpeg/FFmpegAdapter.cpp
-    src/ui/models/SourceRootListModel.h
-    src/ui/models/SourceRootListModel.cpp
-    src/ui/models/AssetListModel.h
-    src/ui/models/AssetListModel.cpp
-    src/ui/models/JobListModel.h
-    src/ui/models/JobListModel.cpp
     src/ui/viewmodels/ShellViewModel.h
     src/ui/viewmodels/ShellViewModel.cpp
     src/ui/viewmodels/SourceRailViewModel.h
@@ -95,7 +122,8 @@ set(APP_SOURCES
     src/ui/viewmodels/InspectorViewModel.cpp
     src/ui/viewmodels/JobTimelineViewModel.h
     src/ui/viewmodels/JobTimelineViewModel.cpp
-)
+    )
+endif()
 
 qt_add_executable(CineVault
     ${APP_SOURCES}
@@ -126,6 +154,7 @@ qt_add_qml_module(CineVault
 target_include_directories(CineVault PRIVATE src)
 
 target_compile_definitions(CineVault PRIVATE
+    CINEVAULT_BUILD_MINIMAL_GUI=$<IF:$<BOOL:${CINEVAULT_BUILD_MINIMAL_GUI}>,1,0>
     CINEVAULT_HAS_FFMPEG=$<IF:$<BOOL:${CINEVAULT_HAS_FFMPEG}>,1,0>
 )
 
@@ -135,10 +164,15 @@ target_link_libraries(CineVault PRIVATE
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
-    Qt6::Sql
-    Qt6::Concurrent
     Qt6::Widgets
 )
+
+if(NOT CINEVAULT_BUILD_MINIMAL_GUI)
+    target_link_libraries(CineVault PRIVATE
+        Qt6::Sql
+        Qt6::Concurrent
+    )
+endif()
 
 if(CINEVAULT_HAS_FFMPEG)
     target_link_libraries(CineVault PRIVATE
@@ -162,5 +196,3 @@ install(TARGETS CineVault
     BUNDLE DESTINATION .
     RUNTIME DESTINATION .
 )
-
-qt_finalize_executable(CineVault)

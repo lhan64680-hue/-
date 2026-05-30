@@ -5,15 +5,34 @@ function Get-CineVaultRepoRoot {
 function Get-VisualStudioInstallationPath {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path $vswhere)) {
-        throw "vswhere.exe was not found. Install Visual Studio 2022 Build Tools or newer."
+        $fallbackPaths = @(
+            "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools",
+            "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools"
+        )
+        foreach ($fallbackPath in $fallbackPaths) {
+            if (Test-Path (Join-Path $fallbackPath "VC\Auxiliary\Build\vcvars64.bat")) {
+                return $fallbackPath
+            }
+        }
+        throw "vswhere.exe was not found and no fallback Visual Studio Build Tools path was detected."
     }
 
     $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($installPath)) {
-        throw "No Visual Studio installation with MSVC C++ tools was found."
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($installPath)) {
+        return $installPath.Trim()
     }
 
-    return $installPath.Trim()
+    $fallbackPaths = @(
+        "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools"
+    )
+    foreach ($fallbackPath in $fallbackPaths) {
+        if (Test-Path (Join-Path $fallbackPath "VC\Auxiliary\Build\vcvars64.bat")) {
+            return $fallbackPath
+        }
+    }
+
+    throw "No Visual Studio installation with MSVC C++ tools was found."
 }
 
 function Get-VcVars64Path {
@@ -40,9 +59,13 @@ function Resolve-QtRoot {
         "C:\Qt\6.8.0\msvc2022_64",
         "C:\Qt\6.7.3\msvc2022_64",
         "C:\Qt\6.6.3\msvc2022_64",
+        "C:\Qt\6.6.3\msvc2019_64",
+        "C:\Qt\6.7.3\msvc2019_64",
         "G:\Qt\6.8.0\msvc2022_64",
         "G:\Qt\6.7.3\msvc2022_64",
-        "G:\Qt\6.6.3\msvc2022_64"
+        "G:\Qt\6.6.3\msvc2022_64",
+        "G:\Qt\6.6.3\msvc2019_64",
+        "G:\Qt\6.7.3\msvc2019_64"
     )
 
     foreach ($candidate in $candidates) {
@@ -56,6 +79,18 @@ function Resolve-QtRoot {
     }
 
     throw "Qt 6 MSVC kit was not found. Set QT_ROOT to a directory containing lib\cmake\Qt6\Qt6Config.cmake."
+}
+
+function Get-WindeployQtPath {
+    param([string]$QtRoot)
+
+    $resolvedQtRoot = Resolve-QtRoot -QtRoot $QtRoot
+    $windeployqt = Join-Path $resolvedQtRoot "bin\windeployqt.exe"
+    if (-not (Test-Path $windeployqt)) {
+        throw "windeployqt.exe was not found under $resolvedQtRoot\bin."
+    }
+
+    return $windeployqt
 }
 
 function Resolve-FfmpegDevRoot {
@@ -151,5 +186,6 @@ function Get-CineVaultBuildContext {
         QtRoot = $resolvedQtRoot
         FfmpegDevRoot = $resolvedFfmpegDevRoot
         HasFfmpeg = -not [string]::IsNullOrWhiteSpace($resolvedFfmpegDevRoot)
+        WindeployQt = (Get-WindeployQtPath -QtRoot $resolvedQtRoot)
     }
 }
