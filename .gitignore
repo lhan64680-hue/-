@@ -1,0 +1,15 @@
+backup/*
+!backup/.gitkeep
+dist/*
+!dist/.gitkeep
+dit-tools-src/cinevault-pro/build*/
+dit-tools-src/cinevault-pro/.qt/
+dit-tools-src/cinevault-pro/.qtc_clangd/
+dit-tools-src/cinevault-pro/CMakeUserPresets.json
+*.user
+*.obj
+*.pdb
+*.ilk
+*.log
+Thumbs.db
+Desktop.ini
