@@ -12,4 +12,5 @@ public:
     static QString statusColor(const QString &status);
     static QString jobStateLabel(JobState state);
     static QString workspaceLabel(WorkspaceId workspaceId);
+    static QString probeStatusLabel(ProbeStatus status);
 };

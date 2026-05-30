@@ -13,13 +13,23 @@ JobEngine::JobEngine(DatabaseManager *databaseManager, QObject *parent)
 
 qint64 JobEngine::createJob(JobType type, const QString &title, const QString &detail, qint64 sourceRootId)
 {
+    return appendJob(type, JobState::Running, title, detail, sourceRootId);
+}
+
+qint64 JobEngine::queueJob(JobType type, const QString &title, const QString &detail, qint64 sourceRootId)
+{
+    return appendJob(type, JobState::Pending, title, detail, sourceRootId);
+}
+
+qint64 JobEngine::appendJob(JobType type, JobState state, const QString &title, const QString &detail, qint64 sourceRootId)
+{
     Job job;
     job.id = m_nextId++;
     job.type = type;
-    job.state = JobState::Running;
+    job.state = state;
     job.title = title;
     job.detail = detail;
-    job.progress = 0;
+    job.progress = state == JobState::Pending ? 0 : 0;
     job.sourceRootId = sourceRootId;
     job.startedAt = QDateTime::currentDateTime();
     job.updatedAt = job.startedAt;

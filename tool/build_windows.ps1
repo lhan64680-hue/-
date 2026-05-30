@@ -1,39 +1,57 @@
 param(
     [string]$QtRoot = $env:QT_ROOT,
-    [string]$Generator = "Ninja",
-    [string]$Configuration = "Release"
+    [string]$FfmpegDevRoot = $env:FFMPEG_DEV_ROOT,
+    [string]$Configuration = "Release",
+    [switch]$EnableFfmpeg
 )
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+. "$PSScriptRoot\windows_toolchain.ps1"
 . "$PSScriptRoot\version_helpers.ps1"
 
-$ProjectRoot = Join-Path $RepoRoot "dit-tools-src\cinevault-pro"
-$BuildDir = Join-Path $ProjectRoot "build\$Configuration"
+$context = Get-CineVaultBuildContext -QtRoot $QtRoot -FfmpegDevRoot $FfmpegDevRoot -RequireFfmpeg:$EnableFfmpeg
+$projectRoot = Join-Path $context.RepoRoot "dit-tools-src\cinevault-pro"
 
-if (-not (Test-Path $QtRoot)) {
-    throw "未找到 Qt 根目录，请设置 QT_ROOT 环境变量。"
+$isDebug = $Configuration -ieq "Debug"
+$configurePreset = if ($EnableFfmpeg) {
+    if ($isDebug) { "windows-msvc-debug-ffmpeg" } else { "windows-msvc-release-ffmpeg" }
+} else {
+    if ($isDebug) { "windows-msvc-debug" } else { "windows-msvc-release" }
+}
+$buildPreset = $configurePreset
+$buildDirName = $configurePreset
+$buildDir = Join-Path $projectRoot "build\$buildDirName"
+
+$env:QT_ROOT = $context.QtRoot
+if ($context.HasFfmpeg) {
+    $env:FFMPEG_DEV_ROOT = $context.FfmpegDevRoot
+} elseif (Test-Path env:FFMPEG_DEV_ROOT) {
+    Remove-Item env:FFMPEG_DEV_ROOT
 }
 
-New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
+Invoke-VcVarsCommand "cmake --preset $configurePreset"
+Invoke-VcVarsCommand "cmake --build --preset $buildPreset --config $Configuration"
 
-$version = Get-NextDistVersion -DistRoot (Join-Path $RepoRoot "dist")
-$distDir = Join-Path $RepoRoot "dist\$version"
+$version = Get-NextDistVersion -DistRoot (Join-Path $context.RepoRoot "dist")
+$distDir = Join-Path $context.RepoRoot "dist\$version"
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 
-cmake -S $ProjectRoot -B $BuildDir -G $Generator -DCMAKE_BUILD_TYPE=$Configuration -DQT_ROOT="$QtRoot"
-cmake --build $BuildDir --config $Configuration
-
 $binaryCandidates = @(
-    (Join-Path $BuildDir "src\app\CineVault.exe"),
-    (Join-Path $BuildDir "CineVault.exe")
+    (Join-Path $buildDir "CineVault.exe"),
+    (Join-Path $buildDir "src\app\CineVault.exe")
 )
 
+$copied = $false
 foreach ($candidate in $binaryCandidates) {
     if (Test-Path $candidate) {
         Copy-Item $candidate -Destination $distDir -Force
+        $copied = $true
     }
+}
+
+if (-not $copied) {
+    throw "Build completed but CineVault.exe was not found."
 }
 
 Write-Host $distDir

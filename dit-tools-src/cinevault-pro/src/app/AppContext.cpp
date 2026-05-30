@@ -4,10 +4,13 @@
 #include "application/JobService.h"
 #include "application/LibraryQueryService.h"
 #include "application/ProjectService.h"
+#include "core/media/MediaProbeEngine.h"
 #include "core/jobs/JobEngine.h"
 #include "core/scan/ScanEngine.h"
 #include "core/search/SearchEngine.h"
+#include "core/thumbnail/ThumbnailEngine.h"
 #include "infrastructure/db/DatabaseManager.h"
+#include "infrastructure/ffmpeg/FFmpegAdapter.h"
 #include "ui/viewmodels/ImportWorkspaceViewModel.h"
 #include "ui/viewmodels/InspectorViewModel.h"
 #include "ui/viewmodels/JobTimelineViewModel.h"
@@ -22,8 +25,11 @@ AppContext::AppContext(QObject *parent)
     : QObject(parent)
     , m_databaseManager(new DatabaseManager(this))
     , m_searchEngine(new SearchEngine)
+    , m_ffmpegAdapter(new FFmpegAdapter)
     , m_jobEngine(new JobEngine(m_databaseManager, this))
-    , m_scanEngine(new ScanEngine(m_databaseManager, m_jobEngine, this))
+    , m_mediaProbeEngine(new MediaProbeEngine(m_ffmpegAdapter, this))
+    , m_thumbnailEngine(new ThumbnailEngine(m_ffmpegAdapter, this))
+    , m_scanEngine(new ScanEngine(m_databaseManager, m_jobEngine, m_mediaProbeEngine, m_thumbnailEngine, this))
     , m_projectService(new ProjectService(m_databaseManager, &m_settings, this))
     , m_jobService(new JobService(m_jobEngine, this))
     , m_importService(new ImportService(m_databaseManager, m_jobService, m_scanEngine, this))

@@ -18,6 +18,7 @@ enum class JobType : qint32 {
     Scan = 0,
     Metadata,
     Thumbnail,
+    Preview,
     Report,
     Export
 };
@@ -43,4 +44,19 @@ enum class SelectionKind : qint32 {
     SourceRoot,
     Folder,
     Asset
+};
+
+enum class ProbeStatus : qint32 {
+    Pending = 0,
+    Success,
+    Unsupported,
+    Unavailable,
+    Failed
+};
+
+enum class MediaType : qint32 {
+    Unknown = 0,
+    Video,
+    Audio,
+    Image
 };

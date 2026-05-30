@@ -1,0 +1,17 @@
+format = "manual-v1"
+
+[windows]
+visual_studio = "Microsoft Visual Studio 2022 Build Tools or later"
+windows_sdk = "10.0.22621.0 or later"
+cmake = "4.2.3"
+ninja = "1.12.x"
+qt = "6.5+ MSVC 64-bit kit"
+ffmpeg_dev_package = "Required for stage 4 media modules; CLI-only package is insufficient"
+
+[environment]
+qt_root = "Set QT_ROOT to the Qt 6 MSVC kit root containing lib/cmake/Qt6/Qt6Config.cmake"
+ffmpeg_dev_root = "Set FFMPEG_DEV_ROOT to a development package root containing include, lib, and bin"
+
+[notes]
+dependency_management = "Manual lock for current phase; no auto-download"
+ffmpeg_runtime_reference = "Existing G:\\data\\app\\DIT\\ffmpeg is runtime CLI only"

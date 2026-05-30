@@ -1,5 +1,7 @@
 #include "shared/Formatters.h"
 
+#include <QStringList>
+
 QString Formatters::formatBytes(qint64 bytes)
 {
     static const QStringList units = {QStringLiteral("B"), QStringLiteral("KB"), QStringLiteral("MB"), QStringLiteral("GB"), QStringLiteral("TB")};
@@ -70,4 +72,16 @@ QString Formatters::workspaceLabel(WorkspaceId workspaceId)
     case WorkspaceId::Jobs: return QStringLiteral("任务");
     }
     return QStringLiteral("导入");
+}
+
+QString Formatters::probeStatusLabel(ProbeStatus status)
+{
+    switch (status) {
+    case ProbeStatus::Pending: return QStringLiteral("等待中");
+    case ProbeStatus::Success: return QStringLiteral("已完成");
+    case ProbeStatus::Unsupported: return QStringLiteral("格式暂不支持");
+    case ProbeStatus::Unavailable: return QStringLiteral("未启用 FFmpeg");
+    case ProbeStatus::Failed: return QStringLiteral("执行失败");
+    }
+    return QStringLiteral("未知");
 }

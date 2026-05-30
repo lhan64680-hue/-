@@ -6,12 +6,14 @@
 
 class DatabaseManager;
 class JobEngine;
+class MediaProbeEngine;
+class ThumbnailEngine;
 
 class ScanEngine : public QObject {
     Q_OBJECT
 
 public:
-    explicit ScanEngine(DatabaseManager *databaseManager, JobEngine *jobEngine, QObject *parent = nullptr);
+    explicit ScanEngine(DatabaseManager *databaseManager, JobEngine *jobEngine, MediaProbeEngine *mediaProbeEngine, ThumbnailEngine *thumbnailEngine, QObject *parent = nullptr);
 
     void startScan(const SourceRoot &sourceRoot, qint64 jobId);
 
@@ -25,4 +27,6 @@ private:
 
     DatabaseManager *m_databaseManager = nullptr;
     JobEngine *m_jobEngine = nullptr;
+    MediaProbeEngine *m_mediaProbeEngine = nullptr;
+    ThumbnailEngine *m_thumbnailEngine = nullptr;
 };

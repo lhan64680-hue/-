@@ -10,7 +10,11 @@ set(CMAKE_AUTOUIC ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-if(DEFINED QT_ROOT AND EXISTS "${QT_ROOT}")
+option(CINEVAULT_ENABLE_FFMPEG "Enable FFmpeg-backed media modules" OFF)
+set(QT_ROOT "" CACHE PATH "Qt 6 kit root directory")
+set(FFMPEG_DEV_ROOT "" CACHE PATH "FFmpeg development package root directory")
+
+if(QT_ROOT AND EXISTS "${QT_ROOT}")
     list(APPEND CMAKE_PREFIX_PATH "${QT_ROOT}")
 endif()
 
@@ -26,6 +30,12 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
 )
 
 qt_standard_project_setup(REQUIRES 6.5)
+
+set(CINEVAULT_HAS_FFMPEG OFF)
+if(CINEVAULT_ENABLE_FFMPEG)
+    find_package(FFmpeg REQUIRED)
+    set(CINEVAULT_HAS_FFMPEG ON)
+endif()
 
 set(APP_SOURCES
     src/app/main.cpp
@@ -49,10 +59,14 @@ set(APP_SOURCES
     src/core/search/SearchEngine.cpp
     src/core/scan/FileTypeService.h
     src/core/scan/FileTypeService.cpp
+    src/core/media/MediaProbeEngine.h
+    src/core/media/MediaProbeEngine.cpp
     src/core/jobs/JobEngine.h
     src/core/jobs/JobEngine.cpp
     src/core/scan/ScanEngine.h
     src/core/scan/ScanEngine.cpp
+    src/core/thumbnail/ThumbnailEngine.h
+    src/core/thumbnail/ThumbnailEngine.cpp
     src/application/ProjectService.h
     src/application/ProjectService.cpp
     src/application/JobService.h
@@ -61,6 +75,8 @@ set(APP_SOURCES
     src/application/ImportService.cpp
     src/application/LibraryQueryService.h
     src/application/LibraryQueryService.cpp
+    src/infrastructure/ffmpeg/FFmpegAdapter.h
+    src/infrastructure/ffmpeg/FFmpegAdapter.cpp
     src/ui/models/SourceRootListModel.h
     src/ui/models/SourceRootListModel.cpp
     src/ui/models/AssetListModel.h
@@ -109,6 +125,10 @@ qt_add_qml_module(CineVault
 
 target_include_directories(CineVault PRIVATE src)
 
+target_compile_definitions(CineVault PRIVATE
+    CINEVAULT_HAS_FFMPEG=$<IF:$<BOOL:${CINEVAULT_HAS_FFMPEG}>,1,0>
+)
+
 target_link_libraries(CineVault PRIVATE
     Qt6::Core
     Qt6::Gui
@@ -119,6 +139,15 @@ target_link_libraries(CineVault PRIVATE
     Qt6::Concurrent
     Qt6::Widgets
 )
+
+if(CINEVAULT_HAS_FFMPEG)
+    target_link_libraries(CineVault PRIVATE
+        FFmpeg::avformat
+        FFmpeg::avcodec
+        FFmpeg::avutil
+        FFmpeg::swscale
+    )
+endif()
 
 if(BUILD_TESTING)
     enable_testing()

@@ -7,8 +7,11 @@
 class QQmlApplicationEngine;
 class DatabaseManager;
 class SearchEngine;
+class FFmpegAdapter;
 class JobEngine;
+class MediaProbeEngine;
 class ScanEngine;
+class ThumbnailEngine;
 class ProjectService;
 class JobService;
 class ImportService;
@@ -32,8 +35,11 @@ private:
     AppSettings m_settings;
     DatabaseManager *m_databaseManager = nullptr;
     SearchEngine *m_searchEngine = nullptr;
+    FFmpegAdapter *m_ffmpegAdapter = nullptr;
     JobEngine *m_jobEngine = nullptr;
+    MediaProbeEngine *m_mediaProbeEngine = nullptr;
     ScanEngine *m_scanEngine = nullptr;
+    ThumbnailEngine *m_thumbnailEngine = nullptr;
     ProjectService *m_projectService = nullptr;
     JobService *m_jobService = nullptr;
     ImportService *m_importService = nullptr;

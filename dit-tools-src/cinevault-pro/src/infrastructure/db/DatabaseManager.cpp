@@ -56,6 +56,7 @@ void DatabaseManager::closeProjectDatabase()
 {
     if (!QSqlDatabase::contains(m_mainConnectionName)) {
         m_databaseFilePath.clear();
+        m_schemaVersion = 0;
         return;
     }
 
@@ -65,6 +66,7 @@ void DatabaseManager::closeProjectDatabase()
     }
     QSqlDatabase::removeDatabase(m_mainConnectionName);
     m_databaseFilePath.clear();
+    m_schemaVersion = 0;
 }
 
 bool DatabaseManager::hasOpenProject() const
@@ -75,6 +77,11 @@ bool DatabaseManager::hasOpenProject() const
 QString DatabaseManager::databaseFilePath() const
 {
     return m_databaseFilePath;
+}
+
+int DatabaseManager::schemaVersion() const
+{
+    return m_schemaVersion;
 }
 
 QSqlDatabase DatabaseManager::database() const
@@ -106,7 +113,32 @@ void DatabaseManager::closeThreadConnection(const QString &connectionName) const
     QSqlDatabase::removeDatabase(connectionName);
 }
 
-bool DatabaseManager::initializeSchema(QSqlDatabase &db, QString *errorMessage) const
+bool DatabaseManager::initializeSchema(QSqlDatabase &db, QString *errorMessage)
+{
+    if (!createBaseSchema(db, errorMessage)) {
+        return false;
+    }
+
+    auto version = currentSchemaVersion(db);
+    if (version < 1) {
+        version = 1;
+        if (!setSchemaVersion(db, version, errorMessage)) {
+            return false;
+        }
+    }
+
+    if (version < 2) {
+        if (!migrateToVersion2(db, errorMessage)) {
+            return false;
+        }
+        version = 2;
+    }
+
+    m_schemaVersion = version;
+    return true;
+}
+
+bool DatabaseManager::createBaseSchema(QSqlDatabase &db, QString *errorMessage) const
 {
     const QStringList statements = {
         QStringLiteral("PRAGMA journal_mode=WAL;"),
@@ -180,4 +212,82 @@ bool DatabaseManager::initializeSchema(QSqlDatabase &db, QString *errorMessage) 
     };
 
     return executeBatch(db, statements, errorMessage);
+}
+
+bool DatabaseManager::migrateToVersion2(QSqlDatabase &db, QString *errorMessage) const
+{
+    const QStringList statements = {
+        QStringLiteral("CREATE TABLE IF NOT EXISTS media_metadata ("
+                       "asset_id INTEGER PRIMARY KEY,"
+                       "probe_status INTEGER NOT NULL DEFAULT 0,"
+                       "media_type INTEGER NOT NULL DEFAULT 0,"
+                       "container TEXT,"
+                       "duration_ms INTEGER NOT NULL DEFAULT 0,"
+                       "bit_rate INTEGER NOT NULL DEFAULT 0,"
+                       "raw_json TEXT,"
+                       "error_message TEXT,"
+                       "updated_at TEXT NOT NULL,"
+                       "FOREIGN KEY(asset_id) REFERENCES asset_file(id) ON DELETE CASCADE"
+                       ");"),
+        QStringLiteral("CREATE TABLE IF NOT EXISTS media_stream ("
+                       "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                       "asset_id INTEGER NOT NULL,"
+                       "stream_index INTEGER NOT NULL,"
+                       "stream_kind TEXT NOT NULL,"
+                       "codec TEXT,"
+                       "bit_rate INTEGER NOT NULL DEFAULT 0,"
+                       "width INTEGER NOT NULL DEFAULT 0,"
+                       "height INTEGER NOT NULL DEFAULT 0,"
+                       "channels INTEGER NOT NULL DEFAULT 0,"
+                       "sample_rate INTEGER NOT NULL DEFAULT 0,"
+                       "FOREIGN KEY(asset_id) REFERENCES media_metadata(asset_id) ON DELETE CASCADE"
+                       ");"),
+        QStringLiteral("CREATE TABLE IF NOT EXISTS thumbnail ("
+                       "asset_id INTEGER PRIMARY KEY,"
+                       "status INTEGER NOT NULL DEFAULT 0,"
+                       "image_path TEXT,"
+                       "updated_at TEXT NOT NULL,"
+                       "error_message TEXT,"
+                       "FOREIGN KEY(asset_id) REFERENCES asset_file(id) ON DELETE CASCADE"
+                       ");"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_media_stream_asset_id ON media_stream(asset_id);"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_media_metadata_probe_status ON media_metadata(probe_status);")
+    };
+
+    if (!executeBatch(db, statements, errorMessage)) {
+        return false;
+    }
+
+    return setSchemaVersion(db, 2, errorMessage);
+}
+
+int DatabaseManager::currentSchemaVersion(QSqlDatabase &db) const
+{
+    QSqlQuery query(db);
+    if (!query.exec(QStringLiteral("SELECT version FROM schema_version LIMIT 1"))) {
+        return 0;
+    }
+    return query.next() ? query.value(0).toInt() : 0;
+}
+
+bool DatabaseManager::setSchemaVersion(QSqlDatabase &db, int version, QString *errorMessage) const
+{
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("DELETE FROM schema_version"));
+    if (!query.exec()) {
+        if (errorMessage) {
+            *errorMessage = query.lastError().text();
+        }
+        return false;
+    }
+
+    query.prepare(QStringLiteral("INSERT INTO schema_version(version) VALUES (?)"));
+    query.addBindValue(version);
+    if (!query.exec()) {
+        if (errorMessage) {
+            *errorMessage = query.lastError().text();
+        }
+        return false;
+    }
+    return true;
 }

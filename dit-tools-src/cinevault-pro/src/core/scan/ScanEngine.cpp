@@ -1,7 +1,9 @@
 #include "core/scan/ScanEngine.h"
 
 #include "core/jobs/JobEngine.h"
+#include "core/media/MediaProbeEngine.h"
 #include "core/scan/FileTypeService.h"
+#include "core/thumbnail/ThumbnailEngine.h"
 #include "infrastructure/db/DatabaseManager.h"
 
 #include <QtConcurrent>
@@ -15,6 +17,9 @@
 #include <QStringList>
 #include <QThread>
 
+#include <algorithm>
+#include <chrono>
+#include <stdexcept>
 #include <filesystem>
 
 namespace {
@@ -43,10 +48,12 @@ void bindSourceStats(QSqlQuery &query, const ScanBatch &batch, const QString &st
 }
 }
 
-ScanEngine::ScanEngine(DatabaseManager *databaseManager, JobEngine *jobEngine, QObject *parent)
+ScanEngine::ScanEngine(DatabaseManager *databaseManager, JobEngine *jobEngine, MediaProbeEngine *mediaProbeEngine, ThumbnailEngine *thumbnailEngine, QObject *parent)
     : QObject(parent)
     , m_databaseManager(databaseManager)
     , m_jobEngine(jobEngine)
+    , m_mediaProbeEngine(mediaProbeEngine)
+    , m_thumbnailEngine(thumbnailEngine)
 {
 }
 
@@ -221,8 +228,16 @@ void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
         bindSourceStats(finalUpdate, batch, batch.warningCount > 0 ? QStringLiteral("warning") : QStringLiteral("ok"), videoCount, audioCount, imageCount, otherCount);
         finalUpdate.exec();
 
-        QMetaObject::invokeMethod(this, [this, sourceRoot, batch, jobId]() {
+        QMetaObject::invokeMethod(this, [this, sourceRoot, batch, jobId, videoCount, audioCount, imageCount]() {
             m_jobEngine->completeJob(jobId, QStringLiteral("%1 扫描完成，发现 %2 个文件").arg(sourceRoot.name).arg(batch.totalFiles));
+            if ((videoCount > 0 || audioCount > 0) && m_mediaProbeEngine) {
+                const auto mediaDetail = m_mediaProbeEngine->statusMessage();
+                m_jobEngine->queueJob(JobType::Metadata, QStringLiteral("元数据队列 %1").arg(sourceRoot.name), mediaDetail, sourceRoot.id);
+            }
+            if ((videoCount > 0 || imageCount > 0) && m_thumbnailEngine) {
+                const auto thumbnailDetail = m_thumbnailEngine->statusMessage();
+                m_jobEngine->queueJob(JobType::Thumbnail, QStringLiteral("缩略图队列 %1").arg(sourceRoot.name), thumbnailDetail, sourceRoot.id);
+            }
             emit scanFinished(sourceRoot.id);
         }, Qt::QueuedConnection);
     } catch (const std::exception &exception) {

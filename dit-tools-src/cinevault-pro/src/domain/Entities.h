@@ -3,6 +3,7 @@
 #include "domain/Enums.h"
 
 #include <QDateTime>
+#include <QList>
 #include <QString>
 #include <QVariantList>
 
@@ -49,6 +50,46 @@ struct AssetFile {
     qint64 sizeBytes = 0;
     QString modifiedAt;
     bool readable = false;
+};
+
+struct FormatInfo {
+    QString container;
+    qint64 durationMs = 0;
+    qint64 bitRate = 0;
+};
+
+struct StreamInfo {
+    int index = -1;
+    QString codec;
+    QString kind;
+    qint64 bitRate = 0;
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    int sampleRate = 0;
+};
+
+struct MediaProbeResult {
+    qint64 assetId = 0;
+    ProbeStatus status = ProbeStatus::Pending;
+    MediaType mediaType = MediaType::Unknown;
+    FormatInfo format;
+    QList<StreamInfo> streams;
+    QString rawJson;
+    QString errorMessage;
+};
+
+struct ThumbnailRequest {
+    qint64 assetId = 0;
+    QString sourcePath;
+    QString cachePath;
+};
+
+struct ThumbnailResult {
+    qint64 assetId = 0;
+    bool success = false;
+    QString outputPath;
+    QString errorMessage;
 };
 
 struct Job {
