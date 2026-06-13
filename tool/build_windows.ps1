@@ -2,6 +2,7 @@ param(
     [string]$QtRoot = $env:QT_ROOT,
     [string]$FfmpegDevRoot = $env:FFMPEG_DEV_ROOT,
     [string]$Configuration = "Release",
+    [switch]$RealWorkflow,
     [switch]$EnableFfmpeg
 )
 
@@ -10,12 +11,18 @@ $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\windows_toolchain.ps1"
 . "$PSScriptRoot\version_helpers.ps1"
 
+if ($RealWorkflow -and $EnableFfmpeg) {
+    throw "-RealWorkflow uses the real project/import workflow without FFmpeg. Use -EnableFfmpeg by itself for the FFmpeg build."
+}
+
 $context = Get-CineVaultBuildContext -QtRoot $QtRoot -FfmpegDevRoot $FfmpegDevRoot -RequireFfmpeg:$EnableFfmpeg
 $projectRoot = Join-Path $context.RepoRoot "dit-tools-src\cinevault-pro"
 
 $isDebug = $Configuration -ieq "Debug"
 $configurePreset = if ($EnableFfmpeg) {
     if ($isDebug) { "windows-msvc-debug-ffmpeg" } else { "windows-msvc-release-ffmpeg" }
+} elseif ($RealWorkflow) {
+    if ($isDebug) { "windows-msvc-debug-real" } else { "windows-msvc-release-real" }
 } else {
     if ($isDebug) { "windows-msvc-debug" } else { "windows-msvc-release" }
 }

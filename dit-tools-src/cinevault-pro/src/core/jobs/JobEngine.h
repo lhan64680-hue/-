@@ -18,6 +18,7 @@ public:
     void updateJob(qint64 jobId, qint64 progress, const QString &detail);
     void completeJob(qint64 jobId, const QString &detail);
     void failJob(qint64 jobId, const QString &errorMessage);
+    void clearJobs();
 
     QVector<Job> jobs() const;
 

@@ -74,6 +74,15 @@ void JobEngine::failJob(qint64 jobId, const QString &errorMessage)
     }
 }
 
+void JobEngine::clearJobs()
+{
+    if (m_jobs.isEmpty()) {
+        return;
+    }
+    m_jobs.clear();
+    emit jobsChanged();
+}
+
 QVector<Job> JobEngine::jobs() const
 {
     return m_jobs;

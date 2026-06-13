@@ -64,6 +64,7 @@ AppContext::AppContext(QObject *parent)
     , m_inspectorViewModel(new InspectorViewModel(m_libraryQueryService, this))
     , m_jobTimelineViewModel(new JobTimelineViewModel(m_jobService, this))
 {
+    connect(m_projectService, &ProjectService::projectChanged, m_jobEngine, &JobEngine::clearJobs);
     connect(m_projectService, &ProjectService::projectChanged, m_sourceRailViewModel, &SourceRailViewModel::reload);
     connect(m_projectService, &ProjectService::projectChanged, m_libraryWorkspaceViewModel, &LibraryWorkspaceViewModel::reload);
     connect(m_projectService, &ProjectService::projectChanged, m_jobTimelineViewModel, &JobTimelineViewModel::reload);

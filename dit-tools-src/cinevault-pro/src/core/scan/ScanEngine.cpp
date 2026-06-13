@@ -13,6 +13,7 @@
 #include <QFileInfo>
 #include <QMetaObject>
 #include <QSqlDatabase>
+#include <QSqlError>
 #include <QSqlQuery>
 #include <QStringList>
 #include <QThread>
@@ -59,9 +60,10 @@ ScanEngine::ScanEngine(DatabaseManager *databaseManager, JobEngine *jobEngine, M
 
 void ScanEngine::startScan(const SourceRoot &sourceRoot, qint64 jobId)
 {
-    QtConcurrent::run([this, sourceRoot, jobId]() {
+    auto future = QtConcurrent::run([this, sourceRoot, jobId]() {
         runScan(sourceRoot, jobId);
     });
+    Q_UNUSED(future);
 }
 
 void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
@@ -85,9 +87,22 @@ void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
     qint64 otherCount = 0;
 
     QSqlQuery clearFolders(db);
-    clearFolders.exec(QStringLiteral("DELETE FROM folder_node WHERE source_root_id = %1").arg(sourceRoot.id));
+    clearFolders.prepare(QStringLiteral("DELETE FROM folder_node WHERE source_root_id = ?"));
+    clearFolders.addBindValue(sourceRoot.id);
     QSqlQuery clearAssets(db);
-    clearAssets.exec(QStringLiteral("DELETE FROM asset_file WHERE source_root_id = %1").arg(sourceRoot.id));
+    clearAssets.prepare(QStringLiteral("DELETE FROM asset_file WHERE source_root_id = ?"));
+    clearAssets.addBindValue(sourceRoot.id);
+    if (!clearFolders.exec() || !clearAssets.exec()) {
+        const auto message = clearFolders.lastError().isValid()
+            ? clearFolders.lastError().text()
+            : clearAssets.lastError().text();
+        QMetaObject::invokeMethod(this, [this, sourceRoot, message, jobId]() {
+            m_jobEngine->failJob(jobId, message);
+            emit scanFailed(sourceRoot.id, message);
+        }, Qt::QueuedConnection);
+        m_databaseManager->closeThreadConnection(connectionName);
+        return;
+    }
 
     auto flush = [&](const QList<FolderNode> &folders, const QList<AssetFile> &files, qint64 progressPercent) -> bool {
         if (!db.transaction()) {

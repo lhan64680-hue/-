@@ -36,6 +36,26 @@
       }
     },
     {
+      "name": "windows-msvc-release-real",
+      "inherits": "windows-msvc-base",
+      "binaryDir": "${sourceDir}/build/windows-msvc-release-real",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CINEVAULT_BUILD_MINIMAL_GUI": "OFF",
+        "CINEVAULT_ENABLE_FFMPEG": "OFF"
+      }
+    },
+    {
+      "name": "windows-msvc-debug-real",
+      "inherits": "windows-msvc-base",
+      "binaryDir": "${sourceDir}/build/windows-msvc-debug-real",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CINEVAULT_BUILD_MINIMAL_GUI": "OFF",
+        "CINEVAULT_ENABLE_FFMPEG": "OFF"
+      }
+    },
+    {
       "name": "windows-msvc-release-ffmpeg",
       "inherits": "windows-msvc-base",
       "binaryDir": "${sourceDir}/build/windows-msvc-release-ffmpeg",
@@ -64,6 +84,14 @@
     {
       "name": "windows-msvc-release",
       "configurePreset": "windows-msvc-release"
+    },
+    {
+      "name": "windows-msvc-release-real",
+      "configurePreset": "windows-msvc-release-real"
+    },
+    {
+      "name": "windows-msvc-debug-real",
+      "configurePreset": "windows-msvc-debug-real"
     },
     {
       "name": "windows-msvc-release-ffmpeg",
