@@ -45,6 +45,7 @@ Rectangle {
             spacing: 6
 
             Text {
+                Layout.fillWidth: true
                 text: title
                 color: Theme.text
                 font.pixelSize: 14
@@ -53,6 +54,7 @@ Rectangle {
             }
 
             Text {
+                Layout.fillWidth: true
                 text: subtitle
                 color: Theme.muted
                 font.pixelSize: 12
@@ -60,14 +62,17 @@ Rectangle {
             }
 
             Text {
+                Layout.fillWidth: true
                 text: meta
                 color: Theme.muted
                 font.pixelSize: 12
                 wrapMode: Text.Wrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
             }
 
             StatusChip {
-                Layout.preferredWidth: 74
+                Layout.maximumWidth: parent.width
                 label: tag
                 tint: Theme.green
             }

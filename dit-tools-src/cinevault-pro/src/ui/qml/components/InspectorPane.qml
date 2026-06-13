@@ -16,17 +16,22 @@ Rectangle {
         spacing: 14
 
         Text {
+            Layout.fillWidth: true
             text: viewModel.title
             color: Theme.text
             font.pixelSize: 18
             font.weight: Font.Bold
+            elide: Text.ElideRight
         }
 
         Text {
+            Layout.fillWidth: true
             text: viewModel.subtitle
             color: Theme.muted
             font.pixelSize: 13
             wrapMode: Text.Wrap
+            maximumLineCount: 3
+            elide: Text.ElideRight
         }
 
         Rectangle {
@@ -39,12 +44,13 @@ Rectangle {
         }
 
         ScrollView {
+            id: detailScroll
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
 
             Column {
-                width: parent.width
+                width: detailScroll.availableWidth
                 spacing: 10
 
                 Repeater {
@@ -64,12 +70,15 @@ Rectangle {
                             spacing: 6
 
                             Text {
+                                width: parent.width
                                 text: modelData.label
                                 color: Theme.muted
                                 font.pixelSize: 12
+                                elide: Text.ElideRight
                             }
 
                             Text {
+                                width: parent.width
                                 text: modelData.value
                                 color: Theme.text
                                 font.pixelSize: 13

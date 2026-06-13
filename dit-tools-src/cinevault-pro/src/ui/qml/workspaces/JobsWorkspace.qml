@@ -14,10 +14,12 @@ Rectangle {
         spacing: 14
 
         Text {
+            Layout.fillWidth: true
             text: "任务"
             color: Theme.text
             font.pixelSize: 28
             font.weight: Font.Black
+            elide: Text.ElideRight
         }
 
         ListView {
@@ -41,16 +43,21 @@ Rectangle {
                     spacing: 6
 
                     Text {
+                        Layout.fillWidth: true
                         text: model.title + " · " + model.stateLabel
                         color: Theme.text
                         font.pixelSize: 15
                         font.weight: Font.DemiBold
+                        elide: Text.ElideRight
                     }
 
                     Text {
+                        Layout.fillWidth: true
                         text: model.detail
                         color: Theme.muted
                         wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
                     }
 
                     ProgressBar {

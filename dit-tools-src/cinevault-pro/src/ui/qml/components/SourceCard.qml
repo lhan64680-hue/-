@@ -21,6 +21,7 @@ Rectangle {
         spacing: 8
 
         Text {
+            Layout.fillWidth: true
             text: name
             color: Theme.text
             font.pixelSize: 15
@@ -29,14 +30,17 @@ Rectangle {
         }
 
         Text {
+            Layout.fillWidth: true
             text: metaText
             color: Theme.muted
             wrapMode: Text.Wrap
             font.pixelSize: 12
+            maximumLineCount: 2
+            elide: Text.ElideRight
         }
 
         StatusChip {
-            Layout.preferredWidth: 82
+            Layout.maximumWidth: parent.width
             label: statusLabel
             tint: statusColor
         }

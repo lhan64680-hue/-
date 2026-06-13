@@ -24,12 +24,16 @@ Rectangle {
                 anchors.leftMargin: 18
                 anchors.rightMargin: 18
                 Text {
+                    Layout.fillWidth: true
                     text: "素材源栏"
                     color: Theme.muted
                     font.pixelSize: 15
+                    elide: Text.ElideRight
                 }
                 Item { Layout.fillWidth: true }
                 Button {
+                    Layout.preferredWidth: 62
+                    Layout.preferredHeight: 34
                     text: "清除"
                     flat: true
                     onClicked: viewModel.clearSelection()

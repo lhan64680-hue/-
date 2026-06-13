@@ -15,16 +15,20 @@ Rectangle {
         spacing: 14
 
         Text {
+            Layout.fillWidth: true
             text: "导入"
             color: Theme.text
             font.pixelSize: 28
             font.weight: Font.Black
+            elide: Text.ElideRight
         }
 
         Text {
+            Layout.fillWidth: true
             text: shellVm.projectPath.length > 0 ? shellVm.projectPath : "尚未打开项目"
             color: Theme.muted
             font.pixelSize: 13
+            elide: Text.ElideMiddle
         }
 
         Rectangle {
@@ -37,18 +41,24 @@ Rectangle {
 
             ColumnLayout {
                 anchors.centerIn: parent
-                width: parent.width * 0.6
+                width: Math.min(parent.width - 40, 720)
                 spacing: 16
 
                 Text {
+                    Layout.fillWidth: true
                     Layout.alignment: Qt.AlignHCenter
+                    horizontalAlignment: Text.AlignHCenter
                     text: "拖入素材卡、硬盘或项目目录"
                     color: Theme.text
                     font.pixelSize: 28
                     font.weight: Font.Black
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
                 }
 
                 Text {
+                    Layout.fillWidth: true
                     Layout.alignment: Qt.AlignHCenter
                     horizontalAlignment: Text.AlignHCenter
                     text: "导入后将自动识别目录结构，生成项目内索引，并为后续缩略图与元数据处理保留队列。"
@@ -58,11 +68,14 @@ Rectangle {
                 }
 
                 Text {
+                    Layout.fillWidth: true
                     Layout.alignment: Qt.AlignHCenter
                     horizontalAlignment: Text.AlignHCenter
                     text: shellVm.lastMessage.length > 0 ? shellVm.lastMessage : viewModel.summaryText
                     color: Theme.text
                     wrapMode: Text.Wrap
+                    maximumLineCount: 4
+                    elide: Text.ElideRight
                 }
 
                 Button {

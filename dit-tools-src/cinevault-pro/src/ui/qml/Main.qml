@@ -27,7 +27,7 @@ ApplicationWindow {
             spacing: 0
 
             SourceRail {
-                Layout.preferredWidth: 290
+                Layout.preferredWidth: 270
                 Layout.fillHeight: true
                 viewModel: sourceRailVm
             }
@@ -48,7 +48,7 @@ ApplicationWindow {
             }
 
             InspectorPane {
-                Layout.preferredWidth: 360
+                Layout.preferredWidth: 330
                 Layout.fillHeight: true
                 viewModel: inspectorVm
             }
