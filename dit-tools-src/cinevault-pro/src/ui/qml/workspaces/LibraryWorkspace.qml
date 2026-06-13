@@ -37,17 +37,19 @@ Rectangle {
 
             Item { Layout.fillWidth: true }
 
-            Button {
+            ActionButton {
                 Layout.preferredWidth: 88
                 Layout.preferredHeight: 36
                 text: "大图卡片"
+                primary: viewModel.viewMode === 0
                 onClicked: viewModel.viewMode = 0
             }
 
-            Button {
+            ActionButton {
                 Layout.preferredWidth: 88
                 Layout.preferredHeight: 36
                 text: "技术表格"
+                primary: viewModel.viewMode === 1
                 onClicked: viewModel.viewMode = 1
             }
         }

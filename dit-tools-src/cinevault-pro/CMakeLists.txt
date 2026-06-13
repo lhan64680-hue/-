@@ -141,6 +141,7 @@ qt_add_qml_module(CineVault
         src/ui/qml/components/SourceRail.qml
         src/ui/qml/components/InspectorPane.qml
         src/ui/qml/components/JobTimelineBar.qml
+        src/ui/qml/components/ActionButton.qml
         src/ui/qml/components/SourceCard.qml
         src/ui/qml/components/StatusChip.qml
         src/ui/qml/components/AssetCard.qml

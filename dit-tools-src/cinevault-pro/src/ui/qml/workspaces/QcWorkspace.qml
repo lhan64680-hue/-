@@ -51,7 +51,7 @@ Rectangle {
                     Text { text: model.name; color: Theme.text; Layout.preferredWidth: 220; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
                     Text { text: model.typeLabel; color: Theme.muted; Layout.preferredWidth: 82; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
                     Text { text: model.relativePath; color: Theme.muted; Layout.fillWidth: true; elide: Text.ElideMiddle; verticalAlignment: Text.AlignVCenter }
-                    Button {
+                    ActionButton {
                         Layout.preferredWidth: 64
                         Layout.preferredHeight: 34
                         text: "选中"

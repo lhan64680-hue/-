@@ -31,11 +31,10 @@ Rectangle {
                     elide: Text.ElideRight
                 }
                 Item { Layout.fillWidth: true }
-                Button {
+                ActionButton {
                     Layout.preferredWidth: 62
                     Layout.preferredHeight: 34
                     text: "清除"
-                    flat: true
                     onClicked: viewModel.clearSelection()
                 }
             }

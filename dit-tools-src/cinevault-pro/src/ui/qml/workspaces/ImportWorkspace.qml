@@ -78,9 +78,10 @@ Rectangle {
                     elide: Text.ElideRight
                 }
 
-                Button {
+                ActionButton {
                     Layout.alignment: Qt.AlignHCenter
                     text: "添加素材源"
+                    primary: true
                     onClicked: shellVm.addSourceDirectory()
                 }
             }

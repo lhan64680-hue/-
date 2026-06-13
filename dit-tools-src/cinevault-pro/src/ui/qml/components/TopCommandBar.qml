@@ -100,46 +100,26 @@ Rectangle {
             }
         }
 
-        Button {
+        ActionButton {
             Layout.preferredWidth: 82
             Layout.preferredHeight: 36
             text: "新建项目"
+            primary: true
             onClicked: shellVm.createProject()
-            contentItem: Text {
-                text: parent.text
-                color: Theme.text
-                elide: Text.ElideRight
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-            }
         }
 
-        Button {
+        ActionButton {
             Layout.preferredWidth: 82
             Layout.preferredHeight: 36
             text: "打开项目"
             onClicked: shellVm.openProject()
-            contentItem: Text {
-                text: parent.text
-                color: Theme.text
-                elide: Text.ElideRight
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-            }
         }
 
-        Button {
+        ActionButton {
             Layout.preferredWidth: 98
             Layout.preferredHeight: 36
             text: "添加素材源"
             onClicked: shellVm.addSourceDirectory()
-            contentItem: Text {
-                text: parent.text
-                color: Theme.text
-                elide: Text.ElideRight
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-            }
         }
     }
 }
