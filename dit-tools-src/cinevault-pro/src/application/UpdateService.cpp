@@ -11,7 +11,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
+#include <QNetworkProxyFactory>
+#include <QNetworkProxyQuery>
 #include <QProcess>
+#include <QUrl>
 #include <QVersionNumber>
 
 namespace {
@@ -27,6 +30,15 @@ QString toPowerShellLiteral(const QString &value)
 QString installerScriptPath()
 {
     return QDir(Paths::updatesRoot()).filePath(QStringLiteral("apply-update.ps1"));
+}
+
+QStringList curlNetworkArguments(const QString &proxyUrl)
+{
+    if (proxyUrl.trimmed().isEmpty()) {
+        return {QStringLiteral("--noproxy"), QStringLiteral("*")};
+    }
+
+    return {QStringLiteral("--proxy"), proxyUrl};
 }
 }
 
@@ -146,6 +158,51 @@ QString UpdateService::latestReleaseStatusMessage(int statusCode, const QString 
         networkErrorString.trimmed().isEmpty() ? QStringLiteral("网络请求没有返回结果。") : networkErrorString);
 }
 
+QString UpdateService::proxyUrlForNetworkProxy(const QNetworkProxy &proxy)
+{
+    QString scheme;
+    switch (proxy.type()) {
+    case QNetworkProxy::HttpProxy:
+    case QNetworkProxy::HttpCachingProxy:
+    case QNetworkProxy::FtpCachingProxy:
+        scheme = QStringLiteral("http");
+        break;
+    case QNetworkProxy::Socks5Proxy:
+        scheme = QStringLiteral("socks5");
+        break;
+    default:
+        return {};
+    }
+
+    if (proxy.hostName().trimmed().isEmpty() || proxy.port() <= 0) {
+        return {};
+    }
+
+    QUrl url;
+    url.setScheme(scheme);
+    url.setHost(proxy.hostName().trimmed());
+    url.setPort(proxy.port());
+    if (!proxy.user().trimmed().isEmpty()) {
+        url.setUserName(proxy.user());
+    }
+    if (!proxy.password().isEmpty()) {
+        url.setPassword(proxy.password());
+    }
+    return url.toString(QUrl::FullyEncoded);
+}
+
+QString UpdateService::preferredProxyUrl(const QList<QNetworkProxy> &proxies)
+{
+    for (const auto &proxy : proxies) {
+        const auto proxyUrl = proxyUrlForNetworkProxy(proxy);
+        if (!proxyUrl.isEmpty()) {
+            return proxyUrl;
+        }
+    }
+
+    return {};
+}
+
 QString UpdateService::currentVersionTag() const
 {
     const auto normalized = normalizeVersionTag(QCoreApplication::applicationVersion());
@@ -204,10 +261,23 @@ void UpdateService::checkForUpdates(bool manual)
 
     m_manualCheck = manual;
     setBusy(true);
-    setStatusMessage(manual
-        ? QStringLiteral("正在检查最新发布版本...")
-        : QStringLiteral("启动后正在检查最新发布版本..."));
+    const auto proxyUrl = systemProxyUrl();
+    setStatusMessage(proxyUrl.isEmpty()
+        ? (manual ? QStringLiteral("正在检查最新发布版本...")
+                  : QStringLiteral("启动后正在检查最新发布版本..."))
+        : (manual ? QStringLiteral("正在通过系统代理检查最新发布版本...")
+                  : QStringLiteral("启动后正在通过系统代理检查最新发布版本...")));
+    launchCheckProcess(proxyUrl, !proxyUrl.isEmpty());
+}
 
+QString UpdateService::systemProxyUrl() const
+{
+    return preferredProxyUrl(
+        QNetworkProxyFactory::systemProxyForQuery(QNetworkProxyQuery(QUrl(QString::fromLatin1(kLatestReleaseUrl)))));
+}
+
+void UpdateService::launchCheckProcess(const QString &proxyUrl, bool allowDirectFallback)
+{
     if (m_checkProcess) {
         m_checkProcess->kill();
         m_checkProcess->waitForFinished(2000);
@@ -215,28 +285,30 @@ void UpdateService::checkForUpdates(bool manual)
         m_checkProcess = nullptr;
     }
 
+    m_checkProxyUrl = proxyUrl.trimmed();
+    m_checkAllowDirectFallback = allowDirectFallback && !m_checkProxyUrl.isEmpty();
+
+    QStringList arguments = curlNetworkArguments(m_checkProxyUrl);
+    arguments << QStringLiteral("-L")
+              << QStringLiteral("--silent")
+              << QStringLiteral("--show-error")
+              << QStringLiteral("--connect-timeout")
+              << QStringLiteral("20")
+              << QStringLiteral("--max-time")
+              << QStringLiteral("60")
+              << QStringLiteral("-H")
+              << QStringLiteral("User-Agent: CineVault")
+              << QStringLiteral("-H")
+              << QStringLiteral("Accept: application/vnd.github+json")
+              << QStringLiteral("--output")
+              << QStringLiteral("-")
+              << QStringLiteral("--write-out")
+              << QStringLiteral("\n%{http_code}")
+              << QString::fromLatin1(kLatestReleaseUrl);
+
     m_checkProcess = new QProcess(this);
     m_checkProcess->setProgram(QStringLiteral("curl.exe"));
-    m_checkProcess->setArguments({
-        QStringLiteral("--noproxy"),
-        QStringLiteral("*"),
-        QStringLiteral("-L"),
-        QStringLiteral("--silent"),
-        QStringLiteral("--show-error"),
-        QStringLiteral("--connect-timeout"),
-        QStringLiteral("20"),
-        QStringLiteral("--max-time"),
-        QStringLiteral("60"),
-        QStringLiteral("-H"),
-        QStringLiteral("User-Agent: CineVault"),
-        QStringLiteral("-H"),
-        QStringLiteral("Accept: application/vnd.github+json"),
-        QStringLiteral("--output"),
-        QStringLiteral("-"),
-        QStringLiteral("--write-out"),
-        QStringLiteral("\n%{http_code}"),
-        QString::fromLatin1(kLatestReleaseUrl)
-    });
+    m_checkProcess->setArguments(arguments);
     connect(m_checkProcess,
             qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
             this,
@@ -245,9 +317,22 @@ void UpdateService::checkForUpdates(bool manual)
     if (!m_checkProcess->waitForStarted(3000)) {
         m_checkProcess->deleteLater();
         m_checkProcess = nullptr;
+        m_checkProxyUrl.clear();
+        m_checkAllowDirectFallback = false;
         setBusy(false);
         setStatusMessage(QStringLiteral("无法启动版本检查进程。"));
     }
+}
+
+bool UpdateService::retryCheckWithoutProxy()
+{
+    if (!m_checkAllowDirectFallback || m_checkProxyUrl.isEmpty()) {
+        return false;
+    }
+
+    setStatusMessage(QStringLiteral("系统代理检查失败，正在尝试直连 GitHub..."));
+    launchCheckProcess(QString(), false);
+    return true;
 }
 
 bool UpdateService::installPendingUpdateNow(QString *errorMessage)
@@ -421,6 +506,21 @@ void UpdateService::startInstallerDownload(const UpdateReleaseInfo &release, boo
         return;
     }
 
+    m_manualCheck = manual;
+    m_downloadVersionTag = release.versionTag;
+    m_downloadSourceUrl = release.installerUrl;
+    m_downloadTargetPath = QDir(Paths::updatesRoot()).filePath(release.installerName);
+    m_downloadPartPath = m_downloadTargetPath + QStringLiteral(".part");
+    m_downloadExpectedSize = release.installerSize;
+    const auto proxyUrl = systemProxyUrl();
+    setStatusMessage(proxyUrl.isEmpty()
+        ? QStringLiteral("发现新版本 %1，正在下载更新包...").arg(release.versionTag)
+        : QStringLiteral("发现新版本 %1，正在通过系统代理下载更新包...").arg(release.versionTag));
+    launchDownloadProcess(proxyUrl, !proxyUrl.isEmpty());
+}
+
+void UpdateService::launchDownloadProcess(const QString &proxyUrl, bool allowDirectFallback)
+{
     if (m_downloadProcess) {
         m_downloadProcess->kill();
         m_downloadProcess->waitForFinished(2000);
@@ -428,32 +528,27 @@ void UpdateService::startInstallerDownload(const UpdateReleaseInfo &release, boo
         m_downloadProcess = nullptr;
     }
 
-    m_manualCheck = manual;
-    m_downloadVersionTag = release.versionTag;
-    m_downloadTargetPath = QDir(Paths::updatesRoot()).filePath(release.installerName);
-    m_downloadPartPath = m_downloadTargetPath + QStringLiteral(".part");
-    m_downloadExpectedSize = release.installerSize;
+    m_downloadProxyUrl = proxyUrl.trimmed();
+    m_downloadAllowDirectFallback = allowDirectFallback && !m_downloadProxyUrl.isEmpty();
     QFile::remove(m_downloadPartPath);
 
-    setStatusMessage(QStringLiteral("发现新版本 %1，正在下载更新包...").arg(release.versionTag));
+    QStringList arguments = curlNetworkArguments(m_downloadProxyUrl);
+    arguments << QStringLiteral("-L")
+              << QStringLiteral("--silent")
+              << QStringLiteral("--show-error")
+              << QStringLiteral("--connect-timeout")
+              << QStringLiteral("20")
+              << QStringLiteral("--max-time")
+              << QStringLiteral("600")
+              << QStringLiteral("-H")
+              << QStringLiteral("User-Agent: CineVault")
+              << QStringLiteral("--output")
+              << QDir::toNativeSeparators(m_downloadPartPath)
+              << m_downloadSourceUrl;
+
     m_downloadProcess = new QProcess(this);
     m_downloadProcess->setProgram(QStringLiteral("curl.exe"));
-    m_downloadProcess->setArguments({
-        QStringLiteral("--noproxy"),
-        QStringLiteral("*"),
-        QStringLiteral("-L"),
-        QStringLiteral("--silent"),
-        QStringLiteral("--show-error"),
-        QStringLiteral("--connect-timeout"),
-        QStringLiteral("20"),
-        QStringLiteral("--max-time"),
-        QStringLiteral("600"),
-        QStringLiteral("-H"),
-        QStringLiteral("User-Agent: CineVault"),
-        QStringLiteral("--output"),
-        QDir::toNativeSeparators(m_downloadPartPath),
-        release.installerUrl
-    });
+    m_downloadProcess->setArguments(arguments);
     m_downloadProcess->setWorkingDirectory(Paths::updatesRoot());
     connect(m_downloadProcess,
             qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
@@ -463,17 +558,35 @@ void UpdateService::startInstallerDownload(const UpdateReleaseInfo &release, boo
     if (!m_downloadProcess->waitForStarted(3000)) {
         m_downloadProcess->deleteLater();
         m_downloadProcess = nullptr;
+        m_downloadProxyUrl.clear();
+        m_downloadAllowDirectFallback = false;
         setBusy(false);
         setStatusMessage(QStringLiteral("无法启动更新包下载进程。"));
     }
+}
+
+bool UpdateService::retryDownloadWithoutProxy()
+{
+    if (!m_downloadAllowDirectFallback || m_downloadProxyUrl.isEmpty()) {
+        return false;
+    }
+
+    setStatusMessage(QStringLiteral("系统代理下载失败，正在尝试直连 GitHub..."));
+    launchDownloadProcess(QString(), false);
+    return true;
 }
 
 void UpdateService::finishCheckProcess(int exitCode, QProcess::ExitStatus exitStatus)
 {
     auto *checkProcess = m_checkProcess;
     m_checkProcess = nullptr;
+    const auto resetCheckState = [this]() {
+        m_checkProxyUrl.clear();
+        m_checkAllowDirectFallback = false;
+    };
 
     if (!checkProcess) {
+        resetCheckState();
         setBusy(false);
         return;
     }
@@ -483,12 +596,20 @@ void UpdateService::finishCheckProcess(int exitCode, QProcess::ExitStatus exitSt
     checkProcess->deleteLater();
 
     if (exitStatus != QProcess::NormalExit) {
+        if (retryCheckWithoutProxy()) {
+            return;
+        }
+        resetCheckState();
         setBusy(false);
         setStatusMessage(latestReleaseStatusMessage(0, standardError.isEmpty() ? standardOutput : standardError));
         return;
     }
 
     if (exitCode != 0) {
+        if (retryCheckWithoutProxy()) {
+            return;
+        }
+        resetCheckState();
         setBusy(false);
         setStatusMessage(latestReleaseStatusMessage(0, standardError.isEmpty() ? standardOutput : standardError));
         return;
@@ -498,6 +619,10 @@ void UpdateService::finishCheckProcess(int exitCode, QProcess::ExitStatus exitSt
     normalizedOutput.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
     const auto separatorIndex = normalizedOutput.lastIndexOf(QLatin1Char('\n'));
     if (separatorIndex <= 0) {
+        if (retryCheckWithoutProxy()) {
+            return;
+        }
+        resetCheckState();
         setBusy(false);
         setStatusMessage(QStringLiteral("检查更新失败：版本检查结果无法解析。"));
         return;
@@ -507,6 +632,10 @@ void UpdateService::finishCheckProcess(int exitCode, QProcess::ExitStatus exitSt
     const auto statusCode = normalizedOutput.mid(separatorIndex + 1).trimmed().toInt();
 
     if (statusCode != 200) {
+        if (statusCode != 404 && retryCheckWithoutProxy()) {
+            return;
+        }
+        resetCheckState();
         setBusy(false);
         setStatusMessage(latestReleaseStatusMessage(statusCode, standardError));
         return;
@@ -515,40 +644,45 @@ void UpdateService::finishCheckProcess(int exitCode, QProcess::ExitStatus exitSt
     UpdateReleaseInfo release;
     QString errorMessage;
     if (!parseLatestRelease(payload, &release, &errorMessage)) {
+        resetCheckState();
         setBusy(false);
         setStatusMessage(errorMessage);
         return;
     }
 
     if (compareVersionTags(release.versionTag, currentVersionTag()) <= 0) {
+        resetCheckState();
         setBusy(false);
         setStatusMessage(QStringLiteral("当前已是最新版本：%1").arg(currentVersionTag()));
         return;
     }
 
     if (useExistingInstaller(release, m_manualCheck)) {
+        resetCheckState();
         setBusy(false);
         return;
     }
 
+    resetCheckState();
     startInstallerDownload(release, m_manualCheck);
 }
 
 void UpdateService::finishDownloadProcess(int exitCode, QProcess::ExitStatus exitStatus)
 {
     auto *downloadProcess = m_downloadProcess;
-    const auto versionTag = m_downloadVersionTag;
-    const auto targetPath = m_downloadTargetPath;
-    const auto partPath = m_downloadPartPath;
-    const auto expectedSize = m_downloadExpectedSize;
-
     m_downloadProcess = nullptr;
-    m_downloadVersionTag.clear();
-    m_downloadTargetPath.clear();
-    m_downloadPartPath.clear();
-    m_downloadExpectedSize = 0;
+    const auto resetDownloadState = [this]() {
+        m_downloadVersionTag.clear();
+        m_downloadSourceUrl.clear();
+        m_downloadTargetPath.clear();
+        m_downloadPartPath.clear();
+        m_downloadProxyUrl.clear();
+        m_downloadAllowDirectFallback = false;
+        m_downloadExpectedSize = 0;
+    };
 
     if (!downloadProcess) {
+        resetDownloadState();
         setBusy(false);
         return;
     }
@@ -558,43 +692,62 @@ void UpdateService::finishDownloadProcess(int exitCode, QProcess::ExitStatus exi
     downloadProcess->deleteLater();
 
     if (exitStatus != QProcess::NormalExit || exitCode != 0) {
-        QFile::remove(partPath);
+        QFile::remove(m_downloadPartPath);
+        if (retryDownloadWithoutProxy()) {
+            return;
+        }
+        const auto errorOutput = standardError.isEmpty()
+            ? (standardOutput.isEmpty() ? QStringLiteral("未知错误") : standardOutput)
+            : standardError;
+        resetDownloadState();
         setBusy(false);
-        setStatusMessage(QStringLiteral("下载更新包失败：%1").arg(
-            standardError.isEmpty() ? (standardOutput.isEmpty() ? QStringLiteral("未知错误") : standardOutput)
-                                    : standardError));
+        setStatusMessage(QStringLiteral("下载更新包失败：%1").arg(errorOutput));
         return;
     }
 
-    QFileInfo partInfo(partPath);
+    QFileInfo partInfo(m_downloadPartPath);
     if (!partInfo.exists() || partInfo.size() <= 0) {
-        QFile::remove(partPath);
+        QFile::remove(m_downloadPartPath);
+        if (retryDownloadWithoutProxy()) {
+            return;
+        }
+        resetDownloadState();
         setBusy(false);
         setStatusMessage(QStringLiteral("下载更新包失败：未生成完整安装包。"));
         return;
     }
 
-    if (expectedSize > 0 && partInfo.size() != expectedSize) {
-        QFile::remove(partPath);
+    if (m_downloadExpectedSize > 0 && partInfo.size() != m_downloadExpectedSize) {
+        QFile::remove(m_downloadPartPath);
+        if (retryDownloadWithoutProxy()) {
+            return;
+        }
+        resetDownloadState();
         setBusy(false);
         setStatusMessage(QStringLiteral("下载更新包失败：安装包大小与发布资产不一致。"));
         return;
     }
 
-    if (QFile::exists(targetPath) && !QFile::remove(targetPath)) {
-        QFile::remove(partPath);
+    if (QFile::exists(m_downloadTargetPath) && !QFile::remove(m_downloadTargetPath)) {
+        QFile::remove(m_downloadPartPath);
+        const auto targetPath = m_downloadTargetPath;
+        resetDownloadState();
         setBusy(false);
         setStatusMessage(QStringLiteral("无法覆盖旧更新包：%1").arg(targetPath));
         return;
     }
 
-    if (!QFile::rename(partPath, targetPath)) {
-        QFile::remove(partPath);
+    if (!QFile::rename(m_downloadPartPath, m_downloadTargetPath)) {
+        QFile::remove(m_downloadPartPath);
+        const auto targetPath = m_downloadTargetPath;
+        resetDownloadState();
         setBusy(false);
         setStatusMessage(QStringLiteral("无法保存更新包：%1").arg(targetPath));
         return;
     }
 
+    const auto versionTag = m_downloadVersionTag;
+    const auto targetPath = m_downloadTargetPath;
     if (m_settings) {
         m_settings->setDownloadedUpdateVersion(versionTag);
         m_settings->setPendingUpdateVersion(versionTag);
@@ -602,6 +755,7 @@ void UpdateService::finishDownloadProcess(int exitCode, QProcess::ExitStatus exi
         m_settings->sync();
     }
 
+    resetDownloadState();
     setBusy(false);
     setStatusMessage(QStringLiteral("更新包已下载完成：%1").arg(versionTag));
     emit updateReady(versionTag, targetPath, m_manualCheck);

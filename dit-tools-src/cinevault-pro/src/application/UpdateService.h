@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QList>
+#include <QNetworkProxy>
 #include <QObject>
 #include <QProcess>
 #include <QString>
@@ -25,6 +27,8 @@ public:
     static QString expectedInstallerName(const QString &versionTag);
     static bool parseLatestRelease(const QByteArray &payload, UpdateReleaseInfo *info, QString *errorMessage);
     static QString latestReleaseStatusMessage(int statusCode, const QString &networkErrorString);
+    static QString proxyUrlForNetworkProxy(const QNetworkProxy &proxy);
+    static QString preferredProxyUrl(const QList<QNetworkProxy> &proxies);
 
     QString currentVersionTag() const;
     bool isBusy() const;
@@ -45,18 +49,28 @@ private:
     void clearPendingUpdateIfCurrentOrMissing();
     bool readPendingUpdate(QString *versionTag, QString *installerPath) const;
     bool useExistingInstaller(const UpdateReleaseInfo &release, bool manual);
+    QString systemProxyUrl() const;
+    void launchCheckProcess(const QString &proxyUrl, bool allowDirectFallback);
+    bool retryCheckWithoutProxy();
     void startInstallerDownload(const UpdateReleaseInfo &release, bool manual);
+    void launchDownloadProcess(const QString &proxyUrl, bool allowDirectFallback);
+    bool retryDownloadWithoutProxy();
     void finishCheckProcess(int exitCode, QProcess::ExitStatus exitStatus);
     void finishDownloadProcess(int exitCode, QProcess::ExitStatus exitStatus);
 
     AppSettings *m_settings = nullptr;
     QProcess *m_checkProcess = nullptr;
     QProcess *m_downloadProcess = nullptr;
+    QString m_checkProxyUrl;
     QString m_downloadVersionTag;
+    QString m_downloadSourceUrl;
     QString m_downloadTargetPath;
     QString m_downloadPartPath;
+    QString m_downloadProxyUrl;
     QString m_statusMessage;
     bool m_busy = false;
     bool m_manualCheck = false;
+    bool m_checkAllowDirectFallback = false;
+    bool m_downloadAllowDirectFallback = false;
     qint64 m_downloadExpectedSize = 0;
 };

@@ -1,5 +1,6 @@
 #include "application/UpdateService.h"
 
+#include <QNetworkProxy>
 #include <QtTest>
 
 class UpdateServiceTest : public QObject {
@@ -12,6 +13,9 @@ private slots:
     void parseLatestRelease_rejectsMissingInstaller();
     void parseLatestRelease_rejectsInvalidPayload();
     void latestReleaseStatusMessage_handlesNoRelease();
+    void proxyUrlForNetworkProxy_handlesHttpProxy();
+    void proxyUrlForNetworkProxy_handlesSocksProxy();
+    void preferredProxyUrl_skipsUnsupportedEntries();
 };
 
 void UpdateServiceTest::compareVersionTags_ordersSemanticVersions()
@@ -88,6 +92,31 @@ void UpdateServiceTest::latestReleaseStatusMessage_handlesNoRelease()
              QStringLiteral("当前仓库还没有可用的发布版本。"));
     QCOMPARE(UpdateService::latestReleaseStatusMessage(500, QStringLiteral("Server Error")),
              QStringLiteral("检查更新失败：Server Error"));
+}
+
+void UpdateServiceTest::proxyUrlForNetworkProxy_handlesHttpProxy()
+{
+    const QNetworkProxy proxy(QNetworkProxy::HttpProxy, QStringLiteral("127.0.0.1"), 7890);
+    QCOMPARE(UpdateService::proxyUrlForNetworkProxy(proxy), QStringLiteral("http://127.0.0.1:7890"));
+}
+
+void UpdateServiceTest::proxyUrlForNetworkProxy_handlesSocksProxy()
+{
+    QNetworkProxy proxy(QNetworkProxy::Socks5Proxy, QStringLiteral("127.0.0.1"), 1080);
+    proxy.setUser(QStringLiteral("tester"));
+    proxy.setPassword(QStringLiteral("secret"));
+    QCOMPARE(UpdateService::proxyUrlForNetworkProxy(proxy),
+             QStringLiteral("socks5://tester:secret@127.0.0.1:1080"));
+}
+
+void UpdateServiceTest::preferredProxyUrl_skipsUnsupportedEntries()
+{
+    const QList<QNetworkProxy> proxies{
+        QNetworkProxy(QNetworkProxy::NoProxy),
+        QNetworkProxy(QNetworkProxy::DefaultProxy),
+        QNetworkProxy(QNetworkProxy::HttpProxy, QStringLiteral("127.0.0.1"), 7890)
+    };
+    QCOMPARE(UpdateService::preferredProxyUrl(proxies), QStringLiteral("http://127.0.0.1:7890"));
 }
 
 QTEST_APPLESS_MAIN(UpdateServiceTest)
