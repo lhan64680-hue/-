@@ -9,7 +9,11 @@ class UpdateServiceTest : public QObject {
 private slots:
     void compareVersionTags_ordersSemanticVersions();
     void compareVersionTags_handlesInvalidValues();
+    void expectedInstallerName_returnsPlatformSpecificPrimaryAsset();
     void parseLatestRelease_returnsInstallerAsset();
+    void parseLatestRelease_windowsIgnoresMacAsset();
+    void parseLatestRelease_macosReturnsDmgAsset();
+    void parseLatestRelease_macosFallsBackToPkgAsset();
     void parseLatestRelease_rejectsMissingInstaller();
     void parseLatestRelease_rejectsInvalidPayload();
     void latestReleaseStatusMessage_handlesNoRelease();
@@ -30,6 +34,14 @@ void UpdateServiceTest::compareVersionTags_handlesInvalidValues()
     QCOMPARE(UpdateService::compareVersionTags(QStringLiteral("invalid"), QStringLiteral("v0.1.75")), -1);
     QCOMPARE(UpdateService::compareVersionTags(QStringLiteral("v0.1.75"), QStringLiteral("invalid")), 1);
     QCOMPARE(UpdateService::compareVersionTags(QStringLiteral("invalid"), QStringLiteral("broken")), 0);
+}
+
+void UpdateServiceTest::expectedInstallerName_returnsPlatformSpecificPrimaryAsset()
+{
+    QCOMPARE(UpdateService::expectedInstallerName(QStringLiteral("v0.1.75"), QStringLiteral("windows")),
+             QStringLiteral("CineVault-Setup-v0.1.75.exe"));
+    QCOMPARE(UpdateService::expectedInstallerName(QStringLiteral("v0.1.75"), QStringLiteral("macos")),
+             QStringLiteral("CineVault-macOS-v0.1.75.dmg"));
 }
 
 void UpdateServiceTest::parseLatestRelease_returnsInstallerAsset()
@@ -59,6 +71,78 @@ void UpdateServiceTest::parseLatestRelease_returnsInstallerAsset()
     QCOMPARE(info.installerSize, 123456);
 }
 
+void UpdateServiceTest::parseLatestRelease_windowsIgnoresMacAsset()
+{
+    const QByteArray payload = R"({
+        "tag_name": "v0.1.75",
+        "assets": [
+            {
+                "name": "CineVault-macOS-v0.1.75.dmg",
+                "browser_download_url": "https://example.com/CineVault-macOS-v0.1.75.dmg",
+                "size": 456
+            },
+            {
+                "name": "CineVault-Setup-v0.1.75.exe",
+                "browser_download_url": "https://example.com/CineVault-Setup-v0.1.75.exe",
+                "size": 123
+            }
+        ]
+    })";
+
+    UpdateReleaseInfo info;
+    QString errorMessage;
+    QVERIFY(UpdateService::parseLatestRelease(payload, &info, &errorMessage, QStringLiteral("windows")));
+    QCOMPARE(info.installerName, QStringLiteral("CineVault-Setup-v0.1.75.exe"));
+    QCOMPARE(info.installerUrl, QStringLiteral("https://example.com/CineVault-Setup-v0.1.75.exe"));
+}
+
+void UpdateServiceTest::parseLatestRelease_macosReturnsDmgAsset()
+{
+    const QByteArray payload = R"({
+        "tag_name": "v0.1.75",
+        "assets": [
+            {
+                "name": "CineVault-Setup-v0.1.75.exe",
+                "browser_download_url": "https://example.com/CineVault-Setup-v0.1.75.exe",
+                "size": 123
+            },
+            {
+                "name": "CineVault-macOS-v0.1.75.dmg",
+                "browser_download_url": "https://example.com/CineVault-macOS-v0.1.75.dmg",
+                "size": 456
+            }
+        ]
+    })";
+
+    UpdateReleaseInfo info;
+    QString errorMessage;
+    QVERIFY(UpdateService::parseLatestRelease(payload, &info, &errorMessage, QStringLiteral("macos")));
+    QCOMPARE(info.installerName, QStringLiteral("CineVault-macOS-v0.1.75.dmg"));
+    QCOMPARE(info.installerUrl, QStringLiteral("https://example.com/CineVault-macOS-v0.1.75.dmg"));
+    QCOMPARE(info.installerSize, 456);
+}
+
+void UpdateServiceTest::parseLatestRelease_macosFallsBackToPkgAsset()
+{
+    const QByteArray payload = R"({
+        "tag_name": "v0.1.75",
+        "assets": [
+            {
+                "name": "CineVault-macOS-v0.1.75.pkg",
+                "browser_download_url": "https://example.com/CineVault-macOS-v0.1.75.pkg",
+                "size": 789
+            }
+        ]
+    })";
+
+    UpdateReleaseInfo info;
+    QString errorMessage;
+    QVERIFY(UpdateService::parseLatestRelease(payload, &info, &errorMessage, QStringLiteral("macos")));
+    QCOMPARE(info.installerName, QStringLiteral("CineVault-macOS-v0.1.75.pkg"));
+    QCOMPARE(info.installerUrl, QStringLiteral("https://example.com/CineVault-macOS-v0.1.75.pkg"));
+    QCOMPARE(info.installerSize, 789);
+}
+
 void UpdateServiceTest::parseLatestRelease_rejectsMissingInstaller()
 {
     const QByteArray payload = R"({
@@ -74,7 +158,7 @@ void UpdateServiceTest::parseLatestRelease_rejectsMissingInstaller()
 
     UpdateReleaseInfo info;
     QString errorMessage;
-    QVERIFY(!UpdateService::parseLatestRelease(payload, &info, &errorMessage));
+    QVERIFY(!UpdateService::parseLatestRelease(payload, &info, &errorMessage, QStringLiteral("windows")));
     QVERIFY(errorMessage.contains(QStringLiteral("CineVault-Setup-v0.1.75.exe")));
 }
 

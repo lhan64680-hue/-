@@ -20,6 +20,12 @@
 namespace {
 constexpr auto kLatestReleaseUrl = "https://api.github.com/repos/luojiang419/dit-tools/releases/latest";
 
+QString normalizedPlatformKey(QString platformKey)
+{
+    platformKey = platformKey.trimmed().toLower();
+    return platformKey.isEmpty() ? UpdateService::currentPlatformKey() : platformKey;
+}
+
 QString toPowerShellLiteral(const QString &value)
 {
     auto escaped = value;
@@ -27,19 +33,40 @@ QString toPowerShellLiteral(const QString &value)
     return QStringLiteral("'") + escaped + QStringLiteral("'");
 }
 
-QString installerScriptPath()
+QString updatesRootForPlatform(const QString &platformKey)
 {
-    return QDir(QDir::tempPath()).filePath(QStringLiteral("CineVaultUpdater/apply-update.ps1"));
+    return QDir(Paths::updatesRoot()).filePath(normalizedPlatformKey(platformKey));
 }
 
-QString installerLogPath()
+QString installerScriptPath(const QString &platformKey)
 {
-    return QDir(Paths::updatesRoot()).filePath(QStringLiteral("apply-update.log"));
+    return QDir(QDir::tempPath()).filePath(
+        QStringLiteral("CineVaultUpdater/%1/apply-update.ps1").arg(normalizedPlatformKey(platformKey)));
 }
 
-QString installerPackageLogPath()
+QString installerLogPath(const QString &platformKey)
 {
-    return QDir(Paths::updatesRoot()).filePath(QStringLiteral("installer-update.log"));
+    return QDir(updatesRootForPlatform(platformKey)).filePath(QStringLiteral("apply-update.log"));
+}
+
+QString installerPackageLogPath(const QString &platformKey)
+{
+    return QDir(updatesRootForPlatform(platformKey)).filePath(QStringLiteral("installer-update.log"));
+}
+
+bool installerNameMatchesExpected(const QString &installerName, const QStringList &expectedNames)
+{
+    for (const auto &expectedName : expectedNames) {
+        if (installerName.compare(expectedName, Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QString expectedInstallerNamesLabel(const QStringList &expectedNames)
+{
+    return expectedNames.join(QStringLiteral(" / "));
 }
 
 QStringList curlNetworkArguments(const QString &proxyUrl)
@@ -68,6 +95,17 @@ UpdateService::~UpdateService()
         m_downloadProcess->kill();
         m_downloadProcess->waitForFinished(2000);
     }
+}
+
+QString UpdateService::currentPlatformKey()
+{
+#if defined(Q_OS_WIN)
+    return QStringLiteral("windows");
+#elif defined(Q_OS_MACOS)
+    return QStringLiteral("macos");
+#else
+    return QStringLiteral("unknown");
+#endif
 }
 
 QString UpdateService::normalizeVersionTag(const QString &versionTag)
@@ -104,13 +142,34 @@ int UpdateService::compareVersionTags(const QString &left, const QString &right)
                                    QVersionNumber::fromString(normalizedRight.mid(1)));
 }
 
-QString UpdateService::expectedInstallerName(const QString &versionTag)
+QStringList UpdateService::expectedInstallerNames(const QString &versionTag, const QString &platformKey)
 {
     const auto normalized = normalizeVersionTag(versionTag);
-    return normalized.isEmpty() ? QString() : QStringLiteral("CineVault-Setup-%1.exe").arg(normalized);
+    if (normalized.isEmpty()) {
+        return {};
+    }
+
+    const auto normalizedPlatform = normalizedPlatformKey(platformKey);
+    if (normalizedPlatform == QStringLiteral("windows")) {
+        return {QStringLiteral("CineVault-Setup-%1.exe").arg(normalized)};
+    }
+    if (normalizedPlatform == QStringLiteral("macos")) {
+        return {
+            QStringLiteral("CineVault-macOS-%1.dmg").arg(normalized),
+            QStringLiteral("CineVault-macOS-%1.pkg").arg(normalized)
+        };
+    }
+
+    return {};
 }
 
-bool UpdateService::parseLatestRelease(const QByteArray &payload, UpdateReleaseInfo *info, QString *errorMessage)
+QString UpdateService::expectedInstallerName(const QString &versionTag, const QString &platformKey)
+{
+    const auto expectedNames = expectedInstallerNames(versionTag, platformKey);
+    return expectedNames.isEmpty() ? QString() : expectedNames.constFirst();
+}
+
+bool UpdateService::parseLatestRelease(const QByteArray &payload, UpdateReleaseInfo *info, QString *errorMessage, const QString &platformKey)
 {
     QJsonParseError parseError;
     const auto document = QJsonDocument::fromJson(payload, &parseError);
@@ -130,30 +189,40 @@ bool UpdateService::parseLatestRelease(const QByteArray &payload, UpdateReleaseI
         return false;
     }
 
-    const auto expectedName = expectedInstallerName(versionTag);
+    const auto expectedNames = expectedInstallerNames(versionTag, platformKey);
+    if (expectedNames.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("当前平台暂不支持自动匹配更新资产。");
+        }
+        return false;
+    }
+
     const auto assets = root.value(QStringLiteral("assets")).toArray();
-    for (const auto &assetValue : assets) {
-        const auto assetObject = assetValue.toObject();
-        if (assetObject.value(QStringLiteral("name")).toString() != expectedName) {
-            continue;
-        }
+    for (const auto &expectedName : expectedNames) {
+        for (const auto &assetValue : assets) {
+            const auto assetObject = assetValue.toObject();
+            if (assetObject.value(QStringLiteral("name")).toString() != expectedName) {
+                continue;
+            }
 
-        const auto downloadUrl = assetObject.value(QStringLiteral("browser_download_url")).toString().trimmed();
-        if (downloadUrl.isEmpty()) {
-            continue;
-        }
+            const auto downloadUrl = assetObject.value(QStringLiteral("browser_download_url")).toString().trimmed();
+            if (downloadUrl.isEmpty()) {
+                continue;
+            }
 
-        if (info) {
-            info->versionTag = versionTag;
-            info->installerName = expectedName;
-            info->installerUrl = downloadUrl;
-            info->installerSize = assetObject.value(QStringLiteral("size")).toVariant().toLongLong();
+            if (info) {
+                info->versionTag = versionTag;
+                info->installerName = expectedName;
+                info->installerUrl = downloadUrl;
+                info->installerSize = assetObject.value(QStringLiteral("size")).toVariant().toLongLong();
+            }
+            return true;
         }
-        return true;
     }
 
     if (errorMessage) {
-        *errorMessage = QStringLiteral("最新发布版本缺少安装包：%1").arg(expectedName);
+        *errorMessage = QStringLiteral("最新发布版本缺少当前平台更新包：%1")
+                            .arg(expectedInstallerNamesLabel(expectedNames));
     }
     return false;
 }
@@ -359,21 +428,32 @@ bool UpdateService::installPendingUpdateNow(QString *errorMessage)
         return false;
     }
 
-    if (!QDir().mkpath(Paths::updatesRoot())) {
+    const auto platformKey = currentPlatformKey();
+    const auto platformUpdatesRoot = updatesRootForPlatform(platformKey);
+
+#if !defined(Q_OS_WIN)
+    if (errorMessage) {
+        *errorMessage = QStringLiteral("当前平台暂未实现自动安装，请手动打开已下载的更新包：%1")
+                            .arg(QDir::toNativeSeparators(installerPath));
+    }
+    return false;
+#endif
+
+    if (!QDir().mkpath(platformUpdatesRoot)) {
         if (errorMessage) {
-            *errorMessage = QStringLiteral("无法创建更新缓存目录：%1").arg(Paths::updatesRoot());
+            *errorMessage = QStringLiteral("无法创建更新缓存目录：%1").arg(platformUpdatesRoot);
         }
         return false;
     }
-    if (!QDir().mkpath(QFileInfo(installerScriptPath()).absolutePath())) {
+    if (!QDir().mkpath(QFileInfo(installerScriptPath(platformKey)).absolutePath())) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("无法创建更新脚本目录：%1")
-                                .arg(QFileInfo(installerScriptPath()).absolutePath());
+                                .arg(QFileInfo(installerScriptPath(platformKey)).absolutePath());
         }
         return false;
     }
 
-    QFile scriptFile(installerScriptPath());
+    QFile scriptFile(installerScriptPath(platformKey));
     if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("无法创建更新脚本：%1").arg(scriptFile.fileName());
@@ -384,8 +464,8 @@ bool UpdateService::installPendingUpdateNow(QString *errorMessage)
     const auto appDir = QCoreApplication::applicationDirPath();
     const auto nativeInstallerPath = QDir::toNativeSeparators(installerPath);
     const auto nativeAppDir = QDir::toNativeSeparators(appDir);
-    const auto nativeLogPath = QDir::toNativeSeparators(installerLogPath());
-    const auto nativeInstallerUiLogPath = QDir::toNativeSeparators(installerPackageLogPath());
+    const auto nativeLogPath = QDir::toNativeSeparators(installerLogPath(platformKey));
+    const auto nativeInstallerUiLogPath = QDir::toNativeSeparators(installerPackageLogPath(platformKey));
     const auto appPid = QCoreApplication::applicationPid();
 
     QStringList scriptLines;
@@ -476,12 +556,12 @@ void UpdateService::clearPendingUpdateIfCurrentOrMissing()
     }
 
     const auto versionTag = normalizeVersionTag(m_settings->pendingUpdateVersion());
-    const auto installerPath = m_settings->pendingUpdateInstallerPath().trimmed();
     if (versionTag.isEmpty()) {
         return;
     }
 
-    if (!QFileInfo::exists(installerPath)
+    QString installerPath;
+    if (!readPendingUpdate(nullptr, &installerPath)
         || compareVersionTags(versionTag, currentVersionTag()) <= 0) {
         m_settings->clearPendingUpdate();
     }
@@ -500,6 +580,11 @@ bool UpdateService::readPendingUpdate(QString *versionTag, QString *installerPat
     }
 
     if (!QFileInfo::exists(normalizedInstallerPath)) {
+        return false;
+    }
+
+    if (!installerNameMatchesExpected(QFileInfo(normalizedInstallerPath).fileName(),
+                                      expectedInstallerNames(normalizedVersionTag))) {
         return false;
     }
 
@@ -523,8 +608,20 @@ bool UpdateService::useExistingInstaller(const UpdateReleaseInfo &release, bool 
         return true;
     }
 
-    const auto existingInstallerPath = QDir(Paths::updatesRoot()).filePath(release.installerName);
-    if (!QFileInfo::exists(existingInstallerPath)) {
+    const QStringList candidatePaths{
+        QDir(updatesRootForPlatform(currentPlatformKey())).filePath(release.installerName),
+        QDir(Paths::updatesRoot()).filePath(release.installerName)
+    };
+
+    QString existingInstallerPath;
+    for (const auto &candidatePath : candidatePaths) {
+        if (QFileInfo::exists(candidatePath)) {
+            existingInstallerPath = candidatePath;
+            break;
+        }
+    }
+
+    if (existingInstallerPath.isEmpty()) {
         return false;
     }
 
@@ -542,16 +639,17 @@ bool UpdateService::useExistingInstaller(const UpdateReleaseInfo &release, bool 
 
 void UpdateService::startInstallerDownload(const UpdateReleaseInfo &release, bool manual)
 {
-    if (!QDir().mkpath(Paths::updatesRoot())) {
+    const auto platformUpdatesRoot = updatesRootForPlatform(currentPlatformKey());
+    if (!QDir().mkpath(platformUpdatesRoot)) {
         setBusy(false);
-        setStatusMessage(QStringLiteral("无法创建更新缓存目录：%1").arg(Paths::updatesRoot()));
+        setStatusMessage(QStringLiteral("无法创建更新缓存目录：%1").arg(platformUpdatesRoot));
         return;
     }
 
     m_manualCheck = manual;
     m_downloadVersionTag = release.versionTag;
     m_downloadSourceUrl = release.installerUrl;
-    m_downloadTargetPath = QDir(Paths::updatesRoot()).filePath(release.installerName);
+    m_downloadTargetPath = QDir(platformUpdatesRoot).filePath(release.installerName);
     m_downloadPartPath = m_downloadTargetPath + QStringLiteral(".part");
     m_downloadExpectedSize = release.installerSize;
     const auto proxyUrl = systemProxyUrl();
@@ -591,7 +689,7 @@ void UpdateService::launchDownloadProcess(const QString &proxyUrl, bool allowDir
     m_downloadProcess = new QProcess(this);
     m_downloadProcess->setProgram(QStringLiteral("curl.exe"));
     m_downloadProcess->setArguments(arguments);
-    m_downloadProcess->setWorkingDirectory(Paths::updatesRoot());
+    m_downloadProcess->setWorkingDirectory(QFileInfo(m_downloadTargetPath).absolutePath());
     connect(m_downloadProcess,
             qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
             this,

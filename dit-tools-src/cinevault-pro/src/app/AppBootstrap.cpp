@@ -2,6 +2,7 @@
 
 #include "app/AppContext.h"
 #include "shared/Paths.h"
+#include "ui/imaging/LocalImageProvider.h"
 
 #include <QQmlApplicationEngine>
 #include <QQmlError>
@@ -42,6 +43,7 @@ bool AppBootstrap::run()
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     m_engine = std::make_unique<QQmlApplicationEngine>();
+    m_engine->addImageProvider(QStringLiteral("cinevault-local"), new LocalImageProvider);
     QObject::connect(m_engine.get(), &QQmlApplicationEngine::warnings, [](const QList<QQmlError> &warnings) {
         for (const auto &warning : warnings) {
             appendQmlStartupLog(warning.toString());

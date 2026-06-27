@@ -22,10 +22,12 @@ public:
     explicit UpdateService(AppSettings *settings, QObject *parent = nullptr);
     ~UpdateService() override;
 
+    static QString currentPlatformKey();
     static QString normalizeVersionTag(const QString &versionTag);
     static int compareVersionTags(const QString &left, const QString &right);
-    static QString expectedInstallerName(const QString &versionTag);
-    static bool parseLatestRelease(const QByteArray &payload, UpdateReleaseInfo *info, QString *errorMessage);
+    static QString expectedInstallerName(const QString &versionTag, const QString &platformKey = QString());
+    static QStringList expectedInstallerNames(const QString &versionTag, const QString &platformKey = QString());
+    static bool parseLatestRelease(const QByteArray &payload, UpdateReleaseInfo *info, QString *errorMessage, const QString &platformKey = QString());
     static QString latestReleaseStatusMessage(int statusCode, const QString &networkErrorString);
     static QString proxyUrlForNetworkProxy(const QNetworkProxy &proxy);
     static QString preferredProxyUrl(const QList<QNetworkProxy> &proxies);

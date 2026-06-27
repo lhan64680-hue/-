@@ -14,7 +14,9 @@ Rectangle {
     property real imageViewerOffsetY: 0
 
     function imageFileSource(path) {
-        return path && path.length > 0 ? "file:///" + path.replace(/\\/g, "/") : ""
+        return path && path.length > 0 && localImageUrlHelper
+            ? localImageUrlHelper.sourceForInput(path)
+            : ""
     }
 
     function openImageViewer(source) {
@@ -253,7 +255,9 @@ Rectangle {
                                     fillMode: Image.PreserveAspectCrop
                                     asynchronous: true
                                     cache: true
-                                    source: thumbnailPath.length > 0 ? "file:///" + thumbnailPath.replace(/\\/g, "/") : ""
+                                    source: root.imageFileSource(thumbnailPath)
+                                    sourceSize.width: Math.max(1, Math.round(width))
+                                    sourceSize.height: Math.max(1, Math.round(height))
                                 }
 
                                 Text {

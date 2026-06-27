@@ -37,7 +37,9 @@ Rectangle {
             previewVm.clear()
         }
         mode = "image"
-        imageSource = source.toString()
+        imageSource = localImageUrlHelper
+            ? localImageUrlHelper.sourceForInput(source.toString())
+            : source.toString()
         overlayTitle = title || ""
         resetImageView()
         forceActiveFocus()
@@ -178,6 +180,8 @@ Rectangle {
         Image {
             id: imagePreview
             source: overlay.imageSource
+            sourceSize.width: Math.max(1, Math.round(parent.width))
+            sourceSize.height: Math.max(1, Math.round(parent.height))
             asynchronous: true
             cache: false
             smooth: true

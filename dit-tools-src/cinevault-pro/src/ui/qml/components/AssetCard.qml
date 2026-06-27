@@ -11,7 +11,7 @@ Rectangle {
     property string meta: ""
     property string tag: ""
     property string thumbnailPath: ""
-    property string thumbnailSource: thumbnailPath.length > 0 ? "file:///" + thumbnailPath.replace(/\\/g, "/") : ""
+    property string thumbnailSource: localImageUrlHelper ? localImageUrlHelper.sourceForInput(thumbnailPath) : ""
     property bool selected: false
     property bool favorite: false
     property int previewHeight: 146
@@ -221,6 +221,8 @@ Rectangle {
                 id: previewImage
                 anchors.fill: parent
                 source: thumbnailSource
+                sourceSize.width: Math.max(1, Math.round(width))
+                sourceSize.height: Math.max(1, Math.round(height))
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
                 cache: true

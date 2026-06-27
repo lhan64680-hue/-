@@ -5,6 +5,7 @@
 
 class QQmlApplicationEngine;
 class WindowThemeController;
+class LocalImageUrlHelper;
 #if CINEVAULT_BUILD_MINIMAL_GUI
 class MinimalShellViewModel;
 class MinimalSourceRailViewModel;
@@ -60,6 +61,7 @@ public:
 
 private:
     WindowThemeController *m_windowThemeController = nullptr;
+    LocalImageUrlHelper *m_localImageUrlHelper = nullptr;
 
 #if CINEVAULT_BUILD_MINIMAL_GUI
     MinimalShellViewModel *m_shellViewModel = nullptr;

@@ -318,8 +318,8 @@ void SettingsViewModel::promptInstallUpdate(const QString &versionTag)
     QMessageBox box(dialogParent());
     box.setIcon(QMessageBox::Information);
     box.setWindowTitle(QStringLiteral("发现新版本"));
-    box.setText(QStringLiteral("更新安装包 %1 已下载完成。").arg(versionTag));
-    box.setInformativeText(QStringLiteral("点击立即更新后会关闭当前程序，并打开已下载的更新安装包。也可以保留到下次启动时更新。"));
+    box.setText(QStringLiteral("更新包 %1 已下载完成。").arg(versionTag));
+    box.setInformativeText(QStringLiteral("点击立即更新后会关闭当前程序，并打开已下载的当前平台更新包。也可以保留到下次启动时更新。"));
     QAbstractButton *installNowButton = box.addButton(QStringLiteral("立即更新"), QMessageBox::AcceptRole);
     QAbstractButton *updateLaterButton = box.addButton(QStringLiteral("下次启动更新"), QMessageBox::RejectRole);
     box.exec();

@@ -66,6 +66,10 @@ set(APP_SOURCES
     src/shared/Formatters.cpp
     src/core/backup/BackupPlanner.h
     src/core/backup/BackupPlanner.cpp
+    src/ui/imaging/LocalImageProvider.h
+    src/ui/imaging/LocalImageProvider.cpp
+    src/ui/imaging/LocalImageUrlHelper.h
+    src/ui/imaging/LocalImageUrlHelper.cpp
     src/ui/window/WindowThemeController.h
     src/ui/window/WindowThemeController.cpp
     src/ui/models/SourceRootListModel.h
@@ -203,7 +207,7 @@ qt_add_executable(CineVault
 
 if(WIN32)
     set_target_properties(CineVault PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_link_libraries(CineVault PRIVATE Dwmapi)
+    target_link_libraries(CineVault PRIVATE Dwmapi Gdi32 Ole32 Shell32)
 endif()
 
 qt_add_resources(CineVault "CineVault_assets"
@@ -326,6 +330,14 @@ if(BUILD_TESTING)
     target_link_libraries(UpdateServiceTest PRIVATE Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME UpdateServiceTest COMMAND UpdateServiceTest)
 
+    qt_add_executable(LocalImageUrlHelperTest
+        tests/unit/LocalImageUrlHelperTest.cpp
+        src/ui/imaging/LocalImageUrlHelper.cpp
+    )
+    target_include_directories(LocalImageUrlHelperTest PRIVATE src)
+    target_link_libraries(LocalImageUrlHelperTest PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME LocalImageUrlHelperTest COMMAND LocalImageUrlHelperTest)
+
     set(CINEVAULT_TEST_QT_BIN_DIR "")
     if(TARGET Qt6::qmake)
         get_target_property(CINEVAULT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
@@ -335,7 +347,7 @@ if(BUILD_TESTING)
     endif()
 
     if(WIN32 AND CINEVAULT_TEST_QT_BIN_DIR)
-        set_tests_properties(CineVaultSmokeTest BackupPlannerTest VisionApiClientJsonTest UpdateServiceTest PROPERTIES
+        set_tests_properties(CineVaultSmokeTest BackupPlannerTest VisionApiClientJsonTest UpdateServiceTest LocalImageUrlHelperTest PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CINEVAULT_TEST_QT_BIN_DIR}"
         )
     endif()

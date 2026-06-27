@@ -1,5 +1,6 @@
 #include "app/AppContext.h"
 
+#include "ui/imaging/LocalImageUrlHelper.h"
 #include "ui/window/WindowThemeController.h"
 
 #if CINEVAULT_BUILD_MINIMAL_GUI
@@ -52,6 +53,7 @@
 AppContext::AppContext(QObject *parent)
     : QObject(parent)
     , m_windowThemeController(new WindowThemeController(this))
+    , m_localImageUrlHelper(new LocalImageUrlHelper(this))
 #if CINEVAULT_BUILD_MINIMAL_GUI
     , m_shellViewModel(new MinimalShellViewModel(this))
     , m_sourceRailViewModel(new MinimalSourceRailViewModel(this))
@@ -148,6 +150,7 @@ void AppContext::expose(QQmlApplicationEngine &engine)
     auto *context = engine.rootContext();
     context->setContextProperty(QStringLiteral("shellVm"), m_shellViewModel);
     context->setContextProperty(QStringLiteral("windowThemeController"), m_windowThemeController);
+    context->setContextProperty(QStringLiteral("localImageUrlHelper"), m_localImageUrlHelper);
     context->setContextProperty(QStringLiteral("sourceRailVm"), m_sourceRailViewModel);
     context->setContextProperty(QStringLiteral("importWorkspaceVm"), m_importWorkspaceViewModel);
     context->setContextProperty(QStringLiteral("materialBackupVm"), m_materialBackupViewModel);
