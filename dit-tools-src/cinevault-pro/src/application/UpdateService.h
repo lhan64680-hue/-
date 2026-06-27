@@ -1,10 +1,10 @@
 #pragma once
 
 #include <QObject>
+#include <QProcess>
 #include <QString>
 
 class AppSettings;
-class QFile;
 class QNetworkAccessManager;
 class QNetworkReply;
 
@@ -49,17 +49,17 @@ private:
     bool useExistingInstaller(const UpdateReleaseInfo &release, bool manual);
     void startInstallerDownload(const UpdateReleaseInfo &release, bool manual);
     void finishCheckReply();
-    void finishDownloadReply();
+    void finishDownloadProcess(int exitCode, QProcess::ExitStatus exitStatus);
 
     AppSettings *m_settings = nullptr;
     QNetworkAccessManager *m_networkManager = nullptr;
     QNetworkReply *m_checkReply = nullptr;
-    QNetworkReply *m_downloadReply = nullptr;
-    QFile *m_downloadFile = nullptr;
+    QProcess *m_downloadProcess = nullptr;
     QString m_downloadVersionTag;
     QString m_downloadTargetPath;
+    QString m_downloadPartPath;
     QString m_statusMessage;
     bool m_busy = false;
     bool m_manualCheck = false;
-    int m_lastDownloadPercent = -1;
+    qint64 m_downloadExpectedSize = 0;
 };

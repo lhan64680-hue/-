@@ -32,6 +32,11 @@ QString installerScriptPath()
 {
     return QDir(Paths::updatesRoot()).filePath(QStringLiteral("apply-update.ps1"));
 }
+
+QString downloadScriptPath()
+{
+    return QDir(Paths::updatesRoot()).filePath(QStringLiteral("download-update.ps1"));
+}
 }
 
 UpdateService::UpdateService(AppSettings *settings, QObject *parent)
@@ -46,11 +51,9 @@ UpdateService::~UpdateService()
     if (m_checkReply) {
         m_checkReply->abort();
     }
-    if (m_downloadReply) {
-        m_downloadReply->abort();
-    }
-    if (m_downloadFile) {
-        m_downloadFile->close();
+    if (m_downloadProcess) {
+        m_downloadProcess->kill();
+        m_downloadProcess->waitForFinished(2000);
     }
 }
 
@@ -393,47 +396,64 @@ void UpdateService::startInstallerDownload(const UpdateReleaseInfo &release, boo
         return;
     }
 
+    if (m_downloadProcess) {
+        m_downloadProcess->kill();
+        m_downloadProcess->waitForFinished(2000);
+        m_downloadProcess->deleteLater();
+        m_downloadProcess = nullptr;
+    }
+
     m_manualCheck = manual;
-    m_lastDownloadPercent = -1;
     m_downloadVersionTag = release.versionTag;
     m_downloadTargetPath = QDir(Paths::updatesRoot()).filePath(release.installerName);
-    const auto partPath = m_downloadTargetPath + QStringLiteral(".part");
-    QFile::remove(partPath);
+    m_downloadPartPath = m_downloadTargetPath + QStringLiteral(".part");
+    m_downloadExpectedSize = release.installerSize;
+    QFile::remove(m_downloadPartPath);
+    QFile::remove(downloadScriptPath());
 
-    m_downloadFile = new QFile(partPath, this);
-    if (!m_downloadFile->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        m_downloadFile->deleteLater();
-        m_downloadFile = nullptr;
+    QFile scriptFile(downloadScriptPath());
+    if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
         setBusy(false);
-        setStatusMessage(QStringLiteral("无法创建更新包文件：%1").arg(partPath));
+        setStatusMessage(QStringLiteral("无法创建下载脚本：%1").arg(scriptFile.fileName()));
         return;
     }
 
-    QNetworkRequest request(QUrl(release.installerUrl));
-    request.setRawHeader("User-Agent", "CineVault");
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    QStringList scriptLines;
+    scriptLines << QStringLiteral("$ErrorActionPreference = 'Stop'")
+                << QStringLiteral("$ProgressPreference = 'SilentlyContinue'")
+                << QStringLiteral("[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12")
+                << QStringLiteral("$downloadUrl = %1").arg(toPowerShellLiteral(release.installerUrl))
+                << QStringLiteral("$targetPath = %1").arg(toPowerShellLiteral(QDir::toNativeSeparators(m_downloadPartPath)))
+                << QStringLiteral("$headers = @{ 'User-Agent' = 'CineVault' }")
+                << QStringLiteral("Invoke-WebRequest -Uri $downloadUrl -Headers $headers -MaximumRedirection 8 -OutFile $targetPath");
+    scriptFile.write(scriptLines.join(QStringLiteral("\r\n")).toUtf8());
+    scriptFile.close();
 
     setStatusMessage(QStringLiteral("发现新版本 %1，正在下载更新包...").arg(release.versionTag));
-    m_downloadReply = m_networkManager->get(request);
-    connect(m_downloadReply, &QNetworkReply::readyRead, this, [this]() {
-        if (m_downloadFile && m_downloadReply) {
-            m_downloadFile->write(m_downloadReply->readAll());
-        }
+    m_downloadProcess = new QProcess(this);
+    m_downloadProcess->setProgram(QStringLiteral("powershell.exe"));
+    m_downloadProcess->setArguments({
+        QStringLiteral("-NoProfile"),
+        QStringLiteral("-ExecutionPolicy"),
+        QStringLiteral("Bypass"),
+        QStringLiteral("-WindowStyle"),
+        QStringLiteral("Hidden"),
+        QStringLiteral("-File"),
+        QDir::toNativeSeparators(scriptFile.fileName())
     });
-    connect(m_downloadReply, &QNetworkReply::downloadProgress, this, [this](qint64 received, qint64 total) {
-        if (total <= 0) {
-            return;
-        }
-
-        const auto progress = static_cast<int>((received * 100) / total);
-        if (progress == m_lastDownloadPercent) {
-            return;
-        }
-
-        m_lastDownloadPercent = progress;
-        setStatusMessage(QStringLiteral("正在下载更新包 %1：%2%").arg(m_downloadVersionTag).arg(progress));
-    });
-    connect(m_downloadReply, &QNetworkReply::finished, this, &UpdateService::finishDownloadReply);
+    m_downloadProcess->setWorkingDirectory(Paths::updatesRoot());
+    connect(m_downloadProcess,
+            qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+            this,
+            &UpdateService::finishDownloadProcess);
+    m_downloadProcess->start();
+    if (!m_downloadProcess->waitForStarted(3000)) {
+        QFile::remove(downloadScriptPath());
+        m_downloadProcess->deleteLater();
+        m_downloadProcess = nullptr;
+        setBusy(false);
+        setStatusMessage(QStringLiteral("无法启动更新包下载进程。"));
+    }
 }
 
 void UpdateService::finishCheckReply()
@@ -479,58 +499,67 @@ void UpdateService::finishCheckReply()
     startInstallerDownload(release, m_manualCheck);
 }
 
-void UpdateService::finishDownloadReply()
+void UpdateService::finishDownloadProcess(int exitCode, QProcess::ExitStatus exitStatus)
 {
-    auto *reply = m_downloadReply;
-    auto *downloadFile = m_downloadFile;
+    auto *downloadProcess = m_downloadProcess;
     const auto versionTag = m_downloadVersionTag;
     const auto targetPath = m_downloadTargetPath;
+    const auto partPath = m_downloadPartPath;
+    const auto expectedSize = m_downloadExpectedSize;
 
-    m_downloadReply = nullptr;
-    m_downloadFile = nullptr;
+    m_downloadProcess = nullptr;
     m_downloadVersionTag.clear();
     m_downloadTargetPath.clear();
-    m_lastDownloadPercent = -1;
+    m_downloadPartPath.clear();
+    m_downloadExpectedSize = 0;
+    QFile::remove(downloadScriptPath());
 
-    if (!reply || !downloadFile) {
+    if (!downloadProcess) {
         setBusy(false);
         return;
     }
 
-    downloadFile->write(reply->readAll());
-    downloadFile->flush();
-    downloadFile->close();
+    const auto standardError = QString::fromLocal8Bit(downloadProcess->readAllStandardError()).trimmed();
+    const auto standardOutput = QString::fromLocal8Bit(downloadProcess->readAllStandardOutput()).trimmed();
+    downloadProcess->deleteLater();
 
-    const auto statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    const auto replyError = reply->error();
-    const auto errorString = reply->errorString();
-    reply->deleteLater();
-
-    if (replyError != QNetworkReply::NoError || statusCode >= 400) {
-        downloadFile->remove();
-        downloadFile->deleteLater();
+    if (exitStatus != QProcess::NormalExit || exitCode != 0) {
+        QFile::remove(partPath);
         setBusy(false);
-        setStatusMessage(QStringLiteral("下载更新包失败：%1").arg(errorString));
+        setStatusMessage(QStringLiteral("下载更新包失败：%1").arg(
+            standardError.isEmpty() ? (standardOutput.isEmpty() ? QStringLiteral("未知错误") : standardOutput)
+                                    : standardError));
+        return;
+    }
+
+    QFileInfo partInfo(partPath);
+    if (!partInfo.exists() || partInfo.size() <= 0) {
+        QFile::remove(partPath);
+        setBusy(false);
+        setStatusMessage(QStringLiteral("下载更新包失败：未生成完整安装包。"));
+        return;
+    }
+
+    if (expectedSize > 0 && partInfo.size() != expectedSize) {
+        QFile::remove(partPath);
+        setBusy(false);
+        setStatusMessage(QStringLiteral("下载更新包失败：安装包大小与发布资产不一致。"));
         return;
     }
 
     if (QFile::exists(targetPath) && !QFile::remove(targetPath)) {
-        downloadFile->remove();
-        downloadFile->deleteLater();
+        QFile::remove(partPath);
         setBusy(false);
         setStatusMessage(QStringLiteral("无法覆盖旧更新包：%1").arg(targetPath));
         return;
     }
 
-    if (!downloadFile->rename(targetPath)) {
-        downloadFile->remove();
-        downloadFile->deleteLater();
+    if (!QFile::rename(partPath, targetPath)) {
+        QFile::remove(partPath);
         setBusy(false);
         setStatusMessage(QStringLiteral("无法保存更新包：%1").arg(targetPath));
         return;
     }
-
-    downloadFile->deleteLater();
 
     if (m_settings) {
         m_settings->setDownloadedUpdateVersion(versionTag);
