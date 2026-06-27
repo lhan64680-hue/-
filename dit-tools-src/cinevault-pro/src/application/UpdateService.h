@@ -5,8 +5,6 @@
 #include <QString>
 
 class AppSettings;
-class QNetworkAccessManager;
-class QNetworkReply;
 
 struct UpdateReleaseInfo {
     QString versionTag;
@@ -48,12 +46,11 @@ private:
     bool readPendingUpdate(QString *versionTag, QString *installerPath) const;
     bool useExistingInstaller(const UpdateReleaseInfo &release, bool manual);
     void startInstallerDownload(const UpdateReleaseInfo &release, bool manual);
-    void finishCheckReply();
+    void finishCheckProcess(int exitCode, QProcess::ExitStatus exitStatus);
     void finishDownloadProcess(int exitCode, QProcess::ExitStatus exitStatus);
 
     AppSettings *m_settings = nullptr;
-    QNetworkAccessManager *m_networkManager = nullptr;
-    QNetworkReply *m_checkReply = nullptr;
+    QProcess *m_checkProcess = nullptr;
     QProcess *m_downloadProcess = nullptr;
     QString m_downloadVersionTag;
     QString m_downloadTargetPath;
