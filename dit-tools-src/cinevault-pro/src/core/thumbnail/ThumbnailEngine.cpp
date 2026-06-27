@@ -1,10 +1,12 @@
 #include "core/thumbnail/ThumbnailEngine.h"
 
+#include "infrastructure/config/AppSettings.h"
 #include "infrastructure/ffmpeg/FFmpegAdapter.h"
 
-ThumbnailEngine::ThumbnailEngine(FFmpegAdapter *adapter, QObject *parent)
+ThumbnailEngine::ThumbnailEngine(FFmpegAdapter *adapter, AppSettings *settings, QObject *parent)
     : QObject(parent)
     , m_adapter(adapter)
+    , m_settings(settings)
 {
 }
 
@@ -29,5 +31,11 @@ ThumbnailResult ThumbnailEngine::createPlaceholder(const ThumbnailRequest &reque
         result.errorMessage = QStringLiteral("缩略图模块未初始化");
         return result;
     }
-    return m_adapter->generateThumbnail(request);
+    auto normalizedRequest = request;
+    if (normalizedRequest.assetType == AssetType::Image) {
+        normalizedRequest.frameIndex = 1;
+    } else if (m_settings) {
+        normalizedRequest.frameIndex = m_settings->thumbnailFrameIndex();
+    }
+    return m_adapter->generateThumbnail(normalizedRequest);
 }

@@ -18,9 +18,12 @@ enum class JobType : qint32 {
     Scan = 0,
     Metadata,
     Thumbnail,
+    GlobalSync,
+    ContentAnalysis,
     Preview,
     Report,
-    Export
+    Export,
+    Backup
 };
 
 enum class JobState : qint32 {
@@ -32,8 +35,10 @@ enum class JobState : qint32 {
 };
 
 enum class WorkspaceId : qint32 {
-    Import = 0,
+    ProjectLibrary = 0,
+    Import,
     Library,
+    MaterialCenter,
     Qc,
     Report,
     Jobs
@@ -59,4 +64,44 @@ enum class MediaType : qint32 {
     Video,
     Audio,
     Image
+};
+
+enum class AnalysisMode : qint32 {
+    EveryNFrames = 0,
+    EveryFrame
+};
+
+enum class VideoAnalysisStatus : qint32 {
+    Pending = 0,
+    Running,
+    Ready,
+    Failed
+};
+
+enum class ConfirmationStatus : qint32 {
+    Pending = 0,
+    Confirmed
+};
+
+enum class BackupSourceKind : qint32 {
+    File = 0,
+    Directory,
+    Volume
+};
+
+enum class BackupVerificationMode : qint32 {
+    Off = 0,
+    Size,
+    Sha256,
+    Md5
+};
+
+enum class BackupTaskState : qint32 {
+    Pending = 0,
+    Running,
+    Verifying,
+    Completed,
+    Warning,
+    Failed,
+    Cancelled
 };

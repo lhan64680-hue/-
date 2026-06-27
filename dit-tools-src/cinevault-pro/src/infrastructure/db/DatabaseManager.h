@@ -23,7 +23,9 @@ public:
 private:
     bool initializeSchema(QSqlDatabase &db, QString *errorMessage);
     bool createBaseSchema(QSqlDatabase &db, QString *errorMessage) const;
+    bool ensureBaseSchemaCompatibility(QSqlDatabase &db, QString *errorMessage) const;
     bool migrateToVersion2(QSqlDatabase &db, QString *errorMessage) const;
+    bool ensureMediaSchemaCompatibility(QSqlDatabase &db, QString *errorMessage) const;
     int currentSchemaVersion(QSqlDatabase &db) const;
     bool setSchemaVersion(QSqlDatabase &db, int version, QString *errorMessage) const;
 

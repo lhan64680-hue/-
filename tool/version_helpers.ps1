@@ -1,20 +1,29 @@
 function Get-NextDistVersion {
-    param([string]$DistRoot)
+    param(
+        [string]$DistRoot,
+        [string[]]$ReferenceRoots = @()
+    )
 
-    if (-not (Test-Path $DistRoot)) {
-        return "v0.1.0"
+    $roots = @($DistRoot) + $ReferenceRoots
+    $versions = @()
+
+    foreach ($root in $roots) {
+        if (-not (Test-Path $root)) {
+            continue
+        }
+
+        $versions += Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^v(\d+)\.(\d+)\.(\d+)$' } |
+            ForEach-Object {
+                [PSCustomObject]@{
+                    Major = [int]$Matches[1]
+                    Minor = [int]$Matches[2]
+                    Patch = [int]$Matches[3]
+                }
+            }
     }
 
-    $versions = Get-ChildItem -Path $DistRoot -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -match '^v(\d+)\.(\d+)\.(\d+)$' } |
-        ForEach-Object {
-            [PSCustomObject]@{
-                Major = [int]$Matches[1]
-                Minor = [int]$Matches[2]
-                Patch = [int]$Matches[3]
-            }
-        } |
-        Sort-Object Major, Minor, Patch
+    $versions = $versions | Sort-Object Major, Minor, Patch
 
     if (-not $versions) {
         return "v0.1.0"

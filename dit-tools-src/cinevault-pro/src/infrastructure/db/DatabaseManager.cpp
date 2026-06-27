@@ -1,6 +1,7 @@
 #include "infrastructure/db/DatabaseManager.h"
 
 #include <QFileInfo>
+#include <QList>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -15,6 +16,58 @@ bool executeBatch(QSqlDatabase &db, const QStringList &statements, QString *erro
             if (errorMessage) {
                 *errorMessage = query.lastError().text();
             }
+            return false;
+        }
+    }
+    return true;
+}
+
+QStringList tableColumns(QSqlDatabase &db, const QString &tableName, QString *errorMessage)
+{
+    QSqlQuery query(db);
+    if (!query.exec(QStringLiteral("PRAGMA table_info(%1)").arg(tableName))) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("读取旧项目表结构失败：%1，%2").arg(tableName, query.lastError().text());
+        }
+        return {};
+    }
+
+    QStringList columns;
+    while (query.next()) {
+        columns.append(query.value(1).toString());
+    }
+    return columns;
+}
+
+bool ensureColumn(QSqlDatabase &db,
+                  const QString &tableName,
+                  const QString &columnName,
+                  const QString &columnDefinition,
+                  QString *errorMessage)
+{
+    const auto columns = tableColumns(db, tableName, errorMessage);
+    if (columns.contains(columnName, Qt::CaseInsensitive)) {
+        return true;
+    }
+
+    QSqlQuery query(db);
+    const auto statement = QStringLiteral("ALTER TABLE %1 ADD COLUMN %2").arg(tableName, columnDefinition);
+    if (!query.exec(statement)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("迁移旧项目字段失败：%1.%2，%3").arg(tableName, columnName, query.lastError().text());
+        }
+        return false;
+    }
+    return true;
+}
+
+bool ensureColumns(QSqlDatabase &db,
+                   const QString &tableName,
+                   const QList<QPair<QString, QString>> &columns,
+                   QString *errorMessage)
+{
+    for (const auto &column : columns) {
+        if (!ensureColumn(db, tableName, column.first, column.second, errorMessage)) {
             return false;
         }
     }
@@ -118,6 +171,9 @@ bool DatabaseManager::initializeSchema(QSqlDatabase &db, QString *errorMessage)
     if (!createBaseSchema(db, errorMessage)) {
         return false;
     }
+    if (!ensureBaseSchemaCompatibility(db, errorMessage)) {
+        return false;
+    }
 
     auto version = currentSchemaVersion(db);
     if (version < 1) {
@@ -132,6 +188,8 @@ bool DatabaseManager::initializeSchema(QSqlDatabase &db, QString *errorMessage)
             return false;
         }
         version = 2;
+    } else if (!ensureMediaSchemaCompatibility(db, errorMessage)) {
+        return false;
     }
 
     m_schemaVersion = version;
@@ -184,6 +242,7 @@ bool DatabaseManager::createBaseSchema(QSqlDatabase &db, QString *errorMessage) 
                        "size_bytes INTEGER NOT NULL DEFAULT 0,"
                        "modified_at TEXT NOT NULL,"
                        "is_readable INTEGER NOT NULL DEFAULT 0,"
+                       "is_favorite INTEGER NOT NULL DEFAULT 0,"
                        "created_at TEXT NOT NULL,"
                        "FOREIGN KEY(source_root_id) REFERENCES source_root(id) ON DELETE CASCADE"
                        ");"),
@@ -212,6 +271,82 @@ bool DatabaseManager::createBaseSchema(QSqlDatabase &db, QString *errorMessage) 
     };
 
     return executeBatch(db, statements, errorMessage);
+}
+
+bool DatabaseManager::ensureBaseSchemaCompatibility(QSqlDatabase &db, QString *errorMessage) const
+{
+    return ensureColumns(db,
+                         QStringLiteral("project"),
+                         {
+                             {QStringLiteral("id"), QStringLiteral("id TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("name"), QStringLiteral("name TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("root_path"), QStringLiteral("root_path TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("created_at"), QStringLiteral("created_at TEXT NOT NULL DEFAULT ''")}
+                         },
+                         errorMessage)
+        && ensureColumns(db,
+                         QStringLiteral("source_root"),
+                         {
+                             {QStringLiteral("id"), QStringLiteral("id INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("name"), QStringLiteral("name TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("path"), QStringLiteral("path TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("status"), QStringLiteral("status TEXT NOT NULL DEFAULT 'ok'")},
+                             {QStringLiteral("total_files"), QStringLiteral("total_files INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("total_folders"), QStringLiteral("total_folders INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("total_size_bytes"), QStringLiteral("total_size_bytes INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("video_count"), QStringLiteral("video_count INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("audio_count"), QStringLiteral("audio_count INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("image_count"), QStringLiteral("image_count INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("other_count"), QStringLiteral("other_count INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("warning_count"), QStringLiteral("warning_count INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("created_at"), QStringLiteral("created_at TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("updated_at"), QStringLiteral("updated_at TEXT NOT NULL DEFAULT ''")}
+                         },
+                         errorMessage)
+        && ensureColumns(db,
+                         QStringLiteral("folder_node"),
+                         {
+                             {QStringLiteral("id"), QStringLiteral("id INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("source_root_id"), QStringLiteral("source_root_id INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("absolute_path"), QStringLiteral("absolute_path TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("relative_path"), QStringLiteral("relative_path TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("file_count"), QStringLiteral("file_count INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("created_at"), QStringLiteral("created_at TEXT NOT NULL DEFAULT ''")}
+                         },
+                         errorMessage)
+        && ensureColumns(db,
+                         QStringLiteral("asset_file"),
+                         {
+                             {QStringLiteral("id"), QStringLiteral("id INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("source_root_id"), QStringLiteral("source_root_id INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("name"), QStringLiteral("name TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("extension"), QStringLiteral("extension TEXT")},
+                             {QStringLiteral("absolute_path"), QStringLiteral("absolute_path TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("relative_path"), QStringLiteral("relative_path TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("parent_path"), QStringLiteral("parent_path TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("asset_type"), QStringLiteral("asset_type INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("size_bytes"), QStringLiteral("size_bytes INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("modified_at"), QStringLiteral("modified_at TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("is_readable"), QStringLiteral("is_readable INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("is_favorite"), QStringLiteral("is_favorite INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("created_at"), QStringLiteral("created_at TEXT NOT NULL DEFAULT ''")}
+                         },
+                         errorMessage)
+        && ensureColumns(db,
+                         QStringLiteral("job"),
+                         {
+                             {QStringLiteral("id"), QStringLiteral("id INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("type"), QStringLiteral("type INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("state"), QStringLiteral("state INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("title"), QStringLiteral("title TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("detail"), QStringLiteral("detail TEXT")},
+                             {QStringLiteral("error_message"), QStringLiteral("error_message TEXT")},
+                             {QStringLiteral("progress"), QStringLiteral("progress INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("source_root_id"), QStringLiteral("source_root_id INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("started_at"), QStringLiteral("started_at TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("updated_at"), QStringLiteral("updated_at TEXT NOT NULL DEFAULT ''")}
+                         },
+                         errorMessage);
 }
 
 bool DatabaseManager::migrateToVersion2(QSqlDatabase &db, QString *errorMessage) const
@@ -257,8 +392,96 @@ bool DatabaseManager::migrateToVersion2(QSqlDatabase &db, QString *errorMessage)
     if (!executeBatch(db, statements, errorMessage)) {
         return false;
     }
+    if (!ensureMediaSchemaCompatibility(db, errorMessage)) {
+        return false;
+    }
 
     return setSchemaVersion(db, 2, errorMessage);
+}
+
+bool DatabaseManager::ensureMediaSchemaCompatibility(QSqlDatabase &db, QString *errorMessage) const
+{
+    const QStringList statements = {
+        QStringLiteral("CREATE TABLE IF NOT EXISTS media_metadata ("
+                       "asset_id INTEGER PRIMARY KEY,"
+                       "probe_status INTEGER NOT NULL DEFAULT 0,"
+                       "media_type INTEGER NOT NULL DEFAULT 0,"
+                       "container TEXT,"
+                       "duration_ms INTEGER NOT NULL DEFAULT 0,"
+                       "bit_rate INTEGER NOT NULL DEFAULT 0,"
+                       "raw_json TEXT,"
+                       "error_message TEXT,"
+                       "updated_at TEXT NOT NULL,"
+                       "FOREIGN KEY(asset_id) REFERENCES asset_file(id) ON DELETE CASCADE"
+                       ");"),
+        QStringLiteral("CREATE TABLE IF NOT EXISTS media_stream ("
+                       "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                       "asset_id INTEGER NOT NULL,"
+                       "stream_index INTEGER NOT NULL,"
+                       "stream_kind TEXT NOT NULL,"
+                       "codec TEXT,"
+                       "bit_rate INTEGER NOT NULL DEFAULT 0,"
+                       "width INTEGER NOT NULL DEFAULT 0,"
+                       "height INTEGER NOT NULL DEFAULT 0,"
+                       "channels INTEGER NOT NULL DEFAULT 0,"
+                       "sample_rate INTEGER NOT NULL DEFAULT 0,"
+                       "FOREIGN KEY(asset_id) REFERENCES media_metadata(asset_id) ON DELETE CASCADE"
+                       ");"),
+        QStringLiteral("CREATE TABLE IF NOT EXISTS thumbnail ("
+                       "asset_id INTEGER PRIMARY KEY,"
+                       "status INTEGER NOT NULL DEFAULT 0,"
+                       "image_path TEXT,"
+                       "updated_at TEXT NOT NULL,"
+                       "error_message TEXT,"
+                       "FOREIGN KEY(asset_id) REFERENCES asset_file(id) ON DELETE CASCADE"
+                       ");"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_media_stream_asset_id ON media_stream(asset_id);"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_media_metadata_probe_status ON media_metadata(probe_status);")
+    };
+
+    if (!executeBatch(db, statements, errorMessage)) {
+        return false;
+    }
+
+    return ensureColumns(db,
+                         QStringLiteral("media_metadata"),
+                         {
+                             {QStringLiteral("asset_id"), QStringLiteral("asset_id INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("probe_status"), QStringLiteral("probe_status INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("media_type"), QStringLiteral("media_type INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("container"), QStringLiteral("container TEXT")},
+                             {QStringLiteral("duration_ms"), QStringLiteral("duration_ms INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("bit_rate"), QStringLiteral("bit_rate INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("raw_json"), QStringLiteral("raw_json TEXT")},
+                             {QStringLiteral("error_message"), QStringLiteral("error_message TEXT")},
+                             {QStringLiteral("updated_at"), QStringLiteral("updated_at TEXT NOT NULL DEFAULT ''")}
+                         },
+                         errorMessage)
+        && ensureColumns(db,
+                         QStringLiteral("media_stream"),
+                         {
+                             {QStringLiteral("id"), QStringLiteral("id INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("asset_id"), QStringLiteral("asset_id INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("stream_index"), QStringLiteral("stream_index INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("stream_kind"), QStringLiteral("stream_kind TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("codec"), QStringLiteral("codec TEXT")},
+                             {QStringLiteral("bit_rate"), QStringLiteral("bit_rate INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("width"), QStringLiteral("width INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("height"), QStringLiteral("height INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("channels"), QStringLiteral("channels INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("sample_rate"), QStringLiteral("sample_rate INTEGER NOT NULL DEFAULT 0")}
+                         },
+                         errorMessage)
+        && ensureColumns(db,
+                         QStringLiteral("thumbnail"),
+                         {
+                             {QStringLiteral("asset_id"), QStringLiteral("asset_id INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("status"), QStringLiteral("status INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("image_path"), QStringLiteral("image_path TEXT")},
+                             {QStringLiteral("updated_at"), QStringLiteral("updated_at TEXT NOT NULL DEFAULT ''")},
+                             {QStringLiteral("error_message"), QStringLiteral("error_message TEXT")}
+                         },
+                         errorMessage);
 }
 
 int DatabaseManager::currentSchemaVersion(QSqlDatabase &db) const

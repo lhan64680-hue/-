@@ -24,6 +24,10 @@ if [[ -d docs ]]; then
   cp -a docs "$target/"
 fi
 
+if [[ -d installer ]]; then
+  cp -a installer "$target/"
+fi
+
 if [[ -f .gitignore ]]; then
   cp .gitignore "$target/"
 fi

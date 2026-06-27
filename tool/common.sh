@@ -6,42 +6,8 @@ repo_root() {
   git rev-parse --show-toplevel
 }
 
-require_message() {
-  if [[ $# -lt 1 || -z "${1:-}" ]]; then
-    echo "用法: $0 \"提交说明\"" >&2
-    exit 1
-  fi
-}
-
-windows_git() {
-  cmd.exe /c "$*"
-}
-
 ensure_on_repo_root() {
   cd "$(repo_root)"
-}
-
-has_changes() {
-  [[ -n "$(git status --porcelain)" ]]
-}
-
-commit_if_needed() {
-  local message="$1"
-
-  if has_changes; then
-    git add -A
-    if ! git diff --cached --quiet; then
-      git commit -m "$message"
-    fi
-  fi
-}
-
-push_main_windows_first() {
-  if command -v cmd.exe >/dev/null 2>&1; then
-    windows_git git push origin main
-  else
-    git push origin main
-  fi
 }
 
 next_snapshot_index() {

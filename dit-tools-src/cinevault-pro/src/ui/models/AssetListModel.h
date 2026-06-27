@@ -20,7 +20,13 @@ public:
         SizeBytesRole,
         SizeLabelRole,
         ModifiedAtRole,
-        ReadableRole
+        ReadableRole,
+        ThumbnailPathRole,
+        DurationLabelRole,
+        BitRateLabelRole,
+        TechnicalSummaryRole,
+        ProbeStatusLabelRole,
+        FavoriteRole
     };
 
     explicit AssetListModel(QObject *parent = nullptr);

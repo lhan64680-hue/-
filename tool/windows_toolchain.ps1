@@ -93,6 +93,30 @@ function Get-WindeployQtPath {
     return $windeployqt
 }
 
+function Get-InnoSetupCompilerPath {
+    $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($null -ne $command -and -not [string]::IsNullOrWhiteSpace($command.Source)) {
+        return $command.Source
+    }
+
+    $candidates = @(
+        "C:\ProgramData\chocolatey\bin\ISCC.exe",
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
+    )
+
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+
+    throw "Inno Setup compiler was not found. Install Inno Setup 6 or ensure ISCC.exe is available on PATH."
+}
+
 function Resolve-FfmpegDevRoot {
     param(
         [string]$FfmpegDevRoot,
@@ -157,6 +181,7 @@ function Get-CineVaultBuildContext {
 
     $resolvedQtRoot = $null
     $resolvedFfmpegDevRoot = $null
+    $resolvedInnoSetupCompiler = $null
     $errors = New-Object System.Collections.Generic.List[string]
 
     try {
@@ -177,6 +202,12 @@ function Get-CineVaultBuildContext {
         $errors.Add($_.Exception.Message)
     }
 
+    try {
+        $resolvedInnoSetupCompiler = Get-InnoSetupCompilerPath
+    } catch {
+        $errors.Add($_.Exception.Message)
+    }
+
     if ($errors.Count -gt 0) {
         throw ($errors -join [Environment]::NewLine)
     }
@@ -187,5 +218,6 @@ function Get-CineVaultBuildContext {
         FfmpegDevRoot = $resolvedFfmpegDevRoot
         HasFfmpeg = -not [string]::IsNullOrWhiteSpace($resolvedFfmpegDevRoot)
         WindeployQt = (Get-WindeployQtPath -QtRoot $resolvedQtRoot)
+        InnoSetupCompiler = $resolvedInnoSetupCompiler
     }
 }

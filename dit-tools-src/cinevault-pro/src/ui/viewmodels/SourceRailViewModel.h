@@ -16,9 +16,12 @@ public:
     SourceRootListModel *model() const;
     qint64 selectedSourceId() const;
 
+    void resetForProject();
+
     Q_INVOKABLE void reload();
     Q_INVOKABLE void selectSource(qint64 sourceRootId);
     Q_INVOKABLE void clearSelection();
+    Q_INVOKABLE bool removeSource(qint64 sourceRootId);
 
 signals:
     void selectionChanged();

@@ -5,7 +5,9 @@
 #include <QDateTime>
 #include <QList>
 #include <QString>
+#include <QStringList>
 #include <QVariantList>
+#include <QVector>
 
 struct Project {
     QString id;
@@ -13,6 +15,15 @@ struct Project {
     QString rootPath;
     QString databasePath;
     QString createdAt;
+};
+
+struct ProjectLibraryEntry {
+    QString name;
+    QString rootPath;
+    QString databasePath;
+    QString createdAt;
+    bool available = false;
+    bool current = false;
 };
 
 struct SourceRoot {
@@ -50,6 +61,13 @@ struct AssetFile {
     qint64 sizeBytes = 0;
     QString modifiedAt;
     bool readable = false;
+    QString thumbnailPath;
+    QString container;
+    qint64 durationMs = 0;
+    qint64 bitRate = 0;
+    ProbeStatus probeStatus = ProbeStatus::Pending;
+    QString technicalSummary;
+    bool favorite = false;
 };
 
 struct FormatInfo {
@@ -83,6 +101,10 @@ struct ThumbnailRequest {
     qint64 assetId = 0;
     QString sourcePath;
     QString cachePath;
+    AssetType assetType = AssetType::Unknown;
+    int frameIndex = 3;
+    int maxWidth = 480;
+    int maxHeight = 480;
 };
 
 struct ThumbnailResult {
@@ -90,6 +112,172 @@ struct ThumbnailResult {
     bool success = false;
     QString outputPath;
     QString errorMessage;
+};
+
+struct ExtractedFrame {
+    int frameNumber = 0;
+    qint64 timestampMs = 0;
+    QString imagePath;
+};
+
+struct FrameExtractionRequest {
+    qint64 assetId = 0;
+    QString sourcePath;
+    QString outputDirectory;
+    AnalysisMode mode = AnalysisMode::EveryNFrames;
+    int frameInterval = 10;
+    int maxWidth = 1920;
+    int maxHeight = 1080;
+};
+
+struct FrameExtractionResult {
+    qint64 assetId = 0;
+    bool success = false;
+    QVector<ExtractedFrame> frames;
+    QString errorMessage;
+};
+
+struct VisionFrameAnalysis {
+    QString caption;
+    QStringList tags;
+    QStringList objects;
+    QString actions;
+    QString setting;
+};
+
+struct VisionVideoSummary {
+    QString summary;
+    QStringList keywords;
+    QStringList scenes;
+};
+
+struct GlobalVideoAsset {
+    QString videoKey;
+    QString projectUuid;
+    QString projectName;
+    QString projectDatabasePath;
+    qint64 sourceRootId = 0;
+    QString sourceRootName;
+    qint64 assetId = 0;
+    QString fileName;
+    QString absolutePath;
+    QString relativePath;
+    qint64 sizeBytes = 0;
+    QString modifiedAt;
+    qint64 durationMs = 0;
+    QString thumbnailPath;
+    VideoAnalysisStatus analysisStatus = VideoAnalysisStatus::Pending;
+    ConfirmationStatus confirmationStatus = ConfirmationStatus::Pending;
+    QString summary;
+    QStringList keywords;
+    QStringList scenes;
+    QString searchText;
+    QString errorMessage;
+    QString updatedAt;
+    QString analyzedAt;
+    QString confirmedAt;
+};
+
+struct FrameAnalysisRecord {
+    qint64 id = 0;
+    QString videoKey;
+    int frameNumber = 0;
+    qint64 timestampMs = 0;
+    QString imagePath;
+    QString caption;
+    QStringList tags;
+    QStringList objects;
+    QString actions;
+    QString setting;
+    QString errorMessage;
+};
+
+struct BackupSource {
+    QString id;
+    BackupSourceKind kind = BackupSourceKind::Directory;
+    QString name;
+    QString path;
+    QString rootPath;
+    qint64 totalFiles = 0;
+    qint64 totalBytes = 0;
+    bool readable = false;
+    QString statusText;
+};
+
+struct BackupDestination {
+    QString id;
+    QString name;
+    QString rootPath;
+    QString plannedRootPath;
+    bool primary = false;
+    qint64 availableBytes = -1;
+    bool writable = false;
+    QString statusText;
+};
+
+struct BackupFileItem {
+    QString sourceId;
+    QString sourcePath;
+    QString relativePath;
+    qint64 sizeBytes = 0;
+    QString modifiedAt;
+};
+
+struct BackupDestinationTask {
+    QString destinationId;
+    QString name;
+    QString rootPath;
+    QString plannedRootPath;
+    bool primary = false;
+    BackupTaskState state = BackupTaskState::Pending;
+    qint64 totalFiles = 0;
+    qint64 copiedFiles = 0;
+    qint64 totalBytes = 0;
+    qint64 copiedBytes = 0;
+    double bytesPerSecond = 0.0;
+    QString statusText;
+    QString errorMessage;
+};
+
+struct BackupExecutionResult {
+    QVector<BackupDestinationTask> tasks;
+    QStringList successfulArchivePaths;
+    QStringList logPaths;
+    QStringList errors;
+    QStringList warnings;
+    bool cancelled = false;
+    bool success = false;
+};
+
+struct BackupRequest {
+    QString projectName;
+    QString batchName;
+    QVector<BackupSource> sources;
+    QVector<BackupDestination> destinations;
+    BackupVerificationMode verificationMode = BackupVerificationMode::Off;
+    bool cascadeEnabled = false;
+    int primaryDestinationIndex = 0;
+};
+
+struct BackupPlan {
+    QString batchName;
+    QVector<BackupSource> sources;
+    QVector<BackupDestination> destinations;
+    QVector<BackupFileItem> files;
+    QVector<BackupDestinationTask> tasks;
+    BackupVerificationMode verificationMode = BackupVerificationMode::Off;
+    bool cascadeEnabled = false;
+    int primaryDestinationIndex = 0;
+    qint64 totalFiles = 0;
+    qint64 totalBytes = 0;
+    QStringList errors;
+    QStringList warnings;
+    bool valid = false;
+};
+
+struct VideoAnalysisDetail {
+    GlobalVideoAsset asset;
+    QVector<FrameAnalysisRecord> frames;
 };
 
 struct Job {

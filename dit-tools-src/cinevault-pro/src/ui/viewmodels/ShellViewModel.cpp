@@ -2,13 +2,10 @@
 
 #include "application/ImportService.h"
 #include "application/ProjectService.h"
-#include "shared/Paths.h"
 
 #include <QApplication>
-#include <QFileDialog>
-#include <QInputDialog>
-#include <QLineEdit>
 #include <QMessageBox>
+#include <QVariantMap>
 
 namespace {
 QWidget *dialogParent()
@@ -16,14 +13,19 @@ QWidget *dialogParent()
     return QApplication::activeWindow();
 }
 
-void showInfo(const QString &title, const QString &message)
-{
-    QMessageBox::information(dialogParent(), title, message);
-}
-
 void showWarning(const QString &title, const QString &message)
 {
     QMessageBox::warning(dialogParent(), title, message);
+}
+
+QVariantMap workspaceTab(const QString &label, WorkspaceId workspace, int buttonWidth, bool enabled)
+{
+    return QVariantMap{
+        {QStringLiteral("label"), label},
+        {QStringLiteral("value"), static_cast<int>(workspace)},
+        {QStringLiteral("buttonWidth"), buttonWidth},
+        {QStringLiteral("enabled"), enabled}
+    };
 }
 }
 
@@ -49,6 +51,11 @@ QString ShellViewModel::projectPath() const
     return m_projectService->currentProject().rootPath;
 }
 
+bool ShellViewModel::projectEntered() const
+{
+    return m_projectEntered && m_projectService->hasOpenProject();
+}
+
 QString ShellViewModel::globalSearchText() const
 {
     return m_globalSearchText;
@@ -62,7 +69,10 @@ int ShellViewModel::currentWorkspace() const
 QString ShellViewModel::statusSummary() const
 {
     if (!m_projectService->hasOpenProject()) {
-        return QStringLiteral("请先创建或打开项目");
+        return QStringLiteral("请先在项目库新建或打开项目");
+    }
+    if (!projectEntered()) {
+        return QStringLiteral("请在项目库点击项目卡片进入项目");
     }
     return QStringLiteral("项目已就绪");
 }
@@ -70,6 +80,84 @@ QString ShellViewModel::statusSummary() const
 QString ShellViewModel::lastMessage() const
 {
     return m_lastMessage;
+}
+
+QVariantList ShellViewModel::workspaceTabs() const
+{
+    const auto projectReady = projectEntered();
+    return {
+        workspaceTab(QStringLiteral("项目库"), WorkspaceId::ProjectLibrary, 70, true),
+        workspaceTab(QStringLiteral("素材备份"), WorkspaceId::Import, 86, projectReady),
+        workspaceTab(QStringLiteral("素材库"), WorkspaceId::Library, 70, projectReady),
+        workspaceTab(QStringLiteral("素材管理中心"), WorkspaceId::MaterialCenter, 108, projectReady),
+        workspaceTab(QStringLiteral("报表"), WorkspaceId::Report, 56, projectReady),
+        workspaceTab(QStringLiteral("任务"), WorkspaceId::Jobs, 56, projectReady)
+    };
+}
+
+int ShellViewModel::projectLibraryWorkspaceId() const
+{
+    return static_cast<int>(WorkspaceId::ProjectLibrary);
+}
+
+int ShellViewModel::materialBackupWorkspaceId() const
+{
+    return static_cast<int>(WorkspaceId::Import);
+}
+
+int ShellViewModel::libraryWorkspaceId() const
+{
+    return static_cast<int>(WorkspaceId::Library);
+}
+
+int ShellViewModel::materialCenterWorkspaceId() const
+{
+    return static_cast<int>(WorkspaceId::MaterialCenter);
+}
+
+int ShellViewModel::reportWorkspaceId() const
+{
+    return static_cast<int>(WorkspaceId::Report);
+}
+
+int ShellViewModel::jobsWorkspaceId() const
+{
+    return static_cast<int>(WorkspaceId::Jobs);
+}
+
+void ShellViewModel::resetProjectUiState()
+{
+    if (!m_projectService->hasOpenProject()) {
+        m_projectEntered = false;
+        if (m_currentWorkspace != WorkspaceId::ProjectLibrary) {
+            m_currentWorkspace = WorkspaceId::ProjectLibrary;
+            emit currentWorkspaceChanged();
+        }
+    }
+    if (m_globalSearchText.isEmpty()) {
+        return;
+    }
+    m_globalSearchText.clear();
+    emit globalSearchTextChanged();
+    emit searchRequested(m_globalSearchText);
+}
+
+void ShellViewModel::enterProjectFromLibrary()
+{
+    if (!m_projectService->hasOpenProject()) {
+        m_projectEntered = false;
+        m_lastMessage = QStringLiteral("请先在项目库打开一个项目。");
+        emit stateChanged();
+        return;
+    }
+
+    m_projectEntered = true;
+    if (m_currentWorkspace != WorkspaceId::Library) {
+        m_currentWorkspace = WorkspaceId::Library;
+        emit currentWorkspaceChanged();
+    }
+    emit stateChanged();
+    emit searchRequested(m_globalSearchText);
 }
 
 void ShellViewModel::setGlobalSearchText(const QString &text)
@@ -85,85 +173,73 @@ void ShellViewModel::setGlobalSearchText(const QString &text)
 void ShellViewModel::setCurrentWorkspace(int workspace)
 {
     const auto value = static_cast<WorkspaceId>(workspace);
-    if (m_currentWorkspace == value) {
+    const auto normalizedValue = value == WorkspaceId::Qc
+        ? WorkspaceId::Library
+        : value;
+    if (normalizedValue != WorkspaceId::ProjectLibrary && !projectEntered()) {
+        m_lastMessage = QStringLiteral("请先在项目库点击项目卡片进入项目。");
+        if (m_currentWorkspace != WorkspaceId::ProjectLibrary) {
+            m_currentWorkspace = WorkspaceId::ProjectLibrary;
+            emit currentWorkspaceChanged();
+        }
+        emit stateChanged();
         return;
     }
-    m_currentWorkspace = value;
+    if (m_currentWorkspace == normalizedValue) {
+        return;
+    }
+    m_currentWorkspace = normalizedValue;
     emit currentWorkspaceChanged();
+    emit searchRequested(m_globalSearchText);
 }
 
 void ShellViewModel::createProject()
 {
-    QString errorMessage;
-    bool ok = false;
-    const auto projectName = QInputDialog::getText(dialogParent(), QStringLiteral("新建项目"), QStringLiteral("项目名称"), QLineEdit::Normal, QString(), &ok);
-    if (!ok) {
-        m_lastMessage = QStringLiteral("已取消新建项目。");
-        emit stateChanged();
-        return;
-    }
-    if (projectName.trimmed().isEmpty()) {
-        m_lastMessage = QStringLiteral("项目名称不能为空。");
-        showWarning(QStringLiteral("新建项目"), m_lastMessage);
-        emit stateChanged();
-        return;
-    }
-
-    const auto parentDirectory = QFileDialog::getExistingDirectory(dialogParent(), QStringLiteral("选择项目保存目录"), Paths::projectsRoot());
-    if (parentDirectory.isEmpty()) {
-        m_lastMessage = QStringLiteral("已取消选择项目保存目录。");
-        emit stateChanged();
-        return;
-    }
-
-    if (!m_projectService->createProject(projectName, parentDirectory, &errorMessage)) {
-        m_lastMessage = errorMessage;
-        showWarning(QStringLiteral("新建项目失败"), m_lastMessage);
-    } else {
-        m_lastMessage = QStringLiteral("项目已创建：%1").arg(projectName);
-        showInfo(QStringLiteral("新建项目"), QStringLiteral("%1\n%2").arg(m_lastMessage, m_projectService->currentProject().rootPath));
-    }
+    m_currentWorkspace = WorkspaceId::ProjectLibrary;
+    m_lastMessage = QStringLiteral("请在项目库页面新建项目。");
+    emit currentWorkspaceChanged();
     emit stateChanged();
 }
 
 void ShellViewModel::openProject()
 {
-    QString errorMessage;
-    const auto databasePath = QFileDialog::getOpenFileName(dialogParent(), QStringLiteral("打开项目"), Paths::projectsRoot(), QStringLiteral("影资管家项目 (*.cvdb)"));
-    if (databasePath.isEmpty()) {
-        m_lastMessage = QStringLiteral("已取消打开项目。");
-        emit stateChanged();
-        return;
-    }
-
-    if (!m_projectService->openProject(databasePath, &errorMessage)) {
-        m_lastMessage = errorMessage;
-        showWarning(QStringLiteral("打开项目失败"), m_lastMessage);
-    } else {
-        m_lastMessage = QStringLiteral("项目已打开：%1").arg(m_projectService->currentProject().name);
-        showInfo(QStringLiteral("打开项目"), QStringLiteral("%1\n%2").arg(m_lastMessage, m_projectService->currentProject().rootPath));
-    }
+    m_currentWorkspace = WorkspaceId::ProjectLibrary;
+    m_lastMessage = QStringLiteral("请在项目库页面打开项目。");
+    emit currentWorkspaceChanged();
     emit stateChanged();
 }
 
 void ShellViewModel::closeProject()
 {
+    m_projectEntered = false;
     m_projectService->closeProject();
+    if (m_currentWorkspace != WorkspaceId::ProjectLibrary) {
+        m_currentWorkspace = WorkspaceId::ProjectLibrary;
+        emit currentWorkspaceChanged();
+    }
     m_lastMessage = QStringLiteral("项目已关闭");
     emit stateChanged();
 }
 
 void ShellViewModel::addSourceDirectory()
 {
-    if (!m_projectService->hasOpenProject()) {
-        m_lastMessage = QStringLiteral("请先创建或打开项目。");
-        showWarning(QStringLiteral("添加素材源"), m_lastMessage);
+    if (!projectEntered()) {
+        m_lastMessage = QStringLiteral("请先在项目库点击项目卡片进入项目。");
+        if (m_currentWorkspace != WorkspaceId::ProjectLibrary) {
+            m_currentWorkspace = WorkspaceId::ProjectLibrary;
+            emit currentWorkspaceChanged();
+        }
         emit stateChanged();
         return;
     }
 
+    emit addSourceDirectoryRequested();
+}
+
+void ShellViewModel::importSourceDirectory(const QUrl &directoryUrl)
+{
     QString errorMessage;
-    const auto directory = QFileDialog::getExistingDirectory(dialogParent(), QStringLiteral("选择素材源目录"), QString());
+    const auto directory = directoryUrl.toLocalFile();
     if (directory.isEmpty()) {
         m_lastMessage = QStringLiteral("已取消添加素材源。");
         emit stateChanged();
@@ -175,10 +251,18 @@ void ShellViewModel::addSourceDirectory()
         showWarning(QStringLiteral("添加素材源失败"), m_lastMessage);
     } else {
         m_lastMessage = m_importService->lastMessage();
-        m_currentWorkspace = WorkspaceId::Jobs;
-        emit currentWorkspaceChanged();
-        showInfo(QStringLiteral("添加素材源"), QStringLiteral("%1\n请在任务页查看扫描进度。").arg(m_lastMessage));
         emit sourceImported();
     }
     emit stateChanged();
+}
+
+void ShellViewModel::cancelAddSourceDirectory()
+{
+    m_lastMessage = QStringLiteral("已取消添加素材源。");
+    emit stateChanged();
+}
+
+void ShellViewModel::openSettings()
+{
+    emit openSettingsRequested();
 }

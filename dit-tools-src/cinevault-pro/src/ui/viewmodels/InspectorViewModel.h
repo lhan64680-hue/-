@@ -21,6 +21,7 @@ public:
 public slots:
     void showSource(qint64 sourceRootId);
     void showAsset(qint64 assetId);
+    void reload();
     void clear();
 
 signals:
@@ -31,4 +32,6 @@ private:
     QString m_title = QStringLiteral("检查器");
     QString m_subtitle = QStringLiteral("选择左侧素材源或中间素材查看详情");
     QVariantList m_details;
+    qint64 m_currentSourceRootId = 0;
+    qint64 m_currentAssetId = 0;
 };

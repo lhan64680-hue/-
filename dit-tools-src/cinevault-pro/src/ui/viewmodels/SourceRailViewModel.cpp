@@ -20,6 +20,16 @@ qint64 SourceRailViewModel::selectedSourceId() const
     return m_selectedSourceId;
 }
 
+void SourceRailViewModel::resetForProject()
+{
+    if (m_selectedSourceId != 0) {
+        m_selectedSourceId = 0;
+        emit selectionChanged();
+        emit sourceSelected(0);
+    }
+    reload();
+}
+
 void SourceRailViewModel::reload()
 {
     const auto items = m_libraryQueryService->fetchSourceRoots();
@@ -34,6 +44,7 @@ void SourceRailViewModel::reload()
     if (!foundSelection && m_selectedSourceId != 0) {
         m_selectedSourceId = 0;
         emit selectionChanged();
+        emit sourceSelected(0);
     }
 }
 
@@ -50,4 +61,24 @@ void SourceRailViewModel::selectSource(qint64 sourceRootId)
 void SourceRailViewModel::clearSelection()
 {
     selectSource(0);
+}
+
+bool SourceRailViewModel::removeSource(qint64 sourceRootId)
+{
+    if (!m_libraryQueryService || sourceRootId <= 0) {
+        return false;
+    }
+
+    const bool removedSelection = m_selectedSourceId == sourceRootId;
+    if (!m_libraryQueryService->removeSourceRoot(sourceRootId)) {
+        return false;
+    }
+
+    reload();
+    if (removedSelection && m_selectedSourceId != 0) {
+        m_selectedSourceId = 0;
+        emit selectionChanged();
+    }
+    emit sourceSelected(removedSelection ? qint64{0} : m_selectedSourceId);
+    return true;
 }

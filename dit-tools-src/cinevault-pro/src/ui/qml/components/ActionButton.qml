@@ -6,6 +6,8 @@ Button {
     id: control
 
     property bool primary: false
+    property bool danger: false
+    property int textPixelSize: 13
 
     implicitWidth: Math.max(72, actionText.implicitWidth + 24)
     implicitHeight: 36
@@ -16,19 +18,19 @@ Button {
         color: !control.enabled
             ? Theme.panel2
             : (control.down
-                ? (control.primary ? "#2F6FE0" : "#2A3242")
+                ? (control.danger ? Theme.red : (control.primary ? Theme.primaryPressed : Theme.buttonPressed))
                 : (control.hovered
-                    ? (control.primary ? "#4F8CFF" : "#333D50")
-                    : (control.primary ? "#3F7FF0" : Theme.card)))
+                    ? (control.danger ? Theme.red : (control.primary ? Theme.primaryHover : Theme.buttonHover))
+                    : (control.danger ? Theme.red : (control.primary ? Theme.primaryBg : Theme.buttonBg))))
         border.width: 1
-        border.color: control.primary ? Qt.rgba(0.65, 0.78, 1.0, 0.45) : Theme.line
+        border.color: control.danger ? Theme.red : (control.primary ? Theme.selectedLine : Theme.line)
     }
 
     contentItem: Text {
         id: actionText
         text: control.text
-        color: control.enabled ? Theme.text : Theme.weak
-        font.pixelSize: 13
+        color: control.enabled ? ((control.primary || control.danger) ? Theme.primaryText : Theme.text) : Theme.weak
+        font.pixelSize: control.textPixelSize
         font.weight: Font.DemiBold
         elide: Text.ElideRight
         horizontalAlignment: Text.AlignHCenter

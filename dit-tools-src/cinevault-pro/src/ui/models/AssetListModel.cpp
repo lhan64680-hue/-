@@ -31,6 +31,12 @@ QVariant AssetListModel::data(const QModelIndex &index, int role) const
     case SizeLabelRole: return Formatters::formatBytes(item.sizeBytes);
     case ModifiedAtRole: return item.modifiedAt;
     case ReadableRole: return item.readable;
+    case ThumbnailPathRole: return item.thumbnailPath;
+    case DurationLabelRole: return Formatters::formatDuration(item.durationMs);
+    case BitRateLabelRole: return Formatters::formatBitRate(item.bitRate);
+    case TechnicalSummaryRole: return item.technicalSummary;
+    case ProbeStatusLabelRole: return Formatters::probeStatusLabel(item.probeStatus);
+    case FavoriteRole: return item.favorite;
     default: return {};
     }
 }
@@ -48,7 +54,13 @@ QHash<int, QByteArray> AssetListModel::roleNames() const
         {SizeBytesRole, "sizeBytes"},
         {SizeLabelRole, "sizeLabel"},
         {ModifiedAtRole, "modifiedAt"},
-        {ReadableRole, "readable"}
+        {ReadableRole, "readable"},
+        {ThumbnailPathRole, "thumbnailPath"},
+        {DurationLabelRole, "durationLabel"},
+        {BitRateLabelRole, "bitRateLabel"},
+        {TechnicalSummaryRole, "technicalSummary"},
+        {ProbeStatusLabelRole, "probeStatusLabel"},
+        {FavoriteRole, "favorite"}
     };
 }
 

@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(CineVault VERSION 0.1.0 LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -22,9 +24,13 @@ endif()
 set(CINEVAULT_QT_COMPONENTS
     Core
     Gui
+    Pdf
+    PdfQuick
     Qml
     Quick
     QuickControls2
+    Multimedia
+    Network
     Widgets
 )
 
@@ -57,13 +63,32 @@ set(APP_SOURCES
     src/shared/Paths.cpp
     src/shared/Formatters.h
     src/shared/Formatters.cpp
+    src/core/backup/BackupPlanner.h
+    src/core/backup/BackupPlanner.cpp
+    src/ui/window/WindowThemeController.h
+    src/ui/window/WindowThemeController.cpp
     src/ui/models/SourceRootListModel.h
     src/ui/models/SourceRootListModel.cpp
+    src/ui/models/ProjectLibraryListModel.h
+    src/ui/models/ProjectLibraryListModel.cpp
     src/ui/models/AssetListModel.h
     src/ui/models/AssetListModel.cpp
+    src/ui/models/BackupSourceListModel.h
+    src/ui/models/BackupSourceListModel.cpp
+    src/ui/models/BackupDestinationListModel.h
+    src/ui/models/BackupDestinationListModel.cpp
+    src/ui/models/BackupTaskListModel.h
+    src/ui/models/BackupTaskListModel.cpp
     src/ui/models/JobListModel.h
     src/ui/models/JobListModel.cpp
 )
+
+set(APP_WINDOWS_RESOURCES)
+if(WIN32)
+    list(APPEND APP_WINDOWS_RESOURCES
+        src/app/windows_app_icon.rc
+    )
+endif()
 
 if(CINEVAULT_BUILD_MINIMAL_GUI)
     list(APPEND APP_SOURCES
@@ -73,23 +98,35 @@ if(CINEVAULT_BUILD_MINIMAL_GUI)
         src/ui/viewmodels/MinimalSourceRailViewModel.cpp
         src/ui/viewmodels/MinimalImportWorkspaceViewModel.h
         src/ui/viewmodels/MinimalImportWorkspaceViewModel.cpp
+        src/ui/viewmodels/MinimalMaterialBackupViewModel.h
+        src/ui/viewmodels/MinimalMaterialBackupViewModel.cpp
         src/ui/viewmodels/MinimalLibraryWorkspaceViewModel.h
         src/ui/viewmodels/MinimalLibraryWorkspaceViewModel.cpp
         src/ui/viewmodels/MinimalInspectorViewModel.h
         src/ui/viewmodels/MinimalInspectorViewModel.cpp
         src/ui/viewmodels/MinimalJobTimelineViewModel.h
         src/ui/viewmodels/MinimalJobTimelineViewModel.cpp
+        src/ui/viewmodels/MinimalReportWorkspaceViewModel.h
+        src/ui/viewmodels/MinimalReportWorkspaceViewModel.cpp
     )
 else()
     list(APPEND APP_SOURCES
+    src/application/DocumentPreviewService.h
+    src/application/DocumentPreviewService.cpp
     src/infrastructure/config/AppSettings.h
     src/infrastructure/config/AppSettings.cpp
     src/infrastructure/logging/Logger.h
     src/infrastructure/logging/Logger.cpp
     src/infrastructure/db/DatabaseManager.h
     src/infrastructure/db/DatabaseManager.cpp
+    src/infrastructure/db/GlobalDatabaseManager.h
+    src/infrastructure/db/GlobalDatabaseManager.cpp
     src/core/search/SearchEngine.h
     src/core/search/SearchEngine.cpp
+    src/core/backup/BackupCopyEngine.h
+    src/core/backup/BackupCopyEngine.cpp
+    src/core/backup/VolumeEjectService.h
+    src/core/backup/VolumeEjectService.cpp
     src/core/scan/FileTypeService.h
     src/core/scan/FileTypeService.cpp
     src/core/media/MediaProbeEngine.h
@@ -100,33 +137,77 @@ else()
     src/core/scan/ScanEngine.cpp
     src/core/thumbnail/ThumbnailEngine.h
     src/core/thumbnail/ThumbnailEngine.cpp
+    src/core/thumbnail/ContactSheetBuilder.h
+    src/core/thumbnail/ContactSheetBuilder.cpp
+    src/core/report/ReportModels.h
+    src/core/report/ReportRenderEngine.h
+    src/core/report/ReportRenderEngine.cpp
     src/application/ProjectService.h
     src/application/ProjectService.cpp
     src/application/JobService.h
     src/application/JobService.cpp
+    src/application/MediaTaskService.h
+    src/application/MediaTaskService.cpp
+    src/application/MaterialCatalogSyncService.h
+    src/application/MaterialCatalogSyncService.cpp
+    src/application/MaterialCenterQueryService.h
+    src/application/MaterialCenterQueryService.cpp
+    src/application/MaterialBackupService.h
+    src/application/MaterialBackupService.cpp
+    src/application/VideoAnalysisService.h
+    src/application/VideoAnalysisService.cpp
     src/application/ImportService.h
     src/application/ImportService.cpp
     src/application/LibraryQueryService.h
     src/application/LibraryQueryService.cpp
+    src/application/ReportExportService.h
+    src/application/ReportExportService.cpp
     src/infrastructure/ffmpeg/FFmpegAdapter.h
     src/infrastructure/ffmpeg/FFmpegAdapter.cpp
+    src/infrastructure/network/VisionApiClient.h
+    src/infrastructure/network/VisionApiClient.cpp
+    src/ui/viewmodels/ProjectLibraryViewModel.h
+    src/ui/viewmodels/ProjectLibraryViewModel.cpp
     src/ui/viewmodels/ShellViewModel.h
     src/ui/viewmodels/ShellViewModel.cpp
     src/ui/viewmodels/SourceRailViewModel.h
     src/ui/viewmodels/SourceRailViewModel.cpp
     src/ui/viewmodels/ImportWorkspaceViewModel.h
     src/ui/viewmodels/ImportWorkspaceViewModel.cpp
+    src/ui/viewmodels/MaterialBackupViewModel.h
+    src/ui/viewmodels/MaterialBackupViewModel.cpp
     src/ui/viewmodels/LibraryWorkspaceViewModel.h
     src/ui/viewmodels/LibraryWorkspaceViewModel.cpp
+    src/ui/viewmodels/MaterialCenterViewModel.h
+    src/ui/viewmodels/MaterialCenterViewModel.cpp
     src/ui/viewmodels/InspectorViewModel.h
     src/ui/viewmodels/InspectorViewModel.cpp
     src/ui/viewmodels/JobTimelineViewModel.h
     src/ui/viewmodels/JobTimelineViewModel.cpp
+    src/ui/viewmodels/ReportWorkspaceViewModel.h
+    src/ui/viewmodels/ReportWorkspaceViewModel.cpp
+    src/ui/viewmodels/SettingsViewModel.h
+    src/ui/viewmodels/SettingsViewModel.cpp
+    src/ui/models/MaterialCenterListModel.h
+    src/ui/models/MaterialCenterListModel.cpp
     )
 endif()
 
 qt_add_executable(CineVault
     ${APP_SOURCES}
+    ${APP_WINDOWS_RESOURCES}
+)
+
+if(WIN32)
+    set_target_properties(CineVault PROPERTIES WIN32_EXECUTABLE TRUE)
+    target_link_libraries(CineVault PRIVATE Dwmapi)
+endif()
+
+qt_add_resources(CineVault "CineVault_assets"
+    PREFIX "/"
+    BASE resources
+    FILES
+        resources/icons/app.ico
 )
 
 set_source_files_properties(src/ui/qml/themes/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
@@ -142,17 +223,38 @@ qt_add_qml_module(CineVault
         src/ui/qml/components/InspectorPane.qml
         src/ui/qml/components/JobTimelineBar.qml
         src/ui/qml/components/ActionButton.qml
+        src/ui/qml/components/AssetPreviewOverlay.qml
+        src/ui/qml/components/ThemedTextField.qml
+        src/ui/qml/components/ThemedComboBox.qml
+        src/ui/qml/components/ThemedSpinBox.qml
+        src/ui/qml/components/ThemedProgressBar.qml
+        src/ui/qml/components/ThemedSlider.qml
+        src/ui/qml/components/ThemedScrollBar.qml
+        src/ui/qml/components/ThemedMenu.qml
+        src/ui/qml/components/ThemedMenuItem.qml
+        src/ui/qml/components/ThemedMenuSeparator.qml
         src/ui/qml/components/SourceCard.qml
         src/ui/qml/components/StatusChip.qml
         src/ui/qml/components/AssetCard.qml
+        src/ui/qml/components/VideoPreviewPlayer.qml
+        src/ui/qml/components/SettingsDialog.qml
         src/ui/qml/workspaces/ImportWorkspace.qml
+        src/ui/qml/workspaces/ProjectLibraryWorkspace.qml
+        src/ui/qml/workspaces/MaterialBackupWorkspace.qml
         src/ui/qml/workspaces/LibraryWorkspace.qml
-        src/ui/qml/workspaces/QcWorkspace.qml
+        src/ui/qml/workspaces/MaterialCenterWorkspace.qml
         src/ui/qml/workspaces/ReportWorkspace.qml
         src/ui/qml/workspaces/JobsWorkspace.qml
 )
 
 target_include_directories(CineVault PRIVATE src)
+
+if(QT_ROOT)
+    set(CINEVAULT_QTCORE_PRIVATE_INCLUDE_DIR "${QT_ROOT}/include/QtCore/${Qt6Core_VERSION}")
+    if(EXISTS "${CINEVAULT_QTCORE_PRIVATE_INCLUDE_DIR}/QtCore/private/qzipreader_p.h")
+        target_include_directories(CineVault PRIVATE "${CINEVAULT_QTCORE_PRIVATE_INCLUDE_DIR}")
+    endif()
+endif()
 
 target_compile_definitions(CineVault PRIVATE
     CINEVAULT_BUILD_MINIMAL_GUI=$<IF:$<BOOL:${CINEVAULT_BUILD_MINIMAL_GUI}>,1,0>
@@ -162,9 +264,13 @@ target_compile_definitions(CineVault PRIVATE
 target_link_libraries(CineVault PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::Pdf
+    Qt6::PdfQuick
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
+    Qt6::Multimedia
+    Qt6::Network
     Qt6::Widgets
 )
 
@@ -185,12 +291,40 @@ if(CINEVAULT_HAS_FFMPEG)
 endif()
 
 if(BUILD_TESTING)
-    enable_testing()
     find_package(Qt6 REQUIRED COMPONENTS Test)
     qt_add_executable(CineVaultSmokeTest tests/unit/SmokeTest.cpp)
     target_include_directories(CineVaultSmokeTest PRIVATE src)
     target_link_libraries(CineVaultSmokeTest PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME CineVaultSmokeTest COMMAND CineVaultSmokeTest)
+
+    qt_add_executable(BackupPlannerTest
+        tests/unit/BackupPlannerTest.cpp
+        src/core/backup/BackupPlanner.cpp
+    )
+    target_include_directories(BackupPlannerTest PRIVATE src)
+    target_link_libraries(BackupPlannerTest PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME BackupPlannerTest COMMAND BackupPlannerTest)
+
+    qt_add_executable(VisionApiClientJsonTest
+        tests/unit/VisionApiClientJsonTest.cpp
+    )
+    target_include_directories(VisionApiClientJsonTest PRIVATE src)
+    target_link_libraries(VisionApiClientJsonTest PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME VisionApiClientJsonTest COMMAND VisionApiClientJsonTest)
+
+    set(CINEVAULT_TEST_QT_BIN_DIR "")
+    if(TARGET Qt6::qmake)
+        get_target_property(CINEVAULT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
+        get_filename_component(CINEVAULT_TEST_QT_BIN_DIR "${CINEVAULT_QMAKE_EXECUTABLE}" DIRECTORY)
+    elseif(QT_ROOT)
+        set(CINEVAULT_TEST_QT_BIN_DIR "${QT_ROOT}/bin")
+    endif()
+
+    if(WIN32 AND CINEVAULT_TEST_QT_BIN_DIR)
+        set_tests_properties(CineVaultSmokeTest BackupPlannerTest VisionApiClientJsonTest PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CINEVAULT_TEST_QT_BIN_DIR}"
+        )
+    endif()
 endif()
 
 install(TARGETS CineVault

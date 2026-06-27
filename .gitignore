@@ -2,6 +2,8 @@ backup/*
 !backup/.gitkeep
 dist/*
 !dist/.gitkeep
+output/*
+!output/.gitkeep
 dit-tools-src/cinevault-pro/build*/
 dit-tools-src/cinevault-pro/.qt/
 dit-tools-src/cinevault-pro/.qtc_clangd/

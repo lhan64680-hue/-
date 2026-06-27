@@ -50,6 +50,33 @@ void MinimalSourceRailViewModel::clearSelection()
     selectSource(0);
 }
 
+bool MinimalSourceRailViewModel::removeSource(qint64 sourceRootId)
+{
+    if (sourceRootId <= 0) {
+        return false;
+    }
+
+    bool removed = false;
+    for (int i = 0; i < m_sources.size(); ++i) {
+        if (m_sources.at(i).id == sourceRootId) {
+            m_sources.removeAt(i);
+            removed = true;
+            break;
+        }
+    }
+    if (!removed) {
+        return false;
+    }
+
+    reload();
+    if (m_selectedSourceId == sourceRootId) {
+        m_selectedSourceId = 0;
+        emit selectionChanged();
+    }
+    emit sourceSelected(m_selectedSourceId);
+    return true;
+}
+
 void MinimalSourceRailViewModel::seedSources()
 {
     m_sources = {

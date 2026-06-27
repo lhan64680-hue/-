@@ -60,7 +60,7 @@ Rectangle {
                         elide: Text.ElideRight
                     }
 
-                    ProgressBar {
+                    ThemedProgressBar {
                         Layout.fillWidth: true
                         from: 0
                         to: 100

@@ -243,16 +243,8 @@ void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
         bindSourceStats(finalUpdate, batch, batch.warningCount > 0 ? QStringLiteral("warning") : QStringLiteral("ok"), videoCount, audioCount, imageCount, otherCount);
         finalUpdate.exec();
 
-        QMetaObject::invokeMethod(this, [this, sourceRoot, batch, jobId, videoCount, audioCount, imageCount]() {
+        QMetaObject::invokeMethod(this, [this, sourceRoot, batch, jobId]() {
             m_jobEngine->completeJob(jobId, QStringLiteral("%1 扫描完成，发现 %2 个文件").arg(sourceRoot.name).arg(batch.totalFiles));
-            if ((videoCount > 0 || audioCount > 0) && m_mediaProbeEngine) {
-                const auto mediaDetail = m_mediaProbeEngine->statusMessage();
-                m_jobEngine->queueJob(JobType::Metadata, QStringLiteral("元数据队列 %1").arg(sourceRoot.name), mediaDetail, sourceRoot.id);
-            }
-            if ((videoCount > 0 || imageCount > 0) && m_thumbnailEngine) {
-                const auto thumbnailDetail = m_thumbnailEngine->statusMessage();
-                m_jobEngine->queueJob(JobType::Thumbnail, QStringLiteral("缩略图队列 %1").arg(sourceRoot.name), thumbnailDetail, sourceRoot.id);
-            }
             emit scanFinished(sourceRoot.id);
         }, Qt::QueuedConnection);
     } catch (const std::exception &exception) {

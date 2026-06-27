@@ -2,6 +2,33 @@
 
 #include "ui/models/AssetListModel.h"
 
+#include <QDesktopServices>
+#include <QFileInfo>
+#include <QUrl>
+#include <algorithm>
+
+namespace {
+bool isMediaAsset(AssetType type)
+{
+    return type == AssetType::Video || type == AssetType::Audio;
+}
+
+bool isIssueAsset(const AssetFile &asset)
+{
+    return !asset.readable
+        || asset.probeStatus == ProbeStatus::Failed
+        || asset.probeStatus == ProbeStatus::Unsupported;
+}
+
+bool isReadyAsset(const AssetFile &asset)
+{
+    if (!asset.readable) {
+        return false;
+    }
+    return !isMediaAsset(asset.assetType) || asset.probeStatus == ProbeStatus::Success;
+}
+}
+
 MinimalLibraryWorkspaceViewModel::MinimalLibraryWorkspaceViewModel(QObject *parent)
     : QObject(parent)
     , m_model(new AssetListModel(this))
@@ -20,14 +47,113 @@ int MinimalLibraryWorkspaceViewModel::viewMode() const
     return m_viewMode;
 }
 
+bool MinimalLibraryWorkspaceViewModel::favoritesOnly() const
+{
+    return m_favoritesOnly;
+}
+
+bool MinimalLibraryWorkspaceViewModel::modifiedTimeAscending() const
+{
+    return m_modifiedTimeAscending;
+}
+
+QString MinimalLibraryWorkspaceViewModel::sortOrderText() const
+{
+    return m_modifiedTimeAscending ? QStringLiteral("修改时间正序") : QStringLiteral("修改时间倒序");
+}
+
 QString MinimalLibraryWorkspaceViewModel::statusText() const
 {
-    return QStringLiteral("当前结果 %1 条").arg(m_totalCount);
+    if (m_favoritesOnly) {
+        return QStringLiteral("当前结果 %1 条 · 仅显示收藏 · %2").arg(m_totalCount).arg(sortOrderText());
+    }
+    return QStringLiteral("当前结果 %1 条 · %2").arg(m_totalCount).arg(sortOrderText());
+}
+
+qint64 MinimalLibraryWorkspaceViewModel::totalAssetCount() const
+{
+    return m_totalCount;
+}
+
+qint64 MinimalLibraryWorkspaceViewModel::readyAssetCount() const
+{
+    return m_readyCount;
+}
+
+qint64 MinimalLibraryWorkspaceViewModel::pendingAssetCount() const
+{
+    return m_pendingCount;
+}
+
+qint64 MinimalLibraryWorkspaceViewModel::issueAssetCount() const
+{
+    return m_issueCount;
 }
 
 qint64 MinimalLibraryWorkspaceViewModel::selectedAssetId() const
 {
     return m_selectedAssetId;
+}
+
+int MinimalLibraryWorkspaceViewModel::selectedAssetIndex() const
+{
+    for (int index = 0; index < m_assets.size(); ++index) {
+        if (m_assets.at(index).id == m_selectedAssetId) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+QString MinimalLibraryWorkspaceViewModel::selectedPreviewTitle() const
+{
+    const auto asset = assetById(m_selectedAssetId);
+    return asset.id > 0 ? asset.name : QString();
+}
+
+QUrl MinimalLibraryWorkspaceViewModel::selectedPreviewUrl() const
+{
+    const auto asset = assetById(m_selectedAssetId);
+    if (asset.id <= 0 || asset.assetType != AssetType::Video || asset.absolutePath.isEmpty()) {
+        return {};
+    }
+    return QUrl::fromLocalFile(asset.absolutePath);
+}
+
+QUrl MinimalLibraryWorkspaceViewModel::selectedPreviewThumbnailUrl() const
+{
+    const auto asset = assetById(m_selectedAssetId);
+    if (asset.id <= 0 || asset.assetType != AssetType::Video || asset.thumbnailPath.isEmpty()) {
+        return {};
+    }
+    return QUrl::fromLocalFile(asset.thumbnailPath);
+}
+
+QUrl MinimalLibraryWorkspaceViewModel::selectedAssetUrl() const
+{
+    const auto asset = assetById(m_selectedAssetId);
+    if (asset.id <= 0 || asset.absolutePath.isEmpty()) {
+        return {};
+    }
+    return QUrl::fromLocalFile(asset.absolutePath);
+}
+
+bool MinimalLibraryWorkspaceViewModel::selectedPreviewIsVideo() const
+{
+    const auto asset = assetById(m_selectedAssetId);
+    return asset.id > 0 && asset.assetType == AssetType::Video;
+}
+
+bool MinimalLibraryWorkspaceViewModel::selectedPreviewIsImage() const
+{
+    const auto asset = assetById(m_selectedAssetId);
+    return asset.id > 0 && asset.assetType == AssetType::Image;
+}
+
+bool MinimalLibraryWorkspaceViewModel::selectedPreviewIsDocument() const
+{
+    const auto asset = assetById(m_selectedAssetId);
+    return asset.id > 0 && asset.assetType == AssetType::Document;
 }
 
 AssetFile MinimalLibraryWorkspaceViewModel::assetById(qint64 assetId) const
@@ -47,6 +173,16 @@ void MinimalLibraryWorkspaceViewModel::setViewMode(int viewMode)
     }
     m_viewMode = viewMode;
     emit viewModeChanged();
+}
+
+void MinimalLibraryWorkspaceViewModel::setFavoritesOnly(bool favoritesOnly)
+{
+    if (m_favoritesOnly == favoritesOnly) {
+        return;
+    }
+    m_favoritesOnly = favoritesOnly;
+    emit filtersChanged();
+    refresh();
 }
 
 void MinimalLibraryWorkspaceViewModel::reload()
@@ -75,6 +211,13 @@ void MinimalLibraryWorkspaceViewModel::setAssetTypeFilter(int assetType)
     refresh();
 }
 
+void MinimalLibraryWorkspaceViewModel::toggleModifiedTimeOrder()
+{
+    m_modifiedTimeAscending = !m_modifiedTimeAscending;
+    emit filtersChanged();
+    refresh();
+}
+
 void MinimalLibraryWorkspaceViewModel::selectAsset(qint64 assetId)
 {
     if (m_selectedAssetId == assetId) {
@@ -83,6 +226,73 @@ void MinimalLibraryWorkspaceViewModel::selectAsset(qint64 assetId)
     m_selectedAssetId = assetId;
     emit selectionChanged();
     emit assetSelected(assetId);
+}
+
+void MinimalLibraryWorkspaceViewModel::selectAssetAt(int index)
+{
+    if (index < 0 || index >= m_assets.size()) {
+        return;
+    }
+    selectAsset(m_assets.at(index).id);
+}
+
+void MinimalLibraryWorkspaceViewModel::moveAssetSelection(int delta)
+{
+    if (m_assets.isEmpty()) {
+        return;
+    }
+    const auto currentIndex = selectedAssetIndex();
+    const auto targetIndex = currentIndex < 0
+        ? 0
+        : qBound(0, currentIndex + delta, m_assets.size() - 1);
+    selectAssetAt(targetIndex);
+}
+
+bool MinimalLibraryWorkspaceViewModel::toggleAssetFavorite(qint64 assetId)
+{
+    for (auto &asset : m_allAssets) {
+        if (asset.id == assetId) {
+            asset.favorite = !asset.favorite;
+            refresh();
+            if (m_selectedAssetId == assetId) {
+                emit assetSelected(assetId);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MinimalLibraryWorkspaceViewModel::removeAsset(qint64 assetId)
+{
+    for (qsizetype i = 0; i < m_allAssets.size(); ++i) {
+        if (m_allAssets.at(i).id == assetId) {
+            m_allAssets.removeAt(i);
+            if (m_selectedAssetId == assetId) {
+                m_selectedAssetId = 0;
+                emit selectionChanged();
+                emit assetSelected(0);
+            }
+            refresh();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool MinimalLibraryWorkspaceViewModel::openAssetFolder(qint64 assetId)
+{
+    const auto asset = assetById(assetId);
+    if (asset.id <= 0 || asset.absolutePath.trimmed().isEmpty()) {
+        return false;
+    }
+
+    const QFileInfo info(asset.absolutePath);
+    const auto folder = info.absolutePath();
+    if (folder.trimmed().isEmpty()) {
+        return false;
+    }
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
 }
 
 void MinimalLibraryWorkspaceViewModel::seedAssets()
@@ -98,12 +308,16 @@ void MinimalLibraryWorkspaceViewModel::seedAssets()
 
 void MinimalLibraryWorkspaceViewModel::refresh()
 {
+    const auto previousSelectedIndex = selectedAssetIndex();
     QVector<AssetFile> filtered;
     for (const auto &asset : m_allAssets) {
         if (m_sourceFilter.has_value() && asset.sourceRootId != m_sourceFilter.value()) {
             continue;
         }
         if (m_assetTypeFilter.has_value() && asset.assetType != m_assetTypeFilter.value()) {
+            continue;
+        }
+        if (m_favoritesOnly && !asset.favorite) {
             continue;
         }
         if (!m_searchText.trimmed().isEmpty()) {
@@ -116,11 +330,31 @@ void MinimalLibraryWorkspaceViewModel::refresh()
         filtered.append(asset);
     }
 
-    m_model->setItems(filtered);
-    m_totalCount = filtered.size();
+    std::sort(filtered.begin(), filtered.end(), [this](const AssetFile &left, const AssetFile &right) {
+        if (left.modifiedAt == right.modifiedAt) {
+            return m_modifiedTimeAscending ? left.id < right.id : left.id > right.id;
+        }
+        return m_modifiedTimeAscending ? left.modifiedAt < right.modifiedAt : left.modifiedAt > right.modifiedAt;
+    });
+
+    m_assets = filtered;
+    m_model->setItems(m_assets);
+    m_totalCount = m_assets.size();
+    m_readyCount = 0;
+    m_pendingCount = 0;
+    m_issueCount = 0;
+    for (const auto &asset : m_assets) {
+        if (isIssueAsset(asset)) {
+            ++m_issueCount;
+        } else if (isReadyAsset(asset)) {
+            ++m_readyCount;
+        } else {
+            ++m_pendingCount;
+        }
+    }
 
     bool selectionExists = false;
-    for (const auto &asset : filtered) {
+    for (const auto &asset : m_assets) {
         if (asset.id == m_selectedAssetId) {
             selectionExists = true;
             break;
@@ -128,6 +362,9 @@ void MinimalLibraryWorkspaceViewModel::refresh()
     }
     if (!selectionExists && m_selectedAssetId != 0) {
         m_selectedAssetId = 0;
+        emit selectionChanged();
+        emit assetSelected(0);
+    } else if (m_selectedAssetId != 0 && previousSelectedIndex != selectedAssetIndex()) {
         emit selectionChanged();
     }
 

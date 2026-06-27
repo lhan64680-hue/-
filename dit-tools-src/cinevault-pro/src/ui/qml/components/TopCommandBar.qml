@@ -6,7 +6,7 @@ import CineVault
 Rectangle {
     property var shellVm
 
-    color: "#10131A"
+    color: Theme.topBar
     border.width: 1
     border.color: Theme.line
     implicitHeight: 64
@@ -49,29 +49,29 @@ Rectangle {
         }
 
         Repeater {
-            model: [
-                { label: "导入", value: 0, buttonWidth: 56 },
-                { label: "素材库", value: 1, buttonWidth: 70 },
-                { label: "检查/质检", value: 2, buttonWidth: 92 },
-                { label: "报表", value: 3, buttonWidth: 56 },
-                { label: "任务", value: 4, buttonWidth: 56 }
-            ]
+            model: shellVm ? shellVm.workspaceTabs : []
 
             delegate: Button {
+                readonly property bool tabEnabled: modelData.enabled === undefined || modelData.enabled
+
                 Layout.preferredWidth: modelData.buttonWidth
                 Layout.preferredHeight: 36
                 text: modelData.label
                 flat: true
-                onClicked: shellVm.currentWorkspace = modelData.value
+                enabled: tabEnabled
+                opacity: tabEnabled ? 1.0 : 0.44
+                onClicked: if (tabEnabled) shellVm.currentWorkspace = modelData.value
                 background: Rectangle {
                     radius: 18
-                    color: shellVm.currentWorkspace === modelData.value ? Qt.rgba(0.31, 0.55, 1.0, 0.22) : "transparent"
+                    color: shellVm.currentWorkspace === modelData.value ? Theme.selectedBg : "transparent"
                     border.width: shellVm.currentWorkspace === modelData.value ? 1 : 0
-                    border.color: Qt.rgba(0.31, 0.55, 1.0, 0.36)
+                    border.color: Theme.selectedLine
                 }
                 contentItem: Text {
                     text: parent.text
-                    color: shellVm.currentWorkspace === modelData.value ? Theme.text : Theme.muted
+                    color: parent.enabled
+                           ? (shellVm.currentWorkspace === modelData.value ? Theme.text : Theme.muted)
+                           : Theme.weak
                     font.pixelSize: 14
                     font.weight: Font.Medium
                     elide: Text.ElideRight
@@ -83,43 +83,20 @@ Rectangle {
 
         Item { Layout.fillWidth: true }
 
-        TextField {
+        ThemedTextField {
             Layout.preferredWidth: 220
             Layout.minimumWidth: 160
             Layout.maximumWidth: 260
-            placeholderText: "搜索素材..."
+            placeholderText: shellVm && shellVm.currentWorkspace === shellVm.projectLibraryWorkspaceId ? "搜索项目..." : "搜索素材..."
             text: shellVm.globalSearchText
             onTextChanged: shellVm.globalSearchText = text
-            color: Theme.text
-            placeholderTextColor: Theme.muted
-            background: Rectangle {
-                color: Theme.panel2
-                radius: 14
-                border.width: 1
-                border.color: Theme.line
-            }
         }
 
         ActionButton {
-            Layout.preferredWidth: 82
+            Layout.preferredWidth: 64
             Layout.preferredHeight: 36
-            text: "新建项目"
-            primary: true
-            onClicked: shellVm.createProject()
-        }
-
-        ActionButton {
-            Layout.preferredWidth: 82
-            Layout.preferredHeight: 36
-            text: "打开项目"
-            onClicked: shellVm.openProject()
-        }
-
-        ActionButton {
-            Layout.preferredWidth: 98
-            Layout.preferredHeight: 36
-            text: "添加素材源"
-            onClicked: shellVm.addSourceDirectory()
+            text: "设置"
+            onClicked: shellVm.openSettings()
         }
     }
 }

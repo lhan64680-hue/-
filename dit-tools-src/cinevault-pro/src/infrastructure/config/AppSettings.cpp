@@ -1,9 +1,56 @@
 #include "infrastructure/config/AppSettings.h"
 
+#include <QCryptographicHash>
+#include <QFileInfo>
 #include <QSettings>
 
 namespace {
 constexpr auto kRecentProjectsKey = "recentProjects";
+constexpr auto kKnownProjectsKey = "knownProjects";
+constexpr auto kVisionBaseUrlKey = "materialCenter/visionBaseUrl";
+constexpr auto kVisionApiKeyKey = "materialCenter/visionApiKey";
+constexpr auto kVisionModelKey = "materialCenter/visionModel";
+constexpr auto kAnalysisModeKey = "materialCenter/analysisMode";
+constexpr auto kFrameIntervalKey = "materialCenter/frameInterval";
+constexpr auto kThumbnailFrameIndexKey = "materialCenter/thumbnailFrameIndex";
+constexpr auto kContactSheetFrameCountKey = "materialCenter/contactSheetFrameCount";
+constexpr auto kAnalysisTimeoutSecKey = "materialCenter/analysisTimeoutSec";
+constexpr auto kThemeModeKey = "ui/themeMode";
+constexpr auto kMaterialBackupQueuePrefix = "materialBackup/queues/";
+
+int normalizedThemeMode(int value)
+{
+    return value >= 0 && value <= 2 ? value : 0;
+}
+
+QString normalizedProjectPath(const QString &projectPath)
+{
+    const auto trimmed = projectPath.trimmed();
+    return trimmed.isEmpty() ? QString() : QFileInfo(trimmed).absoluteFilePath();
+}
+
+QStringList replacedProjectList(const QStringList &projects, const QString &oldProjectPath, const QString &newProjectPath)
+{
+    QStringList replaced;
+    for (const auto &project : projects) {
+        const auto normalized = normalizedProjectPath(project);
+        const auto next = normalized == oldProjectPath ? newProjectPath : normalized;
+        if (!next.isEmpty() && !replaced.contains(next)) {
+            replaced.append(next);
+        }
+    }
+    return replaced;
+}
+
+QString materialBackupQueueKey(const QString &projectDatabasePath)
+{
+    const auto normalizedPath = normalizedProjectPath(projectDatabasePath);
+    if (normalizedPath.isEmpty()) {
+        return {};
+    }
+    const auto hash = QCryptographicHash::hash(normalizedPath.toUtf8(), QCryptographicHash::Sha1).toHex();
+    return QString::fromLatin1(kMaterialBackupQueuePrefix) + QString::fromLatin1(hash);
+}
 }
 
 AppSettings::AppSettings()
@@ -23,11 +70,179 @@ QStringList AppSettings::recentProjects() const
 
 void AppSettings::addRecentProject(const QString &projectPath)
 {
+    const auto normalizedPath = normalizedProjectPath(projectPath);
+    if (normalizedPath.isEmpty()) {
+        return;
+    }
+
     auto projects = recentProjects();
-    projects.removeAll(projectPath);
-    projects.prepend(projectPath);
+    projects = replacedProjectList(projects, normalizedPath, normalizedPath);
+    projects.removeAll(normalizedPath);
+    projects.prepend(normalizedPath);
     while (projects.size() > 10) {
         projects.removeLast();
     }
     m_settings->setValue(QLatin1String(kRecentProjectsKey), projects);
+}
+
+QStringList AppSettings::knownProjects() const
+{
+    return m_settings->value(QLatin1String(kKnownProjectsKey)).toStringList();
+}
+
+void AppSettings::addKnownProject(const QString &projectPath)
+{
+    const auto normalizedPath = normalizedProjectPath(projectPath);
+    if (normalizedPath.isEmpty()) {
+        return;
+    }
+
+    auto projects = knownProjects();
+    projects = replacedProjectList(projects, normalizedPath, normalizedPath);
+    projects.removeAll(normalizedPath);
+    projects.prepend(normalizedPath);
+    m_settings->setValue(QLatin1String(kKnownProjectsKey), projects);
+}
+
+void AppSettings::removeKnownProject(const QString &projectPath)
+{
+    const auto normalizedPath = normalizedProjectPath(projectPath);
+    auto projects = replacedProjectList(knownProjects(), normalizedPath, normalizedPath);
+    projects.removeAll(normalizedPath);
+    m_settings->setValue(QLatin1String(kKnownProjectsKey), projects);
+
+    auto recent = replacedProjectList(recentProjects(), normalizedPath, normalizedPath);
+    recent.removeAll(normalizedPath);
+    m_settings->setValue(QLatin1String(kRecentProjectsKey), recent);
+}
+
+void AppSettings::replaceProjectPath(const QString &oldProjectPath, const QString &newProjectPath)
+{
+    const auto oldNormalized = normalizedProjectPath(oldProjectPath);
+    const auto newNormalized = normalizedProjectPath(newProjectPath);
+    if (oldNormalized.isEmpty() || newNormalized.isEmpty() || oldNormalized == newNormalized) {
+        return;
+    }
+
+    m_settings->setValue(QLatin1String(kKnownProjectsKey),
+                         replacedProjectList(knownProjects(), oldNormalized, newNormalized));
+    m_settings->setValue(QLatin1String(kRecentProjectsKey),
+                         replacedProjectList(recentProjects(), oldNormalized, newNormalized));
+}
+
+QString AppSettings::visionBaseUrl() const
+{
+    return m_settings->value(QLatin1String(kVisionBaseUrlKey)).toString().trimmed();
+}
+
+void AppSettings::setVisionBaseUrl(const QString &value)
+{
+    m_settings->setValue(QLatin1String(kVisionBaseUrlKey), value.trimmed());
+}
+
+QString AppSettings::visionApiKey() const
+{
+    return m_settings->value(QLatin1String(kVisionApiKeyKey)).toString().trimmed();
+}
+
+void AppSettings::setVisionApiKey(const QString &value)
+{
+    m_settings->setValue(QLatin1String(kVisionApiKeyKey), value.trimmed());
+}
+
+QString AppSettings::visionModel() const
+{
+    return m_settings->value(QLatin1String(kVisionModelKey), QStringLiteral("gpt-4.1-mini")).toString().trimmed();
+}
+
+void AppSettings::setVisionModel(const QString &value)
+{
+    const auto normalized = value.trimmed();
+    m_settings->setValue(QLatin1String(kVisionModelKey), normalized.isEmpty() ? QStringLiteral("gpt-4.1-mini") : normalized);
+}
+
+AnalysisMode AppSettings::analysisMode() const
+{
+    const auto value = m_settings->value(QLatin1String(kAnalysisModeKey), static_cast<int>(AnalysisMode::EveryNFrames)).toInt();
+    return value == static_cast<int>(AnalysisMode::EveryFrame) ? AnalysisMode::EveryFrame : AnalysisMode::EveryNFrames;
+}
+
+void AppSettings::setAnalysisMode(AnalysisMode mode)
+{
+    m_settings->setValue(QLatin1String(kAnalysisModeKey), static_cast<int>(mode));
+}
+
+int AppSettings::frameInterval() const
+{
+    return qMax(1, m_settings->value(QLatin1String(kFrameIntervalKey), 10).toInt());
+}
+
+void AppSettings::setFrameInterval(int value)
+{
+    m_settings->setValue(QLatin1String(kFrameIntervalKey), qMax(1, value));
+}
+
+int AppSettings::thumbnailFrameIndex() const
+{
+    return qMax(1, m_settings->value(QLatin1String(kThumbnailFrameIndexKey), 3).toInt());
+}
+
+void AppSettings::setThumbnailFrameIndex(int value)
+{
+    m_settings->setValue(QLatin1String(kThumbnailFrameIndexKey), qMax(1, value));
+}
+
+int AppSettings::contactSheetFrameCount() const
+{
+    return qBound(1, m_settings->value(QLatin1String(kContactSheetFrameCountKey), 24).toInt(), 64);
+}
+
+void AppSettings::setContactSheetFrameCount(int value)
+{
+    m_settings->setValue(QLatin1String(kContactSheetFrameCountKey), qBound(1, value, 64));
+}
+
+int AppSettings::analysisTimeoutSec() const
+{
+    return qMax(5, m_settings->value(QLatin1String(kAnalysisTimeoutSecKey), 60).toInt());
+}
+
+void AppSettings::setAnalysisTimeoutSec(int value)
+{
+    m_settings->setValue(QLatin1String(kAnalysisTimeoutSecKey), qMax(5, value));
+}
+
+int AppSettings::themeMode() const
+{
+    return normalizedThemeMode(m_settings->value(QLatin1String(kThemeModeKey), 0).toInt());
+}
+
+void AppSettings::setThemeMode(int value)
+{
+    m_settings->setValue(QLatin1String(kThemeModeKey), normalizedThemeMode(value));
+}
+
+QString AppSettings::materialBackupQueueJson(const QString &projectDatabasePath) const
+{
+    const auto key = materialBackupQueueKey(projectDatabasePath);
+    return key.isEmpty() ? QString() : m_settings->value(key).toString();
+}
+
+void AppSettings::setMaterialBackupQueueJson(const QString &projectDatabasePath, const QString &json)
+{
+    const auto key = materialBackupQueueKey(projectDatabasePath);
+    if (key.isEmpty()) {
+        return;
+    }
+    if (json.trimmed().isEmpty()) {
+        m_settings->remove(key);
+    } else {
+        m_settings->setValue(key, json);
+    }
+    m_settings->sync();
+}
+
+void AppSettings::sync()
+{
+    m_settings->sync();
 }

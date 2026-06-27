@@ -26,6 +26,8 @@ QVariantList InspectorViewModel::details() const
 
 void InspectorViewModel::showSource(qint64 sourceRootId)
 {
+    m_currentSourceRootId = sourceRootId;
+    m_currentAssetId = 0;
     const auto state = m_libraryQueryService->buildSourceInspector(sourceRootId);
     m_title = state.title;
     m_subtitle = state.subtitle;
@@ -35,6 +37,8 @@ void InspectorViewModel::showSource(qint64 sourceRootId)
 
 void InspectorViewModel::showAsset(qint64 assetId)
 {
+    m_currentAssetId = assetId;
+    m_currentSourceRootId = 0;
     const auto state = m_libraryQueryService->buildAssetInspector(assetId);
     m_title = state.title;
     m_subtitle = state.subtitle;
@@ -42,8 +46,21 @@ void InspectorViewModel::showAsset(qint64 assetId)
     emit stateChanged();
 }
 
+void InspectorViewModel::reload()
+{
+    if (m_currentAssetId > 0) {
+        showAsset(m_currentAssetId);
+        return;
+    }
+    if (m_currentSourceRootId > 0) {
+        showSource(m_currentSourceRootId);
+    }
+}
+
 void InspectorViewModel::clear()
 {
+    m_currentSourceRootId = 0;
+    m_currentAssetId = 0;
     m_title = QStringLiteral("检查器");
     m_subtitle = QStringLiteral("选择左侧素材源或中间素材查看详情");
     m_details = QVariantList{

@@ -5,6 +5,7 @@ import CineVault
 
 Rectangle {
     property var viewModel
+    property var mediaViewModel
 
     color: Theme.panel
     border.width: 1
@@ -34,13 +35,13 @@ Rectangle {
             elide: Text.ElideRight
         }
 
-        Rectangle {
+        VideoPreviewPlayer {
             Layout.fillWidth: true
-            Layout.preferredHeight: 168
-            radius: 18
-            color: "#1B2231"
-            border.width: 1
-            border.color: Theme.line
+            Layout.preferredHeight: 210
+            sourceUrl: mediaViewModel ? mediaViewModel.selectedPreviewUrl : ""
+            thumbnailUrl: mediaViewModel ? mediaViewModel.selectedPreviewThumbnailUrl : ""
+            title: mediaViewModel ? mediaViewModel.selectedPreviewTitle : ""
+            isVideo: mediaViewModel ? mediaViewModel.selectedPreviewIsVideo : false
         }
 
         ScrollView {

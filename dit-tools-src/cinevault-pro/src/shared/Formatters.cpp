@@ -14,6 +14,42 @@ QString Formatters::formatBytes(qint64 bytes)
     return QString::number(value, unitIndex == 0 ? 'f' : 'f', unitIndex == 0 ? 0 : 1) + units.at(unitIndex);
 }
 
+QString Formatters::formatDuration(qint64 durationMs)
+{
+    if (durationMs <= 0) {
+        return QStringLiteral("未知时长");
+    }
+
+    const qint64 totalSeconds = durationMs / 1000;
+    const qint64 hours = totalSeconds / 3600;
+    const qint64 minutes = (totalSeconds % 3600) / 60;
+    const qint64 seconds = totalSeconds % 60;
+    if (hours > 0) {
+        return QStringLiteral("%1:%2:%3")
+            .arg(hours)
+            .arg(minutes, 2, 10, QLatin1Char('0'))
+            .arg(seconds, 2, 10, QLatin1Char('0'));
+    }
+    return QStringLiteral("%1:%2")
+        .arg(minutes)
+        .arg(seconds, 2, 10, QLatin1Char('0'));
+}
+
+QString Formatters::formatBitRate(qint64 bitRate)
+{
+    if (bitRate <= 0) {
+        return QStringLiteral("未知码率");
+    }
+
+    if (bitRate >= 1000000) {
+        return QString::number(static_cast<double>(bitRate) / 1000000.0, 'f', 1) + QStringLiteral(" Mbps");
+    }
+    if (bitRate >= 1000) {
+        return QString::number(static_cast<double>(bitRate) / 1000.0, 'f', 0) + QStringLiteral(" kbps");
+    }
+    return QString::number(bitRate) + QStringLiteral(" bps");
+}
+
 QString Formatters::assetTypeLabel(AssetType type)
 {
     switch (type) {
@@ -65,9 +101,11 @@ QString Formatters::jobStateLabel(JobState state)
 QString Formatters::workspaceLabel(WorkspaceId workspaceId)
 {
     switch (workspaceId) {
-    case WorkspaceId::Import: return QStringLiteral("导入");
+    case WorkspaceId::ProjectLibrary: return QStringLiteral("项目库");
+    case WorkspaceId::Import: return QStringLiteral("素材备份");
     case WorkspaceId::Library: return QStringLiteral("素材库");
-    case WorkspaceId::Qc: return QStringLiteral("检查/质检");
+    case WorkspaceId::MaterialCenter: return QStringLiteral("素材管理中心");
+    case WorkspaceId::Qc: return QStringLiteral("素材库");
     case WorkspaceId::Report: return QStringLiteral("报表");
     case WorkspaceId::Jobs: return QStringLiteral("任务");
     }
@@ -84,4 +122,43 @@ QString Formatters::probeStatusLabel(ProbeStatus status)
     case ProbeStatus::Failed: return QStringLiteral("执行失败");
     }
     return QStringLiteral("未知");
+}
+
+QString Formatters::analysisModeLabel(AnalysisMode mode)
+{
+    switch (mode) {
+    case AnalysisMode::EveryFrame:
+        return QStringLiteral("逐帧解析");
+    case AnalysisMode::EveryNFrames:
+    default:
+        return QStringLiteral("每 N 帧抽 1 帧");
+    }
+}
+
+QString Formatters::videoAnalysisStatusLabel(VideoAnalysisStatus status, ConfirmationStatus confirmationStatus)
+{
+    switch (status) {
+    case VideoAnalysisStatus::Pending:
+        return QStringLiteral("待解析");
+    case VideoAnalysisStatus::Running:
+        return QStringLiteral("解析中");
+    case VideoAnalysisStatus::Ready:
+        return confirmationStatus == ConfirmationStatus::Confirmed
+            ? QStringLiteral("已确认")
+            : QStringLiteral("待确认");
+    case VideoAnalysisStatus::Failed:
+        return QStringLiteral("解析失败");
+    }
+    return QStringLiteral("未知");
+}
+
+QString Formatters::confirmationStatusLabel(ConfirmationStatus status)
+{
+    switch (status) {
+    case ConfirmationStatus::Confirmed:
+        return QStringLiteral("已确认");
+    case ConfirmationStatus::Pending:
+    default:
+        return QStringLiteral("未确认");
+    }
 }
