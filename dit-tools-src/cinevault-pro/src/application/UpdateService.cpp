@@ -253,14 +253,17 @@ bool UpdateService::installPendingUpdateNow(QString *errorMessage)
 
     const auto appDir = QCoreApplication::applicationDirPath();
     const auto appExe = QCoreApplication::applicationFilePath();
+    const auto nativeInstallerPath = QDir::toNativeSeparators(installerPath);
+    const auto nativeAppDir = QDir::toNativeSeparators(appDir);
+    const auto nativeAppExe = QDir::toNativeSeparators(appExe);
     const auto appPid = QCoreApplication::applicationPid();
 
     QStringList scriptLines;
     scriptLines << QStringLiteral("$ErrorActionPreference = 'SilentlyContinue'")
                 << QStringLiteral("$pidToWait = %1").arg(appPid)
-                << QStringLiteral("$installerPath = %1").arg(toPowerShellLiteral(installerPath))
-                << QStringLiteral("$appDir = %1").arg(toPowerShellLiteral(appDir))
-                << QStringLiteral("$appExe = %1").arg(toPowerShellLiteral(appExe))
+                << QStringLiteral("$installerPath = %1").arg(toPowerShellLiteral(nativeInstallerPath))
+                << QStringLiteral("$appDir = %1").arg(toPowerShellLiteral(nativeAppDir))
+                << QStringLiteral("$appExe = %1").arg(toPowerShellLiteral(nativeAppExe))
                 << QStringLiteral("while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 500 }")
                 << QStringLiteral("$installerDirArg = '/DIR=\"' + $appDir + '\"'")
                 << QStringLiteral("$installerArgs = @('/VERYSILENT', '/NORESTART', '/SUPPRESSMSGBOXES', $installerDirArg)")
