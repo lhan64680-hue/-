@@ -29,7 +29,17 @@ QString toPowerShellLiteral(const QString &value)
 
 QString installerScriptPath()
 {
-    return QDir(Paths::updatesRoot()).filePath(QStringLiteral("apply-update.ps1"));
+    return QDir(QDir::tempPath()).filePath(QStringLiteral("CineVaultUpdater/apply-update.ps1"));
+}
+
+QString installerLogPath()
+{
+    return QDir(Paths::updatesRoot()).filePath(QStringLiteral("apply-update.log"));
+}
+
+QString installerPackageLogPath()
+{
+    return QDir(Paths::updatesRoot()).filePath(QStringLiteral("installer-update.log"));
 }
 
 QStringList curlNetworkArguments(const QString &proxyUrl)
@@ -355,6 +365,13 @@ bool UpdateService::installPendingUpdateNow(QString *errorMessage)
         }
         return false;
     }
+    if (!QDir().mkpath(QFileInfo(installerScriptPath()).absolutePath())) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("无法创建更新脚本目录：%1")
+                                .arg(QFileInfo(installerScriptPath()).absolutePath());
+        }
+        return false;
+    }
 
     QFile scriptFile(installerScriptPath());
     if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
@@ -365,28 +382,51 @@ bool UpdateService::installPendingUpdateNow(QString *errorMessage)
     }
 
     const auto appDir = QCoreApplication::applicationDirPath();
-    const auto appExe = QCoreApplication::applicationFilePath();
     const auto nativeInstallerPath = QDir::toNativeSeparators(installerPath);
     const auto nativeAppDir = QDir::toNativeSeparators(appDir);
-    const auto nativeAppExe = QDir::toNativeSeparators(appExe);
+    const auto nativeLogPath = QDir::toNativeSeparators(installerLogPath());
+    const auto nativeInstallerUiLogPath = QDir::toNativeSeparators(installerPackageLogPath());
     const auto appPid = QCoreApplication::applicationPid();
 
     QStringList scriptLines;
-    scriptLines << QStringLiteral("$ErrorActionPreference = 'SilentlyContinue'")
+    scriptLines << QStringLiteral("$ErrorActionPreference = 'Stop'")
                 << QStringLiteral("$pidToWait = %1").arg(appPid)
                 << QStringLiteral("$installerPath = %1").arg(toPowerShellLiteral(nativeInstallerPath))
                 << QStringLiteral("$appDir = %1").arg(toPowerShellLiteral(nativeAppDir))
-                << QStringLiteral("$appExe = %1").arg(toPowerShellLiteral(nativeAppExe))
-                << QStringLiteral("while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 500 }")
-                << QStringLiteral("$installerDirArg = '/DIR=\"' + $appDir + '\"'")
-                << QStringLiteral("$installerArgs = @('/VERYSILENT', '/NORESTART', '/SUPPRESSMSGBOXES', $installerDirArg)")
-                << QStringLiteral("$process = Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Wait -PassThru")
-                << QStringLiteral("if (Test-Path $appExe) { Start-Process -FilePath $appExe | Out-Null }")
+                << QStringLiteral("$logPath = %1").arg(toPowerShellLiteral(nativeLogPath))
+                << QStringLiteral("$installerUiLogPath = %1").arg(toPowerShellLiteral(nativeInstallerUiLogPath))
+                << QStringLiteral("function Write-UpdateLog([string]$message) {")
+                << QStringLiteral("    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'")
+                << QStringLiteral("    Add-Content -LiteralPath $logPath -Value ($timestamp + ' ' + $message) -Encoding UTF8")
+                << QStringLiteral("}")
+                << QStringLiteral("Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue")
+                << QStringLiteral("try {")
+                << QStringLiteral("    Write-UpdateLog '更新脚本已启动。'")
+                << QStringLiteral("    Write-UpdateLog ('等待旧进程退出，PID=' + $pidToWait)")
+                << QStringLiteral("    while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 500 }")
+                << QStringLiteral("    Start-Sleep -Milliseconds 800")
+                << QStringLiteral("    Write-UpdateLog ('旧进程已退出，准备打开更新安装包：' + $installerPath)")
+                << QStringLiteral("    $installerDirArg = '/DIR=\"' + $appDir + '\"'")
+                << QStringLiteral("    $installerLogArg = '/LOG=\"' + $installerUiLogPath + '\"'")
+                << QStringLiteral("    $installerArgs = @($installerDirArg, $installerLogArg)")
+                << QStringLiteral("    $process = Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Verb RunAs -Wait -PassThru")
+                << QStringLiteral("    Write-UpdateLog ('安装进程已结束，ExitCode=' + $process.ExitCode)")
+                << QStringLiteral("    if ($process.ExitCode -eq 0) {")
+                << QStringLiteral("        Write-UpdateLog '更新安装包已正常结束，请按安装向导完成升级。'")
+                << QStringLiteral("    } else {")
+                << QStringLiteral("        Write-UpdateLog '更新安装包未成功完成，请查看 installer-update.log。'")
+                << QStringLiteral("    }")
+                << QStringLiteral("    Write-UpdateLog '更新脚本执行结束。'")
+                << QStringLiteral("} catch {")
+                << QStringLiteral("    Write-UpdateLog ('更新脚本执行失败：' + $_.Exception.Message)")
+                << QStringLiteral("}")
                 << QStringLiteral("Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue");
+    scriptFile.write("\xEF\xBB\xBF");
     scriptFile.write(scriptLines.join(QStringLiteral("\r\n")).toUtf8());
     scriptFile.close();
 
     const QStringList arguments{
+        QStringLiteral("-NoProfile"),
         QStringLiteral("-ExecutionPolicy"),
         QStringLiteral("Bypass"),
         QStringLiteral("-WindowStyle"),
@@ -395,14 +435,16 @@ bool UpdateService::installPendingUpdateNow(QString *errorMessage)
         QDir::toNativeSeparators(scriptFile.fileName())
     };
 
-    if (!QProcess::startDetached(QStringLiteral("powershell.exe"), arguments, Paths::updatesRoot())) {
+    if (!QProcess::startDetached(QStringLiteral("powershell.exe"),
+                                 arguments,
+                                 QFileInfo(scriptFile.fileName()).absolutePath())) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("无法启动更新安装脚本。");
         }
         return false;
     }
 
-    setStatusMessage(QStringLiteral("正在退出程序并安装更新：%1").arg(versionTag));
+    setStatusMessage(QStringLiteral("正在退出程序并打开更新安装包：%1").arg(versionTag));
     QMetaObject::invokeMethod(QCoreApplication::instance(), &QCoreApplication::quit, Qt::QueuedConnection);
     return true;
 }
