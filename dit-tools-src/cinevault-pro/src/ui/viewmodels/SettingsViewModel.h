@@ -3,6 +3,7 @@
 #include <QObject>
 
 class AppSettings;
+class UpdateService;
 class VideoAnalysisService;
 class VisionApiClient;
 
@@ -17,6 +18,7 @@ class SettingsViewModel : public QObject {
     Q_PROPERTY(int contactSheetFrameCount READ contactSheetFrameCount WRITE setContactSheetFrameCount NOTIFY settingsChanged)
     Q_PROPERTY(int analysisTimeoutSec READ analysisTimeoutSec WRITE setAnalysisTimeoutSec NOTIFY settingsChanged)
     Q_PROPERTY(int themeMode READ themeMode WRITE setThemeMode NOTIFY settingsChanged)
+    Q_PROPERTY(bool updateBusy READ updateBusy NOTIFY settingsChanged)
     Q_PROPERTY(QString dataRootPath READ dataRootPath NOTIFY settingsChanged)
     Q_PROPERTY(QString frameCacheSizeLabel READ frameCacheSizeLabel NOTIFY settingsChanged)
     Q_PROPERTY(QString lastMessage READ lastMessage NOTIFY settingsChanged)
@@ -25,6 +27,7 @@ public:
     explicit SettingsViewModel(AppSettings *settings,
                                VisionApiClient *visionApiClient,
                                VideoAnalysisService *videoAnalysisService,
+                               UpdateService *updateService,
                                QObject *parent = nullptr);
 
     QString visionBaseUrl() const;
@@ -45,10 +48,13 @@ public:
     void setAnalysisTimeoutSec(int value);
     int themeMode() const;
     void setThemeMode(int value);
+    bool updateBusy() const;
     QString dataRootPath() const;
     QString frameCacheSizeLabel() const;
     QString lastMessage() const;
 
+    Q_INVOKABLE void beginStartupUpdateFlow();
+    Q_INVOKABLE void checkForUpdates();
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void refreshCacheInfo();
     Q_INVOKABLE void testConnection();
@@ -70,10 +76,12 @@ signals:
 
 private:
     void setLastMessage(const QString &message);
+    void promptInstallUpdate(const QString &versionTag);
 
     AppSettings *m_settings = nullptr;
     VisionApiClient *m_visionApiClient = nullptr;
     VideoAnalysisService *m_videoAnalysisService = nullptr;
+    UpdateService *m_updateService = nullptr;
     QString m_frameCacheSizeLabel;
     QString m_lastMessage;
 };

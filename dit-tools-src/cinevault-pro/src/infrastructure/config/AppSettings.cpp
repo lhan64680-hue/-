@@ -16,6 +16,9 @@ constexpr auto kThumbnailFrameIndexKey = "materialCenter/thumbnailFrameIndex";
 constexpr auto kContactSheetFrameCountKey = "materialCenter/contactSheetFrameCount";
 constexpr auto kAnalysisTimeoutSecKey = "materialCenter/analysisTimeoutSec";
 constexpr auto kThemeModeKey = "ui/themeMode";
+constexpr auto kPendingUpdateVersionKey = "updates/pendingVersion";
+constexpr auto kPendingUpdateInstallerPathKey = "updates/pendingInstallerPath";
+constexpr auto kDownloadedUpdateVersionKey = "updates/downloadedVersion";
 constexpr auto kMaterialBackupQueuePrefix = "materialBackup/queues/";
 
 int normalizedThemeMode(int value)
@@ -220,6 +223,44 @@ int AppSettings::themeMode() const
 void AppSettings::setThemeMode(int value)
 {
     m_settings->setValue(QLatin1String(kThemeModeKey), normalizedThemeMode(value));
+}
+
+QString AppSettings::pendingUpdateVersion() const
+{
+    return m_settings->value(QLatin1String(kPendingUpdateVersionKey)).toString().trimmed();
+}
+
+void AppSettings::setPendingUpdateVersion(const QString &value)
+{
+    m_settings->setValue(QLatin1String(kPendingUpdateVersionKey), value.trimmed());
+}
+
+QString AppSettings::pendingUpdateInstallerPath() const
+{
+    return m_settings->value(QLatin1String(kPendingUpdateInstallerPathKey)).toString().trimmed();
+}
+
+void AppSettings::setPendingUpdateInstallerPath(const QString &value)
+{
+    m_settings->setValue(QLatin1String(kPendingUpdateInstallerPathKey), value.trimmed());
+}
+
+QString AppSettings::downloadedUpdateVersion() const
+{
+    return m_settings->value(QLatin1String(kDownloadedUpdateVersionKey)).toString().trimmed();
+}
+
+void AppSettings::setDownloadedUpdateVersion(const QString &value)
+{
+    m_settings->setValue(QLatin1String(kDownloadedUpdateVersionKey), value.trimmed());
+}
+
+void AppSettings::clearPendingUpdate()
+{
+    m_settings->remove(QLatin1String(kPendingUpdateVersionKey));
+    m_settings->remove(QLatin1String(kPendingUpdateInstallerPathKey));
+    m_settings->remove(QLatin1String(kDownloadedUpdateVersionKey));
+    m_settings->sync();
 }
 
 QString AppSettings::materialBackupQueueJson(const QString &projectDatabasePath) const

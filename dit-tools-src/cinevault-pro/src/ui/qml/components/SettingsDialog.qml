@@ -80,13 +80,24 @@ Dialog {
                     }
 
                     Text {
-                        text: "视觉解析、缩略图和解析图片配置"
+                        text: "软件更新、视觉解析、缩略图和解析图片配置"
                         color: Theme.muted
                         font.pixelSize: root.bodyFontSize
                     }
                 }
 
                 Item { Layout.fillWidth: true }
+
+                ActionButton {
+                    Layout.preferredWidth: 118
+                    Layout.preferredHeight: root.controlHeight
+                    text: viewModel && viewModel.updateBusy ? "检查中..." : "检查更新"
+                    enabled: viewModel && !viewModel.updateBusy
+                    textPixelSize: root.bodyFontSize
+                    onClicked: if (viewModel) {
+                        viewModel.checkForUpdates()
+                    }
+                }
 
                 ActionButton {
                     Layout.preferredWidth: 118

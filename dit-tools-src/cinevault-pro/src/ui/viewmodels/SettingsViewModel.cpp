@@ -1,5 +1,6 @@
 #include "ui/viewmodels/SettingsViewModel.h"
 
+#include "application/UpdateService.h"
 #include "domain/Enums.h"
 #include "infrastructure/config/AppSettings.h"
 #include "infrastructure/network/VisionApiClient.h"
@@ -8,8 +9,11 @@
 
 #include <QtConcurrent>
 
+#include <QApplication>
 #include <QDirIterator>
+#include <QMessageBox>
 #include <QMetaObject>
+#include <QPushButton>
 
 namespace {
 qint64 directorySize(const QString &path)
@@ -22,17 +26,32 @@ qint64 directorySize(const QString &path)
     }
     return total;
 }
+
+QWidget *dialogParent()
+{
+    return QApplication::activeWindow();
+}
 }
 
 SettingsViewModel::SettingsViewModel(AppSettings *settings,
                                      VisionApiClient *visionApiClient,
                                      VideoAnalysisService *videoAnalysisService,
+                                     UpdateService *updateService,
                                      QObject *parent)
     : QObject(parent)
     , m_settings(settings)
     , m_visionApiClient(visionApiClient)
     , m_videoAnalysisService(videoAnalysisService)
+    , m_updateService(updateService)
 {
+    if (m_updateService) {
+        connect(m_updateService, &UpdateService::statusMessageChanged, this, &SettingsViewModel::setLastMessage);
+        connect(m_updateService, &UpdateService::busyChanged, this, &SettingsViewModel::settingsChanged);
+        connect(m_updateService, &UpdateService::updateReady, this, [this](const QString &versionTag, const QString &, bool) {
+            promptInstallUpdate(versionTag);
+        });
+    }
+
     refreshCacheInfo();
 }
 
@@ -165,6 +184,11 @@ void SettingsViewModel::setThemeMode(int value)
     emit settingsChanged();
 }
 
+bool SettingsViewModel::updateBusy() const
+{
+    return m_updateService && m_updateService->isBusy();
+}
+
 QString SettingsViewModel::dataRootPath() const
 {
     return Paths::resolvedDataRoot();
@@ -178,6 +202,24 @@ QString SettingsViewModel::frameCacheSizeLabel() const
 QString SettingsViewModel::lastMessage() const
 {
     return m_lastMessage;
+}
+
+void SettingsViewModel::beginStartupUpdateFlow()
+{
+    if (!m_updateService) {
+        return;
+    }
+
+    m_updateService->beginStartupFlow();
+}
+
+void SettingsViewModel::checkForUpdates()
+{
+    if (!m_updateService) {
+        return;
+    }
+
+    m_updateService->checkForUpdates(true);
 }
 
 void SettingsViewModel::refresh()
@@ -265,4 +307,33 @@ void SettingsViewModel::setLastMessage(const QString &message)
     }
     m_lastMessage = message;
     emit settingsChanged();
+}
+
+void SettingsViewModel::promptInstallUpdate(const QString &versionTag)
+{
+    if (!m_updateService) {
+        return;
+    }
+
+    QMessageBox box(dialogParent());
+    box.setIcon(QMessageBox::Information);
+    box.setWindowTitle(QStringLiteral("发现新版本"));
+    box.setText(QStringLiteral("更新包 %1 已下载完成。").arg(versionTag));
+    box.setInformativeText(QStringLiteral("可以立即更新，也可以保留到下次启动时更新。"));
+    QAbstractButton *installNowButton = box.addButton(QStringLiteral("立即更新"), QMessageBox::AcceptRole);
+    QAbstractButton *updateLaterButton = box.addButton(QStringLiteral("下次启动更新"), QMessageBox::RejectRole);
+    box.exec();
+
+    if (box.clickedButton() == installNowButton) {
+        QString errorMessage;
+        if (!m_updateService->installPendingUpdateNow(&errorMessage)) {
+            setLastMessage(errorMessage);
+            QMessageBox::warning(dialogParent(), QStringLiteral("安装更新失败"), errorMessage);
+        }
+        return;
+    }
+
+    if (box.clickedButton() == updateLaterButton) {
+        setLastMessage(QStringLiteral("更新包已保留，下次启动时将再次提示安装：%1").arg(versionTag));
+    }
 }

@@ -65,6 +65,11 @@ ApplicationWindow {
     Component.onCompleted: {
         root.rememberWorkspace(root.shellViewModel.currentWorkspace)
         Qt.callLater(root.applyWindowTheme)
+        Qt.callLater(function() {
+            if (root.settingsViewModel) {
+                root.settingsViewModel.beginStartupUpdateFlow()
+            }
+        })
     }
     onVisibleChanged: if (visible) Qt.callLater(root.applyWindowTheme)
 

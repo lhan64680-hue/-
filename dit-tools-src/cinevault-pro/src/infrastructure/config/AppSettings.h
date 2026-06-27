@@ -45,6 +45,16 @@ public:
     int themeMode() const;
     void setThemeMode(int value);
 
+    QString pendingUpdateVersion() const;
+    void setPendingUpdateVersion(const QString &value);
+
+    QString pendingUpdateInstallerPath() const;
+    void setPendingUpdateInstallerPath(const QString &value);
+
+    QString downloadedUpdateVersion() const;
+    void setDownloadedUpdateVersion(const QString &value);
+    void clearPendingUpdate();
+
     QString materialBackupQueueJson(const QString &projectDatabasePath) const;
     void setMaterialBackupQueueJson(const QString &projectDatabasePath, const QString &json);
 

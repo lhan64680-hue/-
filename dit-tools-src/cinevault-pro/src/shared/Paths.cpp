@@ -149,6 +149,11 @@ QString Paths::cacheRoot()
     return appDataRoot() + QStringLiteral("/cache");
 }
 
+QString Paths::updatesRoot()
+{
+    return QDir(cacheRoot()).filePath(QStringLiteral("updates"));
+}
+
 QString Paths::configRoot()
 {
     return appDataRoot() + QStringLiteral("/config");
@@ -163,6 +168,7 @@ bool Paths::ensureBaseDirectories(QString *errorMessage)
 {
     return !ensureDir(projectsRoot(), errorMessage).isEmpty()
         && !ensureDir(cacheRoot(), errorMessage).isEmpty()
+        && !ensureDir(updatesRoot(), errorMessage).isEmpty()
         && !ensureDir(configRoot(), errorMessage).isEmpty()
         && !ensureDir(logsRoot(), errorMessage).isEmpty()
         && !ensureDir(resolvedDataRoot(), errorMessage).isEmpty()

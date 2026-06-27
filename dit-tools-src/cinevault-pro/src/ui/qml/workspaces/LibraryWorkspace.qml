@@ -10,6 +10,8 @@ Rectangle {
     property var shellVm
     property var documentPreviewVm
     readonly property bool hasOpenProject: !shellVm || shellVm.projectPath.length > 0
+    readonly property real minThumbnailScale: 0.5
+    readonly property real maxThumbnailScale: 1.45
     property real thumbnailScale: 1.0
     property bool thumbnailSliderOpen: false
     readonly property int gridPreviewHeight: Math.round(146 * thumbnailScale)
@@ -26,7 +28,7 @@ Rectangle {
     }
 
     function adjustThumbnailScale(delta) {
-        var nextScale = Math.max(0.85, Math.min(1.45, thumbnailScale + delta))
+        var nextScale = Math.max(minThumbnailScale, Math.min(maxThumbnailScale, thumbnailScale + delta))
         thumbnailScale = Math.round(nextScale * 100) / 100
     }
 
@@ -524,8 +526,8 @@ Rectangle {
                 ThemedSlider {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 28
-                    from: 0.85
-                    to: 1.45
+                    from: libraryRoot.minThumbnailScale
+                    to: libraryRoot.maxThumbnailScale
                     value: libraryRoot.thumbnailScale
                     onMoved: libraryRoot.thumbnailScale = Math.round(value * 100) / 100
                 }

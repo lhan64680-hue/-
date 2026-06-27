@@ -17,6 +17,9 @@ if ($RealWorkflow -and $EnableFfmpeg) {
 
 $context = Get-CineVaultBuildContext -QtRoot $QtRoot -FfmpegDevRoot $FfmpegDevRoot -RequireFfmpeg:$EnableFfmpeg
 $projectRoot = Join-Path $context.RepoRoot "dit-tools-src\cinevault-pro"
+$outputRoot = Join-Path $context.RepoRoot "output"
+$version = Get-NextDistVersion -DistRoot $outputRoot -ReferenceRoots @((Join-Path $context.RepoRoot "dist"))
+$appVersion = $version.TrimStart("v")
 
 $isDebug = $Configuration -ieq "Debug"
 $configurePreset = if ($EnableFfmpeg) {
@@ -39,14 +42,12 @@ if ($context.HasFfmpeg) {
 
 Push-Location $projectRoot
 try {
-    Invoke-VcVarsCommand "cmake --preset $configurePreset"
+    Invoke-VcVarsCommand "cmake --preset $configurePreset -DCINEVAULT_APP_VERSION=$appVersion"
     Invoke-VcVarsCommand "cmake --build --preset $buildPreset --config $Configuration"
 } finally {
     Pop-Location
 }
 
-$outputRoot = Join-Path $context.RepoRoot "output"
-$version = Get-NextDistVersion -DistRoot $outputRoot -ReferenceRoots @((Join-Path $context.RepoRoot "dist"))
 $installerOutputDir = Join-Path $outputRoot $version
 $stagingRoot = Join-Path $outputRoot "_installer_staging"
 $stagingDir = Join-Path $stagingRoot $version
@@ -104,7 +105,6 @@ if (-not (Test-Path $installerScript)) {
     throw "Installer script was not found: $installerScript"
 }
 
-$appVersion = $version.TrimStart("v")
 & $context.InnoSetupCompiler "/DAppVersion=$appVersion" "/DVersionTag=$version" "/DSourceDir=$stagingDir" "/DOutputDir=$installerOutputDir" $installerScript
 if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup installer build failed."

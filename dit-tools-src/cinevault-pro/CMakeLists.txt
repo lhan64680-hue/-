@@ -16,6 +16,7 @@ option(CINEVAULT_BUILD_MINIMAL_GUI "Build the milestone A minimal GUI shell" ON)
 option(CINEVAULT_ENABLE_FFMPEG "Enable FFmpeg-backed media modules" OFF)
 set(QT_ROOT "" CACHE PATH "Qt 6 kit root directory")
 set(FFMPEG_DEV_ROOT "" CACHE PATH "FFmpeg development package root directory")
+set(CINEVAULT_APP_VERSION "${PROJECT_VERSION}" CACHE STRING "Application version injected into the runtime")
 
 if(QT_ROOT AND EXISTS "${QT_ROOT}")
     list(APPEND CMAKE_PREFIX_PATH "${QT_ROOT}")
@@ -162,6 +163,8 @@ else()
     src/application/LibraryQueryService.cpp
     src/application/ReportExportService.h
     src/application/ReportExportService.cpp
+    src/application/UpdateService.h
+    src/application/UpdateService.cpp
     src/infrastructure/ffmpeg/FFmpegAdapter.h
     src/infrastructure/ffmpeg/FFmpegAdapter.cpp
     src/infrastructure/network/VisionApiClient.h
@@ -259,6 +262,7 @@ endif()
 target_compile_definitions(CineVault PRIVATE
     CINEVAULT_BUILD_MINIMAL_GUI=$<IF:$<BOOL:${CINEVAULT_BUILD_MINIMAL_GUI}>,1,0>
     CINEVAULT_HAS_FFMPEG=$<IF:$<BOOL:${CINEVAULT_HAS_FFMPEG}>,1,0>
+    CINEVAULT_APP_VERSION="${CINEVAULT_APP_VERSION}"
 )
 
 target_link_libraries(CineVault PRIVATE
@@ -312,6 +316,16 @@ if(BUILD_TESTING)
     target_link_libraries(VisionApiClientJsonTest PRIVATE Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME VisionApiClientJsonTest COMMAND VisionApiClientJsonTest)
 
+    qt_add_executable(UpdateServiceTest
+        tests/unit/UpdateServiceTest.cpp
+        src/application/UpdateService.cpp
+        src/infrastructure/config/AppSettings.cpp
+        src/shared/Paths.cpp
+    )
+    target_include_directories(UpdateServiceTest PRIVATE src)
+    target_link_libraries(UpdateServiceTest PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME UpdateServiceTest COMMAND UpdateServiceTest)
+
     set(CINEVAULT_TEST_QT_BIN_DIR "")
     if(TARGET Qt6::qmake)
         get_target_property(CINEVAULT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
@@ -321,7 +335,7 @@ if(BUILD_TESTING)
     endif()
 
     if(WIN32 AND CINEVAULT_TEST_QT_BIN_DIR)
-        set_tests_properties(CineVaultSmokeTest BackupPlannerTest VisionApiClientJsonTest PROPERTIES
+        set_tests_properties(CineVaultSmokeTest BackupPlannerTest VisionApiClientJsonTest UpdateServiceTest PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CINEVAULT_TEST_QT_BIN_DIR}"
         )
     endif()

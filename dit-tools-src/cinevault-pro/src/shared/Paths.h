@@ -20,6 +20,7 @@ public:
     static QString projectContactSheetPath(const QString &databasePath, const QString &videoKey, int frameCount);
     static QString projectsRoot();
     static QString cacheRoot();
+    static QString updatesRoot();
     static QString configRoot();
     static QString logsRoot();
     static bool ensureBaseDirectories(QString *errorMessage);

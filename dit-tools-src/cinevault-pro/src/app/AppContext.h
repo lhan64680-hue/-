@@ -31,6 +31,7 @@ class MaterialCatalogSyncService;
 class MaterialCenterQueryService;
 class MaterialBackupService;
 class VideoAnalysisService;
+class UpdateService;
 class ImportService;
 class LibraryQueryService;
 class DocumentPreviewService;
@@ -87,6 +88,7 @@ private:
     MaterialBackupService *m_materialBackupService = nullptr;
     VisionApiClient *m_visionApiClient = nullptr;
     VideoAnalysisService *m_videoAnalysisService = nullptr;
+    UpdateService *m_updateService = nullptr;
     ImportService *m_importService = nullptr;
     LibraryQueryService *m_libraryQueryService = nullptr;
     DocumentPreviewService *m_documentPreviewService = nullptr;

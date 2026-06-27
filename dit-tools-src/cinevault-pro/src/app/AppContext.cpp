@@ -22,6 +22,7 @@
 #include "application/MediaTaskService.h"
 #include "application/ProjectService.h"
 #include "application/ReportExportService.h"
+#include "application/UpdateService.h"
 #include "application/VideoAnalysisService.h"
 #include "core/media/MediaProbeEngine.h"
 #include "core/jobs/JobEngine.h"
@@ -88,6 +89,7 @@ AppContext::AppContext(QObject *parent)
     , m_materialBackupService(new MaterialBackupService(m_jobEngine, this))
     , m_visionApiClient(new VisionApiClient)
     , m_videoAnalysisService(new VideoAnalysisService(m_globalDatabaseManager, m_jobEngine, &m_settings, m_ffmpegAdapter, m_visionApiClient, this))
+    , m_updateService(new UpdateService(&m_settings, this))
     , m_shellViewModel(new ShellViewModel(m_projectService, m_importService, this))
     , m_projectLibraryViewModel(new ProjectLibraryViewModel(m_projectService, this))
     , m_sourceRailViewModel(new SourceRailViewModel(m_libraryQueryService, this))
@@ -98,7 +100,7 @@ AppContext::AppContext(QObject *parent)
     , m_inspectorViewModel(new InspectorViewModel(m_libraryQueryService, this))
     , m_jobTimelineViewModel(new JobTimelineViewModel(m_jobService, this))
     , m_reportWorkspaceViewModel(new ReportWorkspaceViewModel(m_projectService, m_libraryQueryService, m_reportExportService, this))
-    , m_settingsViewModel(new SettingsViewModel(&m_settings, m_visionApiClient, m_videoAnalysisService, this))
+    , m_settingsViewModel(new SettingsViewModel(&m_settings, m_visionApiClient, m_videoAnalysisService, m_updateService, this))
 {
     QString globalDbError;
     m_globalDatabaseManager->openDatabase(&globalDbError);
