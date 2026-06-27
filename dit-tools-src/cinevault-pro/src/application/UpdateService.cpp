@@ -28,16 +28,6 @@ QString installerScriptPath()
 {
     return QDir(Paths::updatesRoot()).filePath(QStringLiteral("apply-update.ps1"));
 }
-
-QString latestReleaseScriptPath()
-{
-    return QDir(Paths::updatesRoot()).filePath(QStringLiteral("check-latest-release.ps1"));
-}
-
-QString downloadScriptPath()
-{
-    return QDir(Paths::updatesRoot()).filePath(QStringLiteral("download-update.ps1"));
-}
 }
 
 UpdateService::UpdateService(AppSettings *settings, QObject *parent)
@@ -218,12 +208,6 @@ void UpdateService::checkForUpdates(bool manual)
         ? QStringLiteral("正在检查最新发布版本...")
         : QStringLiteral("启动后正在检查最新发布版本..."));
 
-    if (!QDir().mkpath(Paths::updatesRoot())) {
-        setBusy(false);
-        setStatusMessage(QStringLiteral("无法创建更新缓存目录：%1").arg(Paths::updatesRoot()));
-        return;
-    }
-
     if (m_checkProcess) {
         m_checkProcess->kill();
         m_checkProcess->waitForFinished(2000);
@@ -231,55 +215,34 @@ void UpdateService::checkForUpdates(bool manual)
         m_checkProcess = nullptr;
     }
 
-    QFile::remove(latestReleaseScriptPath());
-    QFile scriptFile(latestReleaseScriptPath());
-    if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        setBusy(false);
-        setStatusMessage(QStringLiteral("无法创建版本检查脚本：%1").arg(scriptFile.fileName()));
-        return;
-    }
-
-    QStringList scriptLines;
-    scriptLines << QStringLiteral("$ErrorActionPreference = 'Stop'")
-                << QStringLiteral("$ProgressPreference = 'SilentlyContinue'")
-                << QStringLiteral("[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)")
-                << QStringLiteral("[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12")
-                << QStringLiteral("$headers = @{ 'User-Agent' = 'CineVault'; 'Accept' = 'application/vnd.github+json' }")
-                << QStringLiteral("$result = @{ statusCode = 0; body = ''; error = '' }")
-                << QStringLiteral("try {")
-                << QStringLiteral("    $response = Invoke-WebRequest -Uri %1 -Headers $headers -MaximumRedirection 4 -TimeoutSec 20")
-                    .arg(toPowerShellLiteral(QString::fromLatin1(kLatestReleaseUrl)))
-                << QStringLiteral("    $result.statusCode = [int]$response.StatusCode")
-                << QStringLiteral("    $result.body = [string]$response.Content")
-                << QStringLiteral("} catch {")
-                << QStringLiteral("    $result.error = $_.Exception.Message")
-                << QStringLiteral("    if ($_.Exception.Response) {")
-                << QStringLiteral("        try { $result.statusCode = [int]$_.Exception.Response.StatusCode } catch {}")
-                << QStringLiteral("    }")
-                << QStringLiteral("}")
-                << QStringLiteral("$result | ConvertTo-Json -Compress -Depth 4");
-    scriptFile.write(scriptLines.join(QStringLiteral("\r\n")).toUtf8());
-    scriptFile.close();
-
     m_checkProcess = new QProcess(this);
-    m_checkProcess->setProgram(QStringLiteral("powershell.exe"));
+    m_checkProcess->setProgram(QStringLiteral("curl.exe"));
     m_checkProcess->setArguments({
-        QStringLiteral("-NoProfile"),
-        QStringLiteral("-ExecutionPolicy"),
-        QStringLiteral("Bypass"),
-        QStringLiteral("-WindowStyle"),
-        QStringLiteral("Hidden"),
-        QStringLiteral("-File"),
-        QDir::toNativeSeparators(scriptFile.fileName())
+        QStringLiteral("--noproxy"),
+        QStringLiteral("*"),
+        QStringLiteral("-L"),
+        QStringLiteral("--silent"),
+        QStringLiteral("--show-error"),
+        QStringLiteral("--connect-timeout"),
+        QStringLiteral("20"),
+        QStringLiteral("--max-time"),
+        QStringLiteral("60"),
+        QStringLiteral("-H"),
+        QStringLiteral("User-Agent: CineVault"),
+        QStringLiteral("-H"),
+        QStringLiteral("Accept: application/vnd.github+json"),
+        QStringLiteral("--output"),
+        QStringLiteral("-"),
+        QStringLiteral("--write-out"),
+        QStringLiteral("\n%{http_code}"),
+        QString::fromLatin1(kLatestReleaseUrl)
     });
-    m_checkProcess->setWorkingDirectory(Paths::updatesRoot());
     connect(m_checkProcess,
             qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
             this,
             &UpdateService::finishCheckProcess);
     m_checkProcess->start();
     if (!m_checkProcess->waitForStarted(3000)) {
-        QFile::remove(latestReleaseScriptPath());
         m_checkProcess->deleteLater();
         m_checkProcess = nullptr;
         setBusy(false);
@@ -471,37 +434,25 @@ void UpdateService::startInstallerDownload(const UpdateReleaseInfo &release, boo
     m_downloadPartPath = m_downloadTargetPath + QStringLiteral(".part");
     m_downloadExpectedSize = release.installerSize;
     QFile::remove(m_downloadPartPath);
-    QFile::remove(downloadScriptPath());
-
-    QFile scriptFile(downloadScriptPath());
-    if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        setBusy(false);
-        setStatusMessage(QStringLiteral("无法创建下载脚本：%1").arg(scriptFile.fileName()));
-        return;
-    }
-
-    QStringList scriptLines;
-    scriptLines << QStringLiteral("$ErrorActionPreference = 'Stop'")
-                << QStringLiteral("$ProgressPreference = 'SilentlyContinue'")
-                << QStringLiteral("[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12")
-                << QStringLiteral("$downloadUrl = %1").arg(toPowerShellLiteral(release.installerUrl))
-                << QStringLiteral("$targetPath = %1").arg(toPowerShellLiteral(QDir::toNativeSeparators(m_downloadPartPath)))
-                << QStringLiteral("$headers = @{ 'User-Agent' = 'CineVault' }")
-                << QStringLiteral("Invoke-WebRequest -Uri $downloadUrl -Headers $headers -MaximumRedirection 8 -TimeoutSec 120 -OutFile $targetPath");
-    scriptFile.write(scriptLines.join(QStringLiteral("\r\n")).toUtf8());
-    scriptFile.close();
 
     setStatusMessage(QStringLiteral("发现新版本 %1，正在下载更新包...").arg(release.versionTag));
     m_downloadProcess = new QProcess(this);
-    m_downloadProcess->setProgram(QStringLiteral("powershell.exe"));
+    m_downloadProcess->setProgram(QStringLiteral("curl.exe"));
     m_downloadProcess->setArguments({
-        QStringLiteral("-NoProfile"),
-        QStringLiteral("-ExecutionPolicy"),
-        QStringLiteral("Bypass"),
-        QStringLiteral("-WindowStyle"),
-        QStringLiteral("Hidden"),
-        QStringLiteral("-File"),
-        QDir::toNativeSeparators(scriptFile.fileName())
+        QStringLiteral("--noproxy"),
+        QStringLiteral("*"),
+        QStringLiteral("-L"),
+        QStringLiteral("--silent"),
+        QStringLiteral("--show-error"),
+        QStringLiteral("--connect-timeout"),
+        QStringLiteral("20"),
+        QStringLiteral("--max-time"),
+        QStringLiteral("600"),
+        QStringLiteral("-H"),
+        QStringLiteral("User-Agent: CineVault"),
+        QStringLiteral("--output"),
+        QDir::toNativeSeparators(m_downloadPartPath),
+        release.installerUrl
     });
     m_downloadProcess->setWorkingDirectory(Paths::updatesRoot());
     connect(m_downloadProcess,
@@ -510,7 +461,6 @@ void UpdateService::startInstallerDownload(const UpdateReleaseInfo &release, boo
             &UpdateService::finishDownloadProcess);
     m_downloadProcess->start();
     if (!m_downloadProcess->waitForStarted(3000)) {
-        QFile::remove(downloadScriptPath());
         m_downloadProcess->deleteLater();
         m_downloadProcess = nullptr;
         setBusy(false);
@@ -518,11 +468,10 @@ void UpdateService::startInstallerDownload(const UpdateReleaseInfo &release, boo
     }
 }
 
-void UpdateService::finishCheckProcess(int, QProcess::ExitStatus exitStatus)
+void UpdateService::finishCheckProcess(int exitCode, QProcess::ExitStatus exitStatus)
 {
     auto *checkProcess = m_checkProcess;
     m_checkProcess = nullptr;
-    QFile::remove(latestReleaseScriptPath());
 
     if (!checkProcess) {
         setBusy(false);
@@ -539,22 +488,27 @@ void UpdateService::finishCheckProcess(int, QProcess::ExitStatus exitStatus)
         return;
     }
 
-    QJsonParseError envelopeParseError;
-    const auto envelopeDocument = QJsonDocument::fromJson(standardOutput.toUtf8(), &envelopeParseError);
-    if (envelopeParseError.error != QJsonParseError::NoError || !envelopeDocument.isObject()) {
+    if (exitCode != 0) {
+        setBusy(false);
+        setStatusMessage(latestReleaseStatusMessage(0, standardError.isEmpty() ? standardOutput : standardError));
+        return;
+    }
+
+    auto normalizedOutput = standardOutput;
+    normalizedOutput.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    const auto separatorIndex = normalizedOutput.lastIndexOf(QLatin1Char('\n'));
+    if (separatorIndex <= 0) {
         setBusy(false);
         setStatusMessage(QStringLiteral("检查更新失败：版本检查结果无法解析。"));
         return;
     }
 
-    const auto envelope = envelopeDocument.object();
-    const auto statusCode = envelope.value(QStringLiteral("statusCode")).toInt();
-    const auto payload = envelope.value(QStringLiteral("body")).toString().toUtf8();
-    const auto errorString = envelope.value(QStringLiteral("error")).toString().trimmed();
+    const auto payload = normalizedOutput.left(separatorIndex).toUtf8();
+    const auto statusCode = normalizedOutput.mid(separatorIndex + 1).trimmed().toInt();
 
     if (statusCode != 200) {
         setBusy(false);
-        setStatusMessage(latestReleaseStatusMessage(statusCode, errorString.isEmpty() ? standardError : errorString));
+        setStatusMessage(latestReleaseStatusMessage(statusCode, standardError));
         return;
     }
 
@@ -593,7 +547,6 @@ void UpdateService::finishDownloadProcess(int exitCode, QProcess::ExitStatus exi
     m_downloadTargetPath.clear();
     m_downloadPartPath.clear();
     m_downloadExpectedSize = 0;
-    QFile::remove(downloadScriptPath());
 
     if (!downloadProcess) {
         setBusy(false);
