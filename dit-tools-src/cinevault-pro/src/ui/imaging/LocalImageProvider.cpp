@@ -1,10 +1,16 @@
 #include "ui/imaging/LocalImageProvider.h"
 
+#include <QByteArray>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QImage>
 #include <QImageReader>
 #include <QUrl>
+
+#if defined(CINEVAULT_HAS_BUNDLED_WEBP) && CINEVAULT_HAS_BUNDLED_WEBP
+#include <webp/decode.h>
+#endif
 
 #ifdef Q_OS_WIN
 #include <objbase.h>
@@ -14,6 +20,11 @@
 #endif
 
 namespace {
+bool isWebpFile(const QString &localPath)
+{
+    return QFileInfo(localPath).suffix().compare(QStringLiteral("webp"), Qt::CaseInsensitive) == 0;
+}
+
 QString resolveLocalPath(const QString &id)
 {
     const auto decoded = QUrl::fromPercentEncoding(id.toUtf8());
@@ -45,6 +56,57 @@ QImage loadWithQt(const QString &localPath, const QSize &requestedSize)
     }
     return image;
 }
+
+#if defined(CINEVAULT_HAS_BUNDLED_WEBP) && CINEVAULT_HAS_BUNDLED_WEBP
+QImage loadWithBundledWebpDecoder(const QString &localPath, const QSize &requestedSize)
+{
+    if (!isWebpFile(localPath)) {
+        return {};
+    }
+
+    QFile file(localPath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+
+    const auto encodedBytes = file.readAll();
+    if (encodedBytes.isEmpty()) {
+        return {};
+    }
+
+    int width = 0;
+    int height = 0;
+    if (WebPGetInfo(reinterpret_cast<const uint8_t *>(encodedBytes.constData()),
+                    static_cast<size_t>(encodedBytes.size()),
+                    &width,
+                    &height) == 0
+        || width <= 0
+        || height <= 0) {
+        return {};
+    }
+
+    QImage image(width, height, QImage::Format_RGBA8888);
+    if (image.isNull()) {
+        return {};
+    }
+
+    const auto *decoded = WebPDecodeRGBAInto(
+        reinterpret_cast<const uint8_t *>(encodedBytes.constData()),
+        static_cast<size_t>(encodedBytes.size()),
+        image.bits(),
+        static_cast<size_t>(image.sizeInBytes()),
+        image.bytesPerLine());
+    if (!decoded) {
+        return {};
+    }
+
+    if (requestedSize.isValid()
+        && (image.width() > requestedSize.width() || image.height() > requestedSize.height())) {
+        image = image.scaled(requestedSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    return image;
+}
+#endif
 
 #ifdef Q_OS_WIN
 QImage imageFromBitmap(HBITMAP bitmapHandle)
@@ -136,6 +198,11 @@ QImage LocalImageProvider::requestImage(const QString &id, QSize *size, const QS
 {
     const auto localPath = resolveLocalPath(id);
     auto image = loadWithQt(localPath, requestedSize);
+#if defined(CINEVAULT_HAS_BUNDLED_WEBP) && CINEVAULT_HAS_BUNDLED_WEBP
+    if (image.isNull()) {
+        image = loadWithBundledWebpDecoder(localPath, requestedSize);
+    }
+#endif
 #ifdef Q_OS_WIN
     if (image.isNull()) {
         image = loadWithWindowsShell(localPath, requestedSize);

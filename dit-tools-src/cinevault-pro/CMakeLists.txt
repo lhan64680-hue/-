@@ -46,6 +46,27 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS ${CINEVAULT_QT_COMPONENTS})
 
 qt_standard_project_setup(REQUIRES 6.5)
 
+set(CINEVAULT_HAS_BUNDLED_WEBP OFF)
+set(CINEVAULT_LIBWEBP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libwebp")
+if(EXISTS "${CINEVAULT_LIBWEBP_SOURCE_DIR}/CMakeLists.txt")
+    set(WEBP_BUILD_ANIM_UTILS OFF CACHE BOOL "" FORCE)
+    set(WEBP_BUILD_CWEBP OFF CACHE BOOL "" FORCE)
+    set(WEBP_BUILD_DWEBP OFF CACHE BOOL "" FORCE)
+    set(WEBP_BUILD_GIF2WEBP OFF CACHE BOOL "" FORCE)
+    set(WEBP_BUILD_IMG2WEBP OFF CACHE BOOL "" FORCE)
+    set(WEBP_BUILD_VWEBP OFF CACHE BOOL "" FORCE)
+    set(WEBP_BUILD_WEBPINFO OFF CACHE BOOL "" FORCE)
+    set(WEBP_BUILD_LIBWEBPMUX OFF CACHE BOOL "" FORCE)
+    set(WEBP_BUILD_WEBPMUX OFF CACHE BOOL "" FORCE)
+    set(WEBP_BUILD_EXTRAS OFF CACHE BOOL "" FORCE)
+    set(WEBP_BUILD_WEBP_JS OFF CACHE BOOL "" FORCE)
+    set(WEBP_BUILD_FUZZTEST OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${CINEVAULT_LIBWEBP_SOURCE_DIR}"
+                     "${CMAKE_CURRENT_BINARY_DIR}/third_party/libwebp"
+                     EXCLUDE_FROM_ALL)
+    set(CINEVAULT_HAS_BUNDLED_WEBP ON)
+endif()
+
 set(CINEVAULT_HAS_FFMPEG OFF)
 if(CINEVAULT_ENABLE_FFMPEG AND NOT CINEVAULT_BUILD_MINIMAL_GUI)
     find_package(FFmpeg REQUIRED)
@@ -266,6 +287,7 @@ endif()
 target_compile_definitions(CineVault PRIVATE
     CINEVAULT_BUILD_MINIMAL_GUI=$<IF:$<BOOL:${CINEVAULT_BUILD_MINIMAL_GUI}>,1,0>
     CINEVAULT_HAS_FFMPEG=$<IF:$<BOOL:${CINEVAULT_HAS_FFMPEG}>,1,0>
+    CINEVAULT_HAS_BUNDLED_WEBP=$<IF:$<BOOL:${CINEVAULT_HAS_BUNDLED_WEBP}>,1,0>
     CINEVAULT_APP_VERSION="${CINEVAULT_APP_VERSION}"
 )
 
@@ -281,6 +303,10 @@ target_link_libraries(CineVault PRIVATE
     Qt6::Network
     Qt6::Widgets
 )
+
+if(CINEVAULT_HAS_BUNDLED_WEBP)
+    target_link_libraries(CineVault PRIVATE webpdecoder)
+endif()
 
 if(NOT CINEVAULT_BUILD_MINIMAL_GUI)
     target_link_libraries(CineVault PRIVATE
@@ -338,6 +364,25 @@ if(BUILD_TESTING)
     target_link_libraries(LocalImageUrlHelperTest PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME LocalImageUrlHelperTest COMMAND LocalImageUrlHelperTest)
 
+    if(CINEVAULT_HAS_BUNDLED_WEBP)
+        qt_add_executable(LocalImageProviderTest
+            tests/unit/LocalImageProviderTest.cpp
+            src/ui/imaging/LocalImageProvider.cpp
+        )
+        target_include_directories(LocalImageProviderTest PRIVATE src)
+        target_compile_definitions(LocalImageProviderTest PRIVATE
+            CINEVAULT_HAS_BUNDLED_WEBP=1
+        )
+        target_link_libraries(LocalImageProviderTest PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Quick
+            Qt6::Test
+            webpdecoder
+        )
+        add_test(NAME LocalImageProviderTest COMMAND LocalImageProviderTest)
+    endif()
+
     set(CINEVAULT_TEST_QT_BIN_DIR "")
     if(TARGET Qt6::qmake)
         get_target_property(CINEVAULT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
@@ -347,7 +392,17 @@ if(BUILD_TESTING)
     endif()
 
     if(WIN32 AND CINEVAULT_TEST_QT_BIN_DIR)
-        set_tests_properties(CineVaultSmokeTest BackupPlannerTest VisionApiClientJsonTest UpdateServiceTest LocalImageUrlHelperTest PROPERTIES
+        set(CINEVAULT_PATH_AWARE_TESTS
+            CineVaultSmokeTest
+            BackupPlannerTest
+            VisionApiClientJsonTest
+            UpdateServiceTest
+            LocalImageUrlHelperTest
+        )
+        if(TARGET LocalImageProviderTest)
+            list(APPEND CINEVAULT_PATH_AWARE_TESTS LocalImageProviderTest)
+        endif()
+        set_tests_properties(${CINEVAULT_PATH_AWARE_TESTS} PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${CINEVAULT_TEST_QT_BIN_DIR}"
         )
     endif()
