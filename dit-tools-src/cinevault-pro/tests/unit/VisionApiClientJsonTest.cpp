@@ -1,6 +1,18 @@
 #include <QtTest>
 
-#include "infrastructure/network/VisionApiClient.cpp"
+#include "infrastructure/network/VisionResponseParser.h"
+
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
+
+using VisionResponseParser::parseAssistantJson;
+using VisionResponseParser::normalizeFrameAnalysis;
+using VisionResponseParser::normalizeVideoSummary;
+using VisionResponseParser::extractAssistantContent;
+using VisionResponseParser::fallbackFrameAnalysisFromContent;
+using VisionResponseParser::fallbackVideoSummaryFromContent;
 
 namespace {
 QByteArray chatResponse(const QJsonValue &content)
@@ -100,6 +112,154 @@ private slots:
 
         QVERIFY2(payload.has_value(), qPrintable(error));
         QCOMPARE(payload->value(QStringLiteral("status")).toString(), QStringLiteral("ok"));
+    }
+
+    void extractAssistantContent_returnsPlainTextForRepair()
+    {
+        QString error;
+        const auto content = extractAssistantContent(
+            chatResponse(QStringLiteral("画面描述：人物在街道上行走。标签：人物、街道。")),
+            &error);
+
+        QVERIFY2(content.has_value(), qPrintable(error));
+        QCOMPARE(*content, QStringLiteral("画面描述：人物在街道上行走。标签：人物、街道。"));
+    }
+
+    void extractAssistantContent_returnsCsvForRepair()
+    {
+        QString error;
+        const auto content = extractAssistantContent(
+            chatResponse(QStringLiteral("caption,tags,objects\n人物在室内,人物|室内,摄影机")),
+            &error);
+
+        QVERIFY2(content.has_value(), qPrintable(error));
+        QVERIFY(content->contains(QStringLiteral("caption,tags,objects")));
+        QVERIFY(content->contains(QStringLiteral("摄影机")));
+    }
+
+    void extractAssistantContent_returnsMarkdownTableForRepair()
+    {
+        QString error;
+        const auto content = extractAssistantContent(
+            chatResponse(QStringLiteral("| caption | tags |\n| --- | --- |\n| 棚内拍摄 | 摄影,灯光 |")),
+            &error);
+
+        QVERIFY2(content.has_value(), qPrintable(error));
+        QVERIFY(content->contains(QStringLiteral("| caption | tags |")));
+        QVERIFY(content->contains(QStringLiteral("棚内拍摄")));
+    }
+
+    void normalizeFrameAnalysis_acceptsAliasesAndStringLists()
+    {
+        const QJsonObject payload{
+            {QStringLiteral("description"), QStringLiteral("人物在室内检查摄影机")},
+            {QStringLiteral("keywords"), QStringLiteral("人物, 室内；摄影机")},
+            {QStringLiteral("subjects"), QStringLiteral("摄影师、监视器")},
+            {QStringLiteral("action"), QStringLiteral("检查设备")},
+            {QStringLiteral("scene"), QStringLiteral("工作室")}
+        };
+
+        QString error;
+        const auto analysis = normalizeFrameAnalysis(payload, &error);
+
+        QVERIFY2(analysis.has_value(), qPrintable(error));
+        QCOMPARE(analysis->caption, QStringLiteral("人物在室内检查摄影机"));
+        QCOMPARE(analysis->tags, QStringList({QStringLiteral("人物"), QStringLiteral("室内"), QStringLiteral("摄影机")}));
+        QCOMPARE(analysis->objects, QStringList({QStringLiteral("摄影师"), QStringLiteral("监视器")}));
+        QCOMPARE(analysis->actions, QStringLiteral("检查设备"));
+        QCOMPARE(analysis->setting, QStringLiteral("工作室"));
+    }
+
+    void normalizeFrameAnalysis_acceptsNestedTextObjects()
+    {
+        const QJsonObject payload{
+            {QStringLiteral("caption"), QJsonObject{{QStringLiteral("text"), QStringLiteral("街道上的车辆")}}},
+            {QStringLiteral("objects"), QJsonArray{
+                 QStringLiteral("车辆"),
+                 QJsonObject{{QStringLiteral("name"), QStringLiteral("行人")}}
+             }},
+            {QStringLiteral("setting"), QJsonArray{QStringLiteral("街道"), QStringLiteral("白天")}}
+        };
+
+        QString error;
+        const auto analysis = normalizeFrameAnalysis(payload, &error);
+
+        QVERIFY2(analysis.has_value(), qPrintable(error));
+        QCOMPARE(analysis->caption, QStringLiteral("街道上的车辆"));
+        QCOMPARE(analysis->objects, QStringList({QStringLiteral("车辆"), QStringLiteral("行人")}));
+        QCOMPARE(analysis->setting, QStringLiteral("街道；白天"));
+    }
+
+    void normalizeFrameAnalysis_rejectsEmptyPayload()
+    {
+        QString error;
+        const auto analysis = normalizeFrameAnalysis(QJsonObject{}, &error);
+
+        QVERIFY(!analysis.has_value());
+        QCOMPARE(error, QStringLiteral("视觉接口返回帧解析字段为空"));
+    }
+
+    void normalizeVideoSummary_acceptsAliasesAndStringLists()
+    {
+        const QJsonObject payload{
+            {QStringLiteral("overview"), QStringLiteral("视频展示工作人员在棚内调试拍摄设备。")},
+            {QStringLiteral("tags"), QJsonArray{QStringLiteral("拍摄"), QStringLiteral("工作室, 设备")}},
+            {QStringLiteral("locations"), QStringLiteral("[\"棚内\",\"工作区\"]")}
+        };
+
+        QString error;
+        const auto summary = normalizeVideoSummary(payload, &error);
+
+        QVERIFY2(summary.has_value(), qPrintable(error));
+        QCOMPARE(summary->summary, QStringLiteral("视频展示工作人员在棚内调试拍摄设备。"));
+        QCOMPARE(summary->keywords, QStringList({QStringLiteral("拍摄"), QStringLiteral("工作室"), QStringLiteral("设备")}));
+        QCOMPARE(summary->scenes, QStringList({QStringLiteral("棚内"), QStringLiteral("工作区")}));
+    }
+
+    void normalizeVideoSummary_rejectsEmptyPayload()
+    {
+        QString error;
+        const auto summary = normalizeVideoSummary(QJsonObject{}, &error);
+
+        QVERIFY(!summary.has_value());
+        QCOMPARE(error, QStringLiteral("视觉接口返回视频汇总字段为空"));
+    }
+
+    void fallbackFrameAnalysisFromContent_preservesPlainText()
+    {
+        QString error;
+        const auto analysis = fallbackFrameAnalysisFromContent(
+            QStringLiteral("画面描述：人物在街道上行走。标签：人物、街道。"),
+            &error);
+
+        QVERIFY2(analysis.has_value(), qPrintable(error));
+        QCOMPARE(analysis->caption, QStringLiteral("画面描述：人物在街道上行走。标签：人物、街道。"));
+        QVERIFY(analysis->tags.isEmpty());
+        QVERIFY(analysis->objects.isEmpty());
+        QVERIFY(analysis->actions.isEmpty());
+        QVERIFY(analysis->setting.isEmpty());
+    }
+
+    void fallbackVideoSummaryFromContent_preservesMarkdownTable()
+    {
+        const auto table = QStringLiteral("| summary | keywords |\n| --- | --- |\n| 棚内拍摄和灯光调试 | 摄影,灯光 |");
+
+        QString error;
+        const auto summary = fallbackVideoSummaryFromContent(table, &error);
+
+        QVERIFY2(summary.has_value(), qPrintable(error));
+        QCOMPARE(summary->summary, table);
+        QVERIFY(summary->keywords.isEmpty());
+        QVERIFY(summary->scenes.isEmpty());
+    }
+
+    void fallbackFrameAnalysisFromContent_rejectsEmptyText()
+    {
+        QString error;
+        const auto analysis = fallbackFrameAnalysisFromContent(QStringLiteral("   "), &error);
+
+        QVERIFY(!analysis.has_value());
+        QCOMPARE(error, QStringLiteral("视觉接口原始返回内容为空，无法生成帧解析兜底文本"));
     }
 };
 

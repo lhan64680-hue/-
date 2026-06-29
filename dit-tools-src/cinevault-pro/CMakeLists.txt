@@ -194,6 +194,8 @@ else()
     src/infrastructure/ffmpeg/FFmpegAdapter.cpp
     src/infrastructure/network/VisionApiClient.h
     src/infrastructure/network/VisionApiClient.cpp
+    src/infrastructure/network/VisionResponseParser.h
+    src/infrastructure/network/VisionResponseParser.cpp
     src/ui/viewmodels/ProjectLibraryViewModel.h
     src/ui/viewmodels/ProjectLibraryViewModel.cpp
     src/ui/viewmodels/ShellViewModel.h
@@ -341,6 +343,7 @@ if(BUILD_TESTING)
 
     qt_add_executable(VisionApiClientJsonTest
         tests/unit/VisionApiClientJsonTest.cpp
+        src/infrastructure/network/VisionResponseParser.cpp
     )
     target_include_directories(VisionApiClientJsonTest PRIVATE src)
     target_link_libraries(VisionApiClientJsonTest PRIVATE Qt6::Core Qt6::Network Qt6::Test)

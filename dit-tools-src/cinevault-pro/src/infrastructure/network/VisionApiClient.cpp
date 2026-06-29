@@ -1,5 +1,7 @@
 #include "infrastructure/network/VisionApiClient.h"
 
+#include "infrastructure/network/VisionResponseParser.h"
+
 #include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
@@ -8,7 +10,6 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QRegularExpression>
 #include <QTimer>
 #include <QUrl>
 
@@ -45,115 +46,6 @@ QString normalizeEndpoint(QString baseUrl)
         return url + QStringLiteral("/v1/chat/completions");
     }
     return url + QStringLiteral("/chat/completions");
-}
-
-QString extractMessageContent(const QJsonValue &contentValue)
-{
-    if (contentValue.isString()) {
-        return contentValue.toString().trimmed();
-    }
-    if (!contentValue.isArray()) {
-        return {};
-    }
-
-    QStringList parts;
-    const auto items = contentValue.toArray();
-    for (const auto &itemValue : items) {
-        const auto item = itemValue.toObject();
-        if (item.value(QStringLiteral("type")).toString() == QStringLiteral("text")) {
-            parts.append(item.value(QStringLiteral("text")).toString());
-        }
-    }
-    return parts.join(QStringLiteral("\n")).trimmed();
-}
-
-bool parsesJsonObject(const QString &text)
-{
-    QJsonParseError parseError;
-    const auto document = QJsonDocument::fromJson(text.toUtf8(), &parseError);
-    return parseError.error == QJsonParseError::NoError && document.isObject();
-}
-
-QStringList extractJsonObjectCandidates(const QString &text)
-{
-    QStringList candidates;
-    auto start = -1;
-    auto depth = 0;
-    auto inString = false;
-    auto escaped = false;
-
-    for (auto index = 0; index < text.size(); ++index) {
-        const auto ch = text.at(index);
-        if (inString) {
-            if (escaped) {
-                escaped = false;
-            } else if (ch == QLatin1Char('\\')) {
-                escaped = true;
-            } else if (ch == QLatin1Char('"')) {
-                inString = false;
-            }
-            continue;
-        }
-
-        if (ch == QLatin1Char('"')) {
-            inString = true;
-            continue;
-        }
-        if (ch == QLatin1Char('{')) {
-            if (depth == 0) {
-                start = index;
-            }
-            ++depth;
-            continue;
-        }
-        if (ch == QLatin1Char('}') && depth > 0) {
-            --depth;
-            if (depth == 0 && start >= 0) {
-                candidates.append(text.mid(start, index - start + 1));
-                start = -1;
-            }
-        }
-    }
-    return candidates;
-}
-
-QString stripReasoningBlocks(QString text)
-{
-    static const QRegularExpression thinkBlock(
-        QStringLiteral("<think\\b[^>]*>[\\s\\S]*?</think>"),
-        QRegularExpression::CaseInsensitiveOption);
-    return text.remove(thinkBlock).trimmed();
-}
-
-QString extractJsonBlock(QString text)
-{
-    text = stripReasoningBlocks(text);
-
-    QStringList sources;
-    static const QRegularExpression fencedBlock(
-        QStringLiteral("```(?:json)?\\s*([\\s\\S]*?)```"),
-        QRegularExpression::CaseInsensitiveOption);
-    auto matchIterator = fencedBlock.globalMatch(text);
-    while (matchIterator.hasNext()) {
-        sources.append(matchIterator.next().captured(1).trimmed());
-    }
-    sources.append(text);
-
-    for (const auto &source : sources) {
-        const auto trimmed = source.trimmed();
-        if (parsesJsonObject(trimmed)) {
-            return trimmed;
-        }
-
-        const auto candidates = extractJsonObjectCandidates(trimmed);
-        for (auto index = candidates.size() - 1; index >= 0; --index) {
-            const auto candidate = candidates.at(index).trimmed();
-            if (parsesJsonObject(candidate)) {
-                return candidate;
-            }
-        }
-    }
-    return text;
 }
 
 HttpResult postJson(const QString &endpoint,
@@ -214,62 +106,6 @@ HttpResult postJson(const QString &endpoint,
     return result;
 }
 
-std::optional<QJsonObject> parseAssistantJson(const QByteArray &responseBody, QString *errorMessage)
-{
-    QJsonParseError responseParseError;
-    const auto responseDocument = QJsonDocument::fromJson(responseBody, &responseParseError);
-    if (responseParseError.error != QJsonParseError::NoError || !responseDocument.isObject()) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("视觉接口返回非 JSON 响应");
-        }
-        return std::nullopt;
-    }
-
-    const auto root = responseDocument.object();
-    const auto choices = root.value(QStringLiteral("choices")).toArray();
-    if (choices.isEmpty()) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("视觉接口没有返回可解析结果");
-        }
-        return std::nullopt;
-    }
-
-    const auto message = choices.first().toObject().value(QStringLiteral("message")).toObject();
-    const auto contentText = extractMessageContent(message.value(QStringLiteral("content")));
-    const auto jsonText = extractJsonBlock(contentText);
-
-    QJsonParseError contentParseError;
-    const auto contentDocument = QJsonDocument::fromJson(jsonText.toUtf8(), &contentParseError);
-    if (contentParseError.error != QJsonParseError::NoError || !contentDocument.isObject()) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("视觉接口返回内容不是有效 JSON");
-        }
-        return std::nullopt;
-    }
-    return contentDocument.object();
-}
-
-QStringList jsonStringList(const QJsonValue &value)
-{
-    QStringList items;
-    if (value.isArray()) {
-        const auto array = value.toArray();
-        for (const auto &entry : array) {
-            const auto text = entry.toString().trimmed();
-            if (!text.isEmpty()) {
-                items.append(text);
-            }
-        }
-        return items;
-    }
-
-    const auto single = value.toString().trimmed();
-    if (!single.isEmpty()) {
-        items.append(single);
-    }
-    return items;
-}
-
 QJsonObject makeChatPayload(const QString &model, const QJsonArray &content, int maxTokens)
 {
     return QJsonObject{
@@ -307,6 +143,135 @@ HttpResult postChatPayload(const QString &endpoint,
     }
     return result;
 }
+
+std::optional<QJsonObject> repairAssistantPayload(const QByteArray &responseBody,
+                                                  const QString &endpoint,
+                                                  const QString &apiKey,
+                                                  const QString &model,
+                                                  int timeoutSec,
+                                                  const QString &schema,
+                                                  const QString &failureReason,
+                                                  int maxTokens,
+                                                  QString *errorMessage)
+{
+    QString contentError;
+    const auto originalContent = VisionResponseParser::extractAssistantContent(responseBody, &contentError);
+    if (!originalContent.has_value()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("%1；自动修复失败：无法读取原始返回内容（%2）")
+                                .arg(failureReason, contentError);
+        }
+        return std::nullopt;
+    }
+
+    auto boundedContent = originalContent->trimmed();
+    if (boundedContent.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("%1；自动修复失败：原始返回内容为空").arg(failureReason);
+        }
+        return std::nullopt;
+    }
+    if (boundedContent.size() > 12000) {
+        boundedContent = boundedContent.left(12000);
+    }
+
+    const QJsonArray content = {
+        QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("text")},
+            {QStringLiteral("text"),
+             QStringLiteral("你是视觉解析结果格式修复器。请把原始返回内容转换为严格 JSON。"
+                            "只能使用原始内容中已经出现的信息，不要新增事实，不要解释，不要 Markdown。"
+                            "目标 JSON 结构为：%1\n\n"
+                            "上一次失败原因：%2\n\n"
+                            "原始返回内容：\n%3")
+                 .arg(schema, failureReason, boundedContent)}
+        }
+    };
+
+    const auto result = postChatPayload(endpoint, apiKey, makeChatPayload(model, content, maxTokens), timeoutSec);
+    if (!result.success) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("%1；自动修复失败：%2").arg(failureReason, result.errorMessage);
+        }
+        return std::nullopt;
+    }
+
+    QString repairParseError;
+    auto repairedPayload = VisionResponseParser::parseAssistantJson(result.body, &repairParseError);
+    if (!repairedPayload.has_value()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("%1；自动修复失败：%2").arg(failureReason, repairParseError);
+        }
+        return std::nullopt;
+    }
+    return repairedPayload;
+}
+
+QString combineFallbackError(const QString &existingError, const QString &fallbackError)
+{
+    if (existingError.trimmed().isEmpty()) {
+        return QStringLiteral("纯文本兜底失败：%1").arg(fallbackError);
+    }
+    return QStringLiteral("%1；纯文本兜底失败：%2").arg(existingError, fallbackError);
+}
+
+std::optional<VisionFrameAnalysis> fallbackFrameAnalysisFromResponse(const QByteArray &responseBody,
+                                                                    QString *errorMessage)
+{
+    const auto existingError = errorMessage ? *errorMessage : QString();
+
+    QString contentError;
+    const auto content = VisionResponseParser::extractAssistantContent(responseBody, &contentError);
+    if (!content.has_value()) {
+        if (errorMessage) {
+            *errorMessage = combineFallbackError(existingError, contentError);
+        }
+        return std::nullopt;
+    }
+
+    QString fallbackError;
+    auto analysis = VisionResponseParser::fallbackFrameAnalysisFromContent(*content, &fallbackError);
+    if (!analysis.has_value()) {
+        if (errorMessage) {
+            *errorMessage = combineFallbackError(existingError, fallbackError);
+        }
+        return std::nullopt;
+    }
+
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+    return analysis;
+}
+
+std::optional<VisionVideoSummary> fallbackVideoSummaryFromResponse(const QByteArray &responseBody,
+                                                                  QString *errorMessage)
+{
+    const auto existingError = errorMessage ? *errorMessage : QString();
+
+    QString contentError;
+    const auto content = VisionResponseParser::extractAssistantContent(responseBody, &contentError);
+    if (!content.has_value()) {
+        if (errorMessage) {
+            *errorMessage = combineFallbackError(existingError, contentError);
+        }
+        return std::nullopt;
+    }
+
+    QString fallbackError;
+    auto summary = VisionResponseParser::fallbackVideoSummaryFromContent(*content, &fallbackError);
+    if (!summary.has_value()) {
+        if (errorMessage) {
+            *errorMessage = combineFallbackError(existingError, fallbackError);
+        }
+        return std::nullopt;
+    }
+
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+    return summary;
+}
 }
 
 bool VisionApiClient::testConnection(const QString &baseUrl,
@@ -335,7 +300,7 @@ bool VisionApiClient::testConnection(const QString &baseUrl,
         return false;
     }
 
-    auto payload = parseAssistantJson(result.body, errorMessage);
+    auto payload = VisionResponseParser::parseAssistantJson(result.body, errorMessage);
     return payload.has_value() && payload->value(QStringLiteral("status")).toString().trimmed() == QStringLiteral("ok");
 }
 
@@ -376,17 +341,54 @@ std::optional<VisionFrameAnalysis> VisionApiClient::analyzeFrame(const QString &
         return std::nullopt;
     }
 
-    auto payload = parseAssistantJson(result.body, errorMessage);
+    const auto schema = QStringLiteral("{\"caption\":\"\",\"tags\":[],\"objects\":[],\"actions\":\"\",\"setting\":\"\"}");
+    QString parseError;
+    auto payload = VisionResponseParser::parseAssistantJson(result.body, &parseError);
+    auto usedRepair = false;
     if (!payload.has_value()) {
-        return std::nullopt;
+        payload = repairAssistantPayload(result.body,
+                                         endpoint,
+                                         apiKey,
+                                         model,
+                                         timeoutSec,
+                                         schema,
+                                         parseError,
+                                         350,
+                                         errorMessage);
+        usedRepair = true;
+        if (!payload.has_value()) {
+            return fallbackFrameAnalysisFromResponse(result.body, errorMessage);
+        }
     }
 
-    VisionFrameAnalysis analysis;
-    analysis.caption = payload->value(QStringLiteral("caption")).toString().trimmed();
-    analysis.tags = jsonStringList(payload->value(QStringLiteral("tags")));
-    analysis.objects = jsonStringList(payload->value(QStringLiteral("objects")));
-    analysis.actions = payload->value(QStringLiteral("actions")).toString().trimmed();
-    analysis.setting = payload->value(QStringLiteral("setting")).toString().trimmed();
+    QString normalizeError;
+    auto analysis = VisionResponseParser::normalizeFrameAnalysis(*payload, &normalizeError);
+    if (!analysis.has_value() && !usedRepair) {
+        payload = repairAssistantPayload(result.body,
+                                         endpoint,
+                                         apiKey,
+                                         model,
+                                         timeoutSec,
+                                         schema,
+                                         normalizeError,
+                                         350,
+                                         errorMessage);
+        usedRepair = true;
+        if (payload.has_value()) {
+            analysis = VisionResponseParser::normalizeFrameAnalysis(*payload, &normalizeError);
+        } else {
+            return fallbackFrameAnalysisFromResponse(result.body, errorMessage);
+        }
+    }
+    if (!analysis.has_value()) {
+        auto fallback = fallbackFrameAnalysisFromResponse(result.body, errorMessage);
+        if (fallback.has_value()) {
+            return fallback;
+        }
+        if (errorMessage && errorMessage->isEmpty()) {
+            *errorMessage = normalizeError;
+        }
+    }
     return analysis;
 }
 
@@ -449,14 +451,53 @@ std::optional<VisionVideoSummary> VisionApiClient::summarizeVideo(const QString 
         return std::nullopt;
     }
 
-    auto payload = parseAssistantJson(result.body, errorMessage);
+    const auto schema = QStringLiteral("{\"summary\":\"\",\"keywords\":[],\"scenes\":[]}");
+    QString parseError;
+    auto payload = VisionResponseParser::parseAssistantJson(result.body, &parseError);
+    auto usedRepair = false;
     if (!payload.has_value()) {
-        return std::nullopt;
+        payload = repairAssistantPayload(result.body,
+                                         endpoint,
+                                         apiKey,
+                                         model,
+                                         timeoutSec,
+                                         schema,
+                                         parseError,
+                                         900,
+                                         errorMessage);
+        usedRepair = true;
+        if (!payload.has_value()) {
+            return fallbackVideoSummaryFromResponse(result.body, errorMessage);
+        }
     }
 
-    VisionVideoSummary summary;
-    summary.summary = payload->value(QStringLiteral("summary")).toString().trimmed();
-    summary.keywords = jsonStringList(payload->value(QStringLiteral("keywords")));
-    summary.scenes = jsonStringList(payload->value(QStringLiteral("scenes")));
+    QString normalizeError;
+    auto summary = VisionResponseParser::normalizeVideoSummary(*payload, &normalizeError);
+    if (!summary.has_value() && !usedRepair) {
+        payload = repairAssistantPayload(result.body,
+                                         endpoint,
+                                         apiKey,
+                                         model,
+                                         timeoutSec,
+                                         schema,
+                                         normalizeError,
+                                         900,
+                                         errorMessage);
+        usedRepair = true;
+        if (payload.has_value()) {
+            summary = VisionResponseParser::normalizeVideoSummary(*payload, &normalizeError);
+        } else {
+            return fallbackVideoSummaryFromResponse(result.body, errorMessage);
+        }
+    }
+    if (!summary.has_value()) {
+        auto fallback = fallbackVideoSummaryFromResponse(result.body, errorMessage);
+        if (fallback.has_value()) {
+            return fallback;
+        }
+        if (errorMessage && errorMessage->isEmpty()) {
+            *errorMessage = normalizeError;
+        }
+    }
     return summary;
 }
