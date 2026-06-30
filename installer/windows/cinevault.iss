@@ -1,9 +1,9 @@
 #ifndef AppVersion
-#define AppVersion "0.1.0"
+#define AppVersion "0.1.95"
 #endif
 
 #ifndef VersionTag
-#define VersionTag "v0.1.0"
+#define VersionTag "v0.1.95"
 #endif
 
 #ifndef SourceDir

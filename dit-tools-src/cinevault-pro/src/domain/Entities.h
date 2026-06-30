@@ -151,6 +151,24 @@ struct VisionVideoSummary {
     QStringList scenes;
 };
 
+struct VideoAnalysisTask {
+    QString videoKey;
+    VideoAnalysisTaskStage stage = VideoAnalysisTaskStage::Pending;
+    int totalFrames = 0;
+    int completedFrames = 0;
+    int successfulFrames = 0;
+    int skippedFrames = 0;
+    int summaryRetryCount = 0;
+    QString lastErrorMessage;
+    QString lastUpdatedAt;
+};
+
+struct AnalysisJob {
+    QString videoKey;
+    AnalysisRunMode mode = AnalysisRunMode::Initial;
+    int frameNumber = 0;
+};
+
 struct GlobalVideoAsset {
     QString videoKey;
     QString projectUuid;
@@ -176,6 +194,7 @@ struct GlobalVideoAsset {
     QString updatedAt;
     QString analyzedAt;
     QString confirmedAt;
+    VideoAnalysisTask analysisTask;
 };
 
 struct FrameAnalysisRecord {
@@ -190,6 +209,10 @@ struct FrameAnalysisRecord {
     QString actions;
     QString setting;
     QString errorMessage;
+    FrameAnalysisState analysisState = FrameAnalysisState::Pending;
+    int retryCount = 0;
+    int lastHttpStatus = 0;
+    QString lastAttemptAt;
 };
 
 struct BackupSource {

@@ -4,6 +4,7 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QList>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -18,6 +19,58 @@ bool executeBatch(QSqlDatabase &db, const QStringList &statements, QString *erro
             if (errorMessage) {
                 *errorMessage = query.lastError().text();
             }
+            return false;
+        }
+    }
+    return true;
+}
+
+QStringList tableColumns(QSqlDatabase &db, const QString &tableName, QString *errorMessage)
+{
+    QSqlQuery query(db);
+    if (!query.exec(QStringLiteral("PRAGMA table_info(%1)").arg(tableName))) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("读取素材管理表结构失败：%1，%2").arg(tableName, query.lastError().text());
+        }
+        return {};
+    }
+
+    QStringList columns;
+    while (query.next()) {
+        columns.append(query.value(1).toString());
+    }
+    return columns;
+}
+
+bool ensureColumn(QSqlDatabase &db,
+                  const QString &tableName,
+                  const QString &columnName,
+                  const QString &columnDefinition,
+                  QString *errorMessage)
+{
+    const auto columns = tableColumns(db, tableName, errorMessage);
+    if (columns.contains(columnName, Qt::CaseInsensitive)) {
+        return true;
+    }
+
+    QSqlQuery query(db);
+    const auto statement = QStringLiteral("ALTER TABLE %1 ADD COLUMN %2").arg(tableName, columnDefinition);
+    if (!query.exec(statement)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("迁移素材管理字段失败：%1.%2，%3").arg(tableName, columnName, query.lastError().text());
+        }
+        return false;
+    }
+    return true;
+}
+
+bool ensureColumns(QSqlDatabase &db,
+                   const QString &tableName,
+                   const QList<QPair<QString, QString>> &columns,
+                   QString *errorMessage)
+{
+    for (const auto &column : columns) {
+        if (!ensureColumn(db, tableName, column.first, column.second, errorMessage)) {
             return false;
         }
     }
@@ -276,9 +329,13 @@ bool GlobalDatabaseManager::initializeSchema(QSqlDatabase &db, QString *errorMes
         return false;
     }
 
+    if (!ensureSchemaCompatibility(db, errorMessage)) {
+        return false;
+    }
+
     auto version = currentSchemaVersion(db);
-    if (version < 1) {
-        if (!setSchemaVersion(db, 1, errorMessage)) {
+    if (version < 2) {
+        if (!setSchemaVersion(db, 2, errorMessage)) {
             return false;
         }
     }
@@ -347,12 +404,29 @@ bool GlobalDatabaseManager::createSchema(QSqlDatabase &db, QString *errorMessage
                        "actions TEXT,"
                        "setting_text TEXT,"
                        "error_message TEXT,"
+                       "analysis_state INTEGER NOT NULL DEFAULT 0,"
+                       "retry_count INTEGER NOT NULL DEFAULT 0,"
+                       "last_http_status INTEGER NOT NULL DEFAULT 0,"
+                       "last_attempt_at TEXT NOT NULL DEFAULT '',"
+                       "FOREIGN KEY(video_key) REFERENCES global_video_asset(video_key) ON DELETE CASCADE"
+                       ");"),
+        QStringLiteral("CREATE TABLE IF NOT EXISTS video_analysis_task ("
+                       "video_key TEXT PRIMARY KEY,"
+                       "stage INTEGER NOT NULL DEFAULT 0,"
+                       "total_frames INTEGER NOT NULL DEFAULT 0,"
+                       "completed_frames INTEGER NOT NULL DEFAULT 0,"
+                       "successful_frames INTEGER NOT NULL DEFAULT 0,"
+                       "skipped_frames INTEGER NOT NULL DEFAULT 0,"
+                       "summary_retry_count INTEGER NOT NULL DEFAULT 0,"
+                       "last_error_message TEXT NOT NULL DEFAULT '',"
+                       "last_updated_at TEXT NOT NULL DEFAULT '',"
                        "FOREIGN KEY(video_key) REFERENCES global_video_asset(video_key) ON DELETE CASCADE"
                        ");"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_global_video_project ON global_video_asset(project_uuid);"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_global_video_source ON global_video_asset(source_root_name);"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_global_video_status ON global_video_asset(analysis_status, confirmation_status);"),
-        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_frame_video_key ON video_frame_analysis(video_key);")
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_frame_video_key ON video_frame_analysis(video_key);"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_frame_video_state ON video_frame_analysis(video_key, analysis_state, frame_number);")
     };
 
     if (!executeBatch(db, statements, errorMessage)) {
@@ -376,6 +450,38 @@ bool GlobalDatabaseManager::createSchema(QSqlDatabase &db, QString *errorMessage
         query.exec(QStringLiteral("DROP TABLE IF EXISTS video_search_fts"));
     }
     return true;
+}
+
+bool GlobalDatabaseManager::ensureSchemaCompatibility(QSqlDatabase &db, QString *errorMessage)
+{
+    const QStringList statements = {
+        QStringLiteral("CREATE TABLE IF NOT EXISTS video_analysis_task ("
+                       "video_key TEXT PRIMARY KEY,"
+                       "stage INTEGER NOT NULL DEFAULT 0,"
+                       "total_frames INTEGER NOT NULL DEFAULT 0,"
+                       "completed_frames INTEGER NOT NULL DEFAULT 0,"
+                       "successful_frames INTEGER NOT NULL DEFAULT 0,"
+                       "skipped_frames INTEGER NOT NULL DEFAULT 0,"
+                       "summary_retry_count INTEGER NOT NULL DEFAULT 0,"
+                       "last_error_message TEXT NOT NULL DEFAULT '',"
+                       "last_updated_at TEXT NOT NULL DEFAULT '',"
+                       "FOREIGN KEY(video_key) REFERENCES global_video_asset(video_key) ON DELETE CASCADE"
+                       ");"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_frame_video_state ON video_frame_analysis(video_key, analysis_state, frame_number);")
+    };
+    if (!executeBatch(db, statements, errorMessage)) {
+        return false;
+    }
+
+    return ensureColumns(db,
+                         QStringLiteral("video_frame_analysis"),
+                         {
+                             {QStringLiteral("analysis_state"), QStringLiteral("analysis_state INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("retry_count"), QStringLiteral("retry_count INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("last_http_status"), QStringLiteral("last_http_status INTEGER NOT NULL DEFAULT 0")},
+                             {QStringLiteral("last_attempt_at"), QStringLiteral("last_attempt_at TEXT NOT NULL DEFAULT ''")}
+                         },
+                         errorMessage);
 }
 
 int GlobalDatabaseManager::currentSchemaVersion(QSqlDatabase &db) const

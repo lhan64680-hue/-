@@ -64,6 +64,15 @@ GlobalVideoAsset readAssetRow(const QSqlQuery &query)
     asset.searchText = query.value(21).toString();
     asset.analyzedAt = query.value(22).toString();
     asset.confirmedAt = query.value(23).toString();
+    asset.analysisTask.videoKey = asset.videoKey;
+    asset.analysisTask.stage = static_cast<VideoAnalysisTaskStage>(query.value(24).toInt());
+    asset.analysisTask.totalFrames = query.value(25).toInt();
+    asset.analysisTask.completedFrames = query.value(26).toInt();
+    asset.analysisTask.successfulFrames = query.value(27).toInt();
+    asset.analysisTask.skippedFrames = query.value(28).toInt();
+    asset.analysisTask.summaryRetryCount = query.value(29).toInt();
+    asset.analysisTask.lastErrorMessage = query.value(30).toString();
+    asset.analysisTask.lastUpdatedAt = query.value(31).toString();
     return asset;
 }
 }
@@ -149,9 +158,13 @@ QVector<GlobalVideoAsset> MaterialCenterQueryService::fetchAssets(const QString 
         "g.asset_id, g.file_name, g.absolute_path, g.relative_path, g.size_bytes, g.modified_at, g.duration_ms, "
         "COALESCE(g.thumbnail_path, ''), g.analysis_status, g.confirmation_status, COALESCE(g.error_message, ''), "
         "g.updated_at, COALESCE(r.summary, ''), COALESCE(r.keywords_json, '[]'), COALESCE(r.scenes_json, '[]'), "
-        "COALESCE(r.search_text, ''), COALESCE(r.analyzed_at, ''), COALESCE(r.confirmed_at, '') "
+        "COALESCE(r.search_text, ''), COALESCE(r.analyzed_at, ''), COALESCE(r.confirmed_at, ''), "
+        "COALESCE(t.stage, 0), COALESCE(t.total_frames, 0), COALESCE(t.completed_frames, 0), "
+        "COALESCE(t.successful_frames, 0), COALESCE(t.skipped_frames, 0), COALESCE(t.summary_retry_count, 0), "
+        "COALESCE(t.last_error_message, ''), COALESCE(t.last_updated_at, '') "
         "FROM global_video_asset g "
         "LEFT JOIN video_analysis_result r ON r.video_key = g.video_key "
+        "LEFT JOIN video_analysis_task t ON t.video_key = g.video_key "
         "WHERE 1 = 1");
 
     QVariantList binds;
@@ -242,9 +255,13 @@ VideoAnalysisDetail MaterialCenterQueryService::fetchDetail(const QString &video
         "g.asset_id, g.file_name, g.absolute_path, g.relative_path, g.size_bytes, g.modified_at, g.duration_ms, "
         "COALESCE(g.thumbnail_path, ''), g.analysis_status, g.confirmation_status, COALESCE(g.error_message, ''), "
         "g.updated_at, COALESCE(r.summary, ''), COALESCE(r.keywords_json, '[]'), COALESCE(r.scenes_json, '[]'), "
-        "COALESCE(r.search_text, ''), COALESCE(r.analyzed_at, ''), COALESCE(r.confirmed_at, '') "
+        "COALESCE(r.search_text, ''), COALESCE(r.analyzed_at, ''), COALESCE(r.confirmed_at, ''), "
+        "COALESCE(t.stage, 0), COALESCE(t.total_frames, 0), COALESCE(t.completed_frames, 0), "
+        "COALESCE(t.successful_frames, 0), COALESCE(t.skipped_frames, 0), COALESCE(t.summary_retry_count, 0), "
+        "COALESCE(t.last_error_message, ''), COALESCE(t.last_updated_at, '') "
         "FROM global_video_asset g "
         "LEFT JOIN video_analysis_result r ON r.video_key = g.video_key "
+        "LEFT JOIN video_analysis_task t ON t.video_key = g.video_key "
         "WHERE g.video_key = ?"));
     assetQuery.addBindValue(videoKey.trimmed());
     if (!execOrEmpty(assetQuery) || !assetQuery.next()) {
@@ -256,7 +273,8 @@ VideoAnalysisDetail MaterialCenterQueryService::fetchDetail(const QString &video
     frameQuery.prepare(QStringLiteral(
         "SELECT id, frame_number, timestamp_ms, COALESCE(image_path, ''), COALESCE(caption, ''), "
         "COALESCE(tags_json, '[]'), COALESCE(objects_json, '[]'), COALESCE(actions, ''), "
-        "COALESCE(setting_text, ''), COALESCE(error_message, '') "
+        "COALESCE(setting_text, ''), COALESCE(error_message, ''), COALESCE(analysis_state, 0), "
+        "COALESCE(retry_count, 0), COALESCE(last_http_status, 0), COALESCE(last_attempt_at, '') "
         "FROM video_frame_analysis WHERE video_key = ? ORDER BY frame_number"));
     frameQuery.addBindValue(videoKey.trimmed());
     if (!execOrEmpty(frameQuery)) {
@@ -276,6 +294,10 @@ VideoAnalysisDetail MaterialCenterQueryService::fetchDetail(const QString &video
         frame.actions = frameQuery.value(7).toString();
         frame.setting = frameQuery.value(8).toString();
         frame.errorMessage = frameQuery.value(9).toString();
+        frame.analysisState = static_cast<FrameAnalysisState>(frameQuery.value(10).toInt());
+        frame.retryCount = frameQuery.value(11).toInt();
+        frame.lastHttpStatus = frameQuery.value(12).toInt();
+        frame.lastAttemptAt = frameQuery.value(13).toString();
         detail.frames.append(frame);
     }
     return detail;

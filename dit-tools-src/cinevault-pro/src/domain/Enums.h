@@ -78,6 +78,28 @@ enum class VideoAnalysisStatus : qint32 {
     Failed
 };
 
+enum class VideoAnalysisTaskStage : qint32 {
+    Pending = 0,
+    ExtractingFrames,
+    AnalyzingFrames,
+    Summarizing,
+    Completed
+};
+
+enum class FrameAnalysisState : qint32 {
+    Pending = 0,
+    Success,
+    Failed,
+    Skipped
+};
+
+enum class AnalysisRunMode : qint32 {
+    Initial = 0,
+    Resume,
+    Rebuild,
+    SingleFrame
+};
+
 enum class ConfirmationStatus : qint32 {
     Pending = 0,
     Confirmed

@@ -17,7 +17,8 @@ public:
                                                     const QString &apiKey,
                                                     const QString &model,
                                                     int timeoutSec,
-                                                    QString *errorMessage) const;
+                                                    QString *errorMessage,
+                                                    int *httpStatusCode = nullptr) const;
 
     std::optional<VisionVideoSummary> summarizeVideo(const QString &fileName,
                                                      const QVector<FrameAnalysisRecord> &frames,
@@ -25,5 +26,7 @@ public:
                                                      const QString &apiKey,
                                                      const QString &model,
                                                      int timeoutSec,
-                                                     QString *errorMessage) const;
+                                                     QString *errorMessage,
+                                                     int *attemptCount = nullptr,
+                                                     int *httpStatusCode = nullptr) const;
 };

@@ -26,6 +26,7 @@ public:
 
     bool enqueueVideo(const QString &videoKey, QString *errorMessage = nullptr);
     int enqueueVideos(const QStringList &videoKeys, QString *errorMessage = nullptr);
+    bool retryFrame(const QString &videoKey, int frameNumber, QString *errorMessage = nullptr);
 
 public slots:
     void analyzeVideo(const QString &videoKey);
@@ -43,6 +44,7 @@ signals:
 
 private:
     bool validateReadyForEnqueue(const QString &videoKey, QString *errorMessage) const;
+    bool enqueueJob(const AnalysisJob &job, QString *errorMessage);
     void startNextAnalysis();
     void finishCurrentAnalysis(const QString &videoKey);
     void reportAnalysisProgress(const QString &videoKey,
@@ -60,8 +62,9 @@ private:
     AppSettings *m_settings = nullptr;
     FFmpegAdapter *m_ffmpegAdapter = nullptr;
     VisionApiClient *m_visionApiClient = nullptr;
-    QQueue<QString> m_analysisQueue;
+    QQueue<AnalysisJob> m_analysisQueue;
     QSet<QString> m_queuedVideoKeys;
+    AnalysisJob m_currentJob;
     QString m_currentVideoKey;
     bool m_analysisRunning = false;
 };

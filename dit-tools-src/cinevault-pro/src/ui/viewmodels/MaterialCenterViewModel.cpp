@@ -20,6 +20,7 @@
 namespace {
 constexpr int kInitialVisibleFrameCount = 24;
 constexpr int kVisibleFrameBatchSize = 24;
+constexpr int kMaxFrameRetryCount = 3;
 
 QVariantList prependAllOption(const QVariantList &items, const QString &label)
 {
@@ -73,6 +74,59 @@ QStringList matchedFrameTerms(const FrameAnalysisRecord &frame, const QStringLis
 bool frameMatches(const FrameAnalysisRecord &frame, const QStringList &terms)
 {
     return terms.isEmpty() || !matchedFrameTerms(frame, terms).isEmpty();
+}
+
+int persistedAnalysisProgress(const GlobalVideoAsset &asset)
+{
+    if (asset.analysisStatus == VideoAnalysisStatus::Ready) {
+        return 100;
+    }
+
+    const auto &task = asset.analysisTask;
+    if (task.stage == VideoAnalysisTaskStage::Summarizing && task.totalFrames > 0) {
+        return 90;
+    }
+    if (task.totalFrames <= 0) {
+        return 0;
+    }
+
+    const auto completedProgress = 10 + ((task.completedFrames * 75) / qMax(1, task.totalFrames));
+    return qBound(0, completedProgress, 90);
+}
+
+QString failedAnalysisHint(const GlobalVideoAsset &asset)
+{
+    const auto &task = asset.analysisTask;
+    if (task.stage == VideoAnalysisTaskStage::Summarizing && task.totalFrames > 0) {
+        return QStringLiteral("视频帧已完成，汇总失败，可继续解析。");
+    }
+    if (task.totalFrames > 0) {
+        return QStringLiteral("解析中断，已完成 %1/%2 帧，可继续解析。")
+            .arg(task.completedFrames)
+            .arg(task.totalFrames);
+    }
+    return QStringLiteral("解析失败，可继续解析。");
+}
+
+QString readyAnalysisHint(const GlobalVideoAsset &asset)
+{
+    if (asset.analysisTask.skippedFrames > 0) {
+        return QStringLiteral("解析完成，已跳过 %1 帧，可手动补解析。").arg(asset.analysisTask.skippedFrames);
+    }
+    return QStringLiteral("解析完成，可确认或重新解析。");
+}
+
+bool canRetryFrame(const FrameAnalysisRecord &frame)
+{
+    return frame.analysisState == FrameAnalysisState::Failed || frame.analysisState == FrameAnalysisState::Skipped;
+}
+
+QString retryLabel(const FrameAnalysisRecord &frame)
+{
+    if (frame.retryCount <= 0) {
+        return {};
+    }
+    return QStringLiteral("已重试 %1/%2").arg(frame.retryCount).arg(kMaxFrameRetryCount);
 }
 }
 
@@ -342,7 +396,7 @@ int MaterialCenterViewModel::selectedAnalysisProgress() const
     if (!state.detail.trimmed().isEmpty() || state.state == JobState::Pending || state.state == JobState::Running) {
         return static_cast<int>(qBound<qint64>(0LL, state.progress, 100LL));
     }
-    return m_detail.asset.analysisStatus == VideoAnalysisStatus::Ready ? 100 : 0;
+    return persistedAnalysisProgress(m_detail.asset);
 }
 
 QString MaterialCenterViewModel::selectedAnalysisProgressText() const
@@ -351,11 +405,12 @@ QString MaterialCenterViewModel::selectedAnalysisProgressText() const
     if (!state.detail.trimmed().isEmpty()) {
         return state.detail;
     }
-    if (m_detail.asset.analysisStatus == VideoAnalysisStatus::Failed) {
-        return QStringLiteral("解析失败，可重试。");
+    if (m_detail.asset.analysisStatus == VideoAnalysisStatus::Failed
+        || m_detail.asset.analysisStatus == VideoAnalysisStatus::Running) {
+        return failedAnalysisHint(m_detail.asset);
     }
     if (m_detail.asset.analysisStatus == VideoAnalysisStatus::Ready) {
-        return QStringLiteral("解析完成，可确认或重新解析。");
+        return readyAnalysisHint(m_detail.asset);
     }
     return hasSelection() ? QStringLiteral("尚未开始解析。") : QString();
 }
@@ -366,7 +421,13 @@ QString MaterialCenterViewModel::selectedAnalysisError() const
     if (!state.errorMessage.trimmed().isEmpty()) {
         return state.errorMessage;
     }
-    return m_detail.asset.errorMessage;
+    if (!m_detail.asset.errorMessage.trimmed().isEmpty()) {
+        return m_detail.asset.errorMessage;
+    }
+    return m_detail.asset.analysisStatus == VideoAnalysisStatus::Failed
+            || m_detail.asset.analysisStatus == VideoAnalysisStatus::Running
+        ? m_detail.asset.analysisTask.lastErrorMessage
+        : QString();
 }
 
 QString MaterialCenterViewModel::analyzeButtonText() const
@@ -378,8 +439,9 @@ QString MaterialCenterViewModel::analyzeButtonText() const
     if (state == JobState::Running) {
         return QStringLiteral("解析中");
     }
-    if (m_detail.asset.analysisStatus == VideoAnalysisStatus::Failed) {
-        return QStringLiteral("重试解析");
+    if (m_detail.asset.analysisStatus == VideoAnalysisStatus::Failed
+        || m_detail.asset.analysisStatus == VideoAnalysisStatus::Running) {
+        return QStringLiteral("继续解析");
     }
     if (m_detail.asset.analysisStatus == VideoAnalysisStatus::Ready) {
         return QStringLiteral("重新解析");
@@ -555,6 +617,20 @@ void MaterialCenterViewModel::analyzeSelected()
     }
 }
 
+void MaterialCenterViewModel::retrySelectedFrame(int frameNumber)
+{
+    if (!hasSelection() || !m_analysisService) {
+        return;
+    }
+
+    QString errorMessage;
+    if (m_analysisService->retryFrame(m_detail.asset.videoKey, frameNumber, &errorMessage)) {
+        setMessage(QStringLiteral("已加入第 %1 帧重解析队列：%2").arg(frameNumber).arg(m_detail.asset.fileName));
+    } else {
+        setMessage(errorMessage);
+    }
+}
+
 void MaterialCenterViewModel::analyzeVisiblePending()
 {
     if (!m_analysisService) {
@@ -563,7 +639,9 @@ void MaterialCenterViewModel::analyzeVisiblePending()
 
     QStringList videoKeys;
     for (const auto &asset : m_assets) {
-        if (asset.analysisStatus == VideoAnalysisStatus::Pending || asset.analysisStatus == VideoAnalysisStatus::Failed) {
+        if (asset.analysisStatus == VideoAnalysisStatus::Pending
+            || asset.analysisStatus == VideoAnalysisStatus::Failed
+            || asset.analysisStatus == VideoAnalysisStatus::Running) {
             videoKeys.append(asset.videoKey);
         }
     }
@@ -849,7 +927,12 @@ void MaterialCenterViewModel::refreshSelectedCaches()
             {QStringLiteral("actions"), frame.actions},
             {QStringLiteral("setting"), frame.setting},
             {QStringLiteral("errorMessage"), frame.errorMessage},
-            {QStringLiteral("matchText"), matches.join(QStringLiteral("、"))}
+            {QStringLiteral("matchText"), matches.join(QStringLiteral("、"))},
+            {QStringLiteral("analysisState"), static_cast<int>(frame.analysisState)},
+            {QStringLiteral("retryCount"), frame.retryCount},
+            {QStringLiteral("retryLabel"), retryLabel(frame)},
+            {QStringLiteral("lastAttemptAt"), frame.lastAttemptAt},
+            {QStringLiteral("canRetry"), canRetryFrame(frame)}
         });
     }
 

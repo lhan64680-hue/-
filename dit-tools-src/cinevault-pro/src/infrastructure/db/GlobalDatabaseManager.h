@@ -29,6 +29,7 @@ public:
 private:
     bool initializeSchema(QSqlDatabase &db, QString *errorMessage);
     bool createSchema(QSqlDatabase &db, QString *errorMessage);
+    bool ensureSchemaCompatibility(QSqlDatabase &db, QString *errorMessage);
     int currentSchemaVersion(QSqlDatabase &db) const;
     bool setSchemaVersion(QSqlDatabase &db, int version, QString *errorMessage) const;
 

@@ -22,6 +22,8 @@
 #include <QThread>
 
 namespace {
+constexpr int kMaxFrameRetryCount = 3;
+
 struct AnalysisConfig {
     QString baseUrl;
     QString apiKey;
@@ -50,6 +52,32 @@ QString toJson(const QStringList &items)
         array.append(item);
     }
     return QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact));
+}
+
+QStringList parseJsonList(const QString &text)
+{
+    if (text.trimmed().isEmpty()) {
+        return {};
+    }
+
+    const auto document = QJsonDocument::fromJson(text.toUtf8());
+    if (!document.isArray()) {
+        return {};
+    }
+
+    QStringList items;
+    for (const auto &value : document.array()) {
+        const auto item = value.toString().trimmed();
+        if (!item.isEmpty()) {
+            items.append(item);
+        }
+    }
+    return items;
+}
+
+QString nowIso()
+{
+    return QDateTime::currentDateTime().toString(Qt::ISODate);
 }
 
 bool removeDirectoryContents(const QString &path)
@@ -116,6 +144,152 @@ bool loadVideoAsset(QSqlDatabase &db, const QString &videoKey, GlobalVideoAsset 
     return true;
 }
 
+bool loadAnalysisTask(QSqlDatabase &db, const QString &videoKey, VideoAnalysisTask *task, QString *errorMessage)
+{
+    if (!task) {
+        return false;
+    }
+
+    *task = {};
+    task->videoKey = videoKey;
+
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "SELECT stage, total_frames, completed_frames, successful_frames, skipped_frames, summary_retry_count, "
+        "COALESCE(last_error_message, ''), COALESCE(last_updated_at, '') "
+        "FROM video_analysis_task WHERE video_key = ?"));
+    query.addBindValue(videoKey);
+    if (!execQuery(query, errorMessage)) {
+        return false;
+    }
+    if (!query.next()) {
+        return true;
+    }
+
+    task->stage = static_cast<VideoAnalysisTaskStage>(query.value(0).toInt());
+    task->totalFrames = query.value(1).toInt();
+    task->completedFrames = query.value(2).toInt();
+    task->successfulFrames = query.value(3).toInt();
+    task->skippedFrames = query.value(4).toInt();
+    task->summaryRetryCount = query.value(5).toInt();
+    task->lastErrorMessage = query.value(6).toString();
+    task->lastUpdatedAt = query.value(7).toString();
+    return true;
+}
+
+bool persistAnalysisTask(QSqlDatabase &db, const VideoAnalysisTask &task, QString *errorMessage)
+{
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "INSERT INTO video_analysis_task "
+        "(video_key, stage, total_frames, completed_frames, successful_frames, skipped_frames, summary_retry_count, "
+        "last_error_message, last_updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(video_key) DO UPDATE SET "
+        "stage = excluded.stage, "
+        "total_frames = excluded.total_frames, "
+        "completed_frames = excluded.completed_frames, "
+        "successful_frames = excluded.successful_frames, "
+        "skipped_frames = excluded.skipped_frames, "
+        "summary_retry_count = excluded.summary_retry_count, "
+        "last_error_message = excluded.last_error_message, "
+        "last_updated_at = excluded.last_updated_at"));
+    query.addBindValue(task.videoKey);
+    query.addBindValue(static_cast<int>(task.stage));
+    query.addBindValue(task.totalFrames);
+    query.addBindValue(task.completedFrames);
+    query.addBindValue(task.successfulFrames);
+    query.addBindValue(task.skippedFrames);
+    query.addBindValue(task.summaryRetryCount);
+    query.addBindValue(task.lastErrorMessage);
+    query.addBindValue(task.lastUpdatedAt.isEmpty() ? nowIso() : task.lastUpdatedAt);
+    return execQuery(query, errorMessage);
+}
+
+bool deleteAnalysisTask(QSqlDatabase &db, const QString &videoKey, QString *errorMessage)
+{
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral("DELETE FROM video_analysis_task WHERE video_key = ?"));
+    query.addBindValue(videoKey);
+    return execQuery(query, errorMessage);
+}
+
+QVector<FrameAnalysisRecord> loadFrameRows(QSqlDatabase &db, const QString &videoKey, QString *errorMessage)
+{
+    QVector<FrameAnalysisRecord> frames;
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "SELECT id, frame_number, timestamp_ms, COALESCE(image_path, ''), COALESCE(caption, ''), "
+        "COALESCE(tags_json, '[]'), COALESCE(objects_json, '[]'), COALESCE(actions, ''), COALESCE(setting_text, ''), "
+        "COALESCE(error_message, ''), COALESCE(analysis_state, 0), COALESCE(retry_count, 0), "
+        "COALESCE(last_http_status, 0), COALESCE(last_attempt_at, '') "
+        "FROM video_frame_analysis WHERE video_key = ? ORDER BY frame_number"));
+    query.addBindValue(videoKey);
+    if (!execQuery(query, errorMessage)) {
+        return {};
+    }
+
+    while (query.next()) {
+        FrameAnalysisRecord frame;
+        frame.id = query.value(0).toLongLong();
+        frame.videoKey = videoKey;
+        frame.frameNumber = query.value(1).toInt();
+        frame.timestampMs = query.value(2).toLongLong();
+        frame.imagePath = query.value(3).toString();
+        frame.caption = query.value(4).toString();
+        frame.tags = parseJsonList(query.value(5).toString());
+        frame.objects = parseJsonList(query.value(6).toString());
+        frame.actions = query.value(7).toString();
+        frame.setting = query.value(8).toString();
+        frame.errorMessage = query.value(9).toString();
+        frame.analysisState = static_cast<FrameAnalysisState>(query.value(10).toInt());
+        frame.retryCount = query.value(11).toInt();
+        frame.lastHttpStatus = query.value(12).toInt();
+        frame.lastAttemptAt = query.value(13).toString();
+        frames.append(frame);
+    }
+    return frames;
+}
+
+QVector<FrameAnalysisRecord> successfulFrames(const QVector<FrameAnalysisRecord> &frames)
+{
+    QVector<FrameAnalysisRecord> items;
+    for (const auto &frame : frames) {
+        if (frame.analysisState == FrameAnalysisState::Success && frame.errorMessage.trimmed().isEmpty()) {
+            items.append(frame);
+        }
+    }
+    return items;
+}
+
+void recalculateTaskCounts(const QVector<FrameAnalysisRecord> &frames, VideoAnalysisTask *task)
+{
+    if (!task) {
+        return;
+    }
+
+    task->totalFrames = frames.size();
+    task->completedFrames = 0;
+    task->successfulFrames = 0;
+    task->skippedFrames = 0;
+    for (const auto &frame : frames) {
+        if (frame.analysisState == FrameAnalysisState::Success) {
+            ++task->successfulFrames;
+            ++task->completedFrames;
+        } else if (frame.analysisState == FrameAnalysisState::Skipped) {
+            ++task->skippedFrames;
+            ++task->completedFrames;
+        }
+    }
+}
+
+QString skippedFramesWarning(int skippedFrames)
+{
+    return skippedFrames > 0
+        ? QStringLiteral("已跳过 %1 帧，可手动补解析。").arg(skippedFrames)
+        : QString();
+}
+
 bool updateAssetState(QSqlDatabase &db,
                       const QString &videoKey,
                       VideoAnalysisStatus analysisStatus,
@@ -174,6 +348,10 @@ bool deleteAnalysisArtifacts(QSqlDatabase &db, const QString &videoKey, bool has
         return false;
     }
 
+    if (!deleteAnalysisTask(db, videoKey, errorMessage)) {
+        return false;
+    }
+
     if (hasFts5) {
         QSqlQuery fts(db);
         fts.prepare(QStringLiteral("DELETE FROM video_search_fts WHERE video_key = ?"));
@@ -190,12 +368,14 @@ bool insertFrameRow(QSqlDatabase &db, const QString &videoKey, const ExtractedFr
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "INSERT INTO video_frame_analysis "
-        "(video_key, frame_number, timestamp_ms, image_path, caption, tags_json, objects_json, actions, setting_text, error_message) "
-        "VALUES (?, ?, ?, ?, '', '[]', '[]', '', '', '')"));
+        "(video_key, frame_number, timestamp_ms, image_path, caption, tags_json, objects_json, actions, setting_text, error_message, "
+        "analysis_state, retry_count, last_http_status, last_attempt_at) "
+        "VALUES (?, ?, ?, ?, '', '[]', '[]', '', '', '', ?, 0, 0, '')"));
     query.addBindValue(videoKey);
     query.addBindValue(frame.frameNumber);
     query.addBindValue(frame.timestampMs);
     query.addBindValue(frame.imagePath);
+    query.addBindValue(static_cast<int>(FrameAnalysisState::Pending));
     return execQuery(query, errorMessage);
 }
 
@@ -207,7 +387,8 @@ bool updateFrameAnalysis(QSqlDatabase &db,
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "UPDATE video_frame_analysis SET image_path = ?, caption = ?, tags_json = ?, objects_json = ?, "
-        "actions = ?, setting_text = ?, error_message = ? WHERE video_key = ? AND frame_number = ?"));
+        "actions = ?, setting_text = ?, error_message = ?, analysis_state = ?, retry_count = ?, "
+        "last_http_status = ?, last_attempt_at = ? WHERE video_key = ? AND frame_number = ?"));
     query.addBindValue(frame.imagePath);
     query.addBindValue(frame.caption);
     query.addBindValue(toJson(frame.tags));
@@ -215,6 +396,10 @@ bool updateFrameAnalysis(QSqlDatabase &db,
     query.addBindValue(frame.actions);
     query.addBindValue(frame.setting);
     query.addBindValue(frame.errorMessage);
+    query.addBindValue(static_cast<int>(frame.analysisState));
+    query.addBindValue(frame.retryCount);
+    query.addBindValue(frame.lastHttpStatus);
+    query.addBindValue(frame.lastAttemptAt);
     query.addBindValue(videoKey);
     query.addBindValue(frame.frameNumber);
     return execQuery(query, errorMessage);
@@ -429,6 +614,32 @@ bool VideoAnalysisService::validateReadyForEnqueue(const QString &videoKey, QStr
     return true;
 }
 
+bool VideoAnalysisService::enqueueJob(const AnalysisJob &job, QString *errorMessage)
+{
+    const auto normalizedKey = job.videoKey.trimmed();
+    if (!validateReadyForEnqueue(normalizedKey, errorMessage)) {
+        return false;
+    }
+    if (job.mode == AnalysisRunMode::SingleFrame && job.frameNumber <= 0) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("请选择一个可重解析的失败帧。");
+        }
+        return false;
+    }
+
+    AnalysisJob normalizedJob = job;
+    normalizedJob.videoKey = normalizedKey;
+    m_analysisQueue.enqueue(normalizedJob);
+    m_queuedVideoKeys.insert(normalizedKey);
+    const auto detail = normalizedJob.mode == AnalysisRunMode::SingleFrame
+        ? QStringLiteral("等待重解析第 %1 帧").arg(normalizedJob.frameNumber)
+        : QStringLiteral("等待解析队列");
+    reportAnalysisProgress(normalizedKey, 0, detail, JobState::Pending);
+    emit analysisQueueChanged(m_currentVideoKey, m_analysisQueue.size());
+    startNextAnalysis();
+    return true;
+}
+
 bool VideoAnalysisService::enqueueVideo(const QString &videoKey, QString *errorMessage)
 {
     const auto normalizedKey = videoKey.trimmed();
@@ -436,12 +647,22 @@ bool VideoAnalysisService::enqueueVideo(const QString &videoKey, QString *errorM
         return false;
     }
 
-    m_analysisQueue.enqueue(normalizedKey);
-    m_queuedVideoKeys.insert(normalizedKey);
-    reportAnalysisProgress(normalizedKey, 0, QStringLiteral("等待解析队列"), JobState::Pending);
-    emit analysisQueueChanged(m_currentVideoKey, m_analysisQueue.size());
-    startNextAnalysis();
-    return true;
+    GlobalVideoAsset asset;
+    auto db = m_globalDatabaseManager->database();
+    if (!loadVideoAsset(db, normalizedKey, &asset, errorMessage)) {
+        return false;
+    }
+
+    AnalysisJob job;
+    job.videoKey = normalizedKey;
+    if (asset.analysisStatus == VideoAnalysisStatus::Ready) {
+        job.mode = AnalysisRunMode::Rebuild;
+    } else if (asset.analysisStatus == VideoAnalysisStatus::Failed || asset.analysisStatus == VideoAnalysisStatus::Running) {
+        job.mode = AnalysisRunMode::Resume;
+    } else {
+        job.mode = AnalysisRunMode::Initial;
+    }
+    return enqueueJob(job, errorMessage);
 }
 
 int VideoAnalysisService::enqueueVideos(const QStringList &videoKeys, QString *errorMessage)
@@ -476,6 +697,28 @@ int VideoAnalysisService::enqueueVideos(const QStringList &videoKeys, QString *e
     return accepted;
 }
 
+bool VideoAnalysisService::retryFrame(const QString &videoKey, int frameNumber, QString *errorMessage)
+{
+    const auto normalizedKey = videoKey.trimmed();
+    if (!validateReadyForEnqueue(normalizedKey, errorMessage)) {
+        return false;
+    }
+
+    QSqlQuery query(m_globalDatabaseManager->database());
+    query.prepare(QStringLiteral(
+        "SELECT 1 FROM video_frame_analysis WHERE video_key = ? AND frame_number = ? LIMIT 1"));
+    query.addBindValue(normalizedKey);
+    query.addBindValue(frameNumber);
+    if (!execQuery(query, errorMessage) || !query.next()) {
+        if (errorMessage && errorMessage->trimmed().isEmpty()) {
+            *errorMessage = QStringLiteral("当前帧不存在，无法重解析。");
+        }
+        return false;
+    }
+
+    return enqueueJob(AnalysisJob{normalizedKey, AnalysisRunMode::SingleFrame, frameNumber}, errorMessage);
+}
+
 void VideoAnalysisService::analyzeVideo(const QString &videoKey)
 {
     QString errorMessage;
@@ -492,28 +735,32 @@ void VideoAnalysisService::startNextAnalysis()
         return;
     }
 
-    const auto normalizedKey = m_analysisQueue.dequeue();
-    m_queuedVideoKeys.remove(normalizedKey);
-    m_currentVideoKey = normalizedKey;
+    const auto job = m_analysisQueue.dequeue();
+    m_queuedVideoKeys.remove(job.videoKey);
+    m_currentJob = job;
+    m_currentVideoKey = job.videoKey;
     m_analysisRunning = true;
     emit analysisQueueChanged(m_currentVideoKey, m_analysisQueue.size());
 
     const auto config = loadConfig(m_settings);
     if (config.baseUrl.isEmpty() || config.apiKey.isEmpty() || config.model.isEmpty()) {
         const auto errorMessage = QStringLiteral("视觉接口参数不完整，请在设置中保存并应用后重试。");
-        reportAnalysisProgress(normalizedKey, 0, errorMessage, JobState::Failed, errorMessage);
-        finishCurrentAnalysis(normalizedKey);
+        reportAnalysisProgress(job.videoKey, 0, errorMessage, JobState::Failed, errorMessage);
+        finishCurrentAnalysis(job.videoKey);
         return;
     }
 
     const auto jobId = m_jobEngine
         ? m_jobEngine->createJob(JobType::ContentAnalysis,
-                                 QStringLiteral("视频内容解析"),
-                                 QStringLiteral("准备解析视频素材内容"))
+                                 job.mode == AnalysisRunMode::SingleFrame ? QStringLiteral("视频帧补解析") : QStringLiteral("视频内容解析"),
+                                 job.mode == AnalysisRunMode::SingleFrame ? QStringLiteral("准备重解析失败视频帧") : QStringLiteral("准备解析视频素材内容"))
         : 0;
-    reportAnalysisProgress(normalizedKey, 0, QStringLiteral("准备解析视频素材内容"), JobState::Running);
+    reportAnalysisProgress(job.videoKey,
+                           0,
+                           job.mode == AnalysisRunMode::SingleFrame ? QStringLiteral("准备重解析失败视频帧") : QStringLiteral("准备解析视频素材内容"),
+                           JobState::Running);
 
-    auto future = QtConcurrent::run([this, normalizedKey, config, jobId]() {
+    auto future = QtConcurrent::run([this, job, config, jobId]() {
         const auto connectionName = QStringLiteral("video_analysis_%1").arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
         QString errorMessage;
         qint64 lastProgress = 0;
@@ -524,25 +771,25 @@ void VideoAnalysisService::startNextAnalysis()
                 : message.trimmed();
             if (updateAsset && db && db->isOpen()) {
                 updateAssetState(*db,
-                                 normalizedKey,
+                                 job.videoKey,
                                  VideoAnalysisStatus::Failed,
                                  ConfirmationStatus::Pending,
                                  normalizedMessage,
                                  nullptr);
             }
             failJob(jobId, normalizedMessage);
-            reportAnalysisProgress(normalizedKey, lastProgress, normalizedMessage, JobState::Failed, normalizedMessage);
+            reportAnalysisProgress(job.videoKey, lastProgress, normalizedMessage, JobState::Failed, normalizedMessage);
             notifyCatalogChanged();
             m_globalDatabaseManager->closeThreadConnection(connectionName);
-            QMetaObject::invokeMethod(this, [this, normalizedKey]() {
-                finishCurrentAnalysis(normalizedKey);
+            QMetaObject::invokeMethod(this, [this, videoKey = job.videoKey]() {
+                finishCurrentAnalysis(videoKey);
             }, Qt::QueuedConnection);
         };
 
         auto updateRunning = [&](qint64 progress, const QString &detail) {
             lastProgress = progress;
             updateJob(jobId, progress, detail);
-            reportAnalysisProgress(normalizedKey, progress, detail, JobState::Running);
+            reportAnalysisProgress(job.videoKey, progress, detail, JobState::Running);
         };
 
         auto db = m_globalDatabaseManager->openThreadConnection(connectionName, &errorMessage);
@@ -552,169 +799,383 @@ void VideoAnalysisService::startNextAnalysis()
         }
 
         GlobalVideoAsset asset;
-        if (!loadVideoAsset(db, normalizedKey, &asset, &errorMessage)) {
+        if (!loadVideoAsset(db, job.videoKey, &asset, &errorMessage)) {
             finishFailure(errorMessage, &db, false);
             return;
         }
 
-        updateRunning(5, QStringLiteral("准备抽取视频帧：%1").arg(asset.fileName));
-        if (!db.transaction()) {
-            finishFailure(db.lastError().text(), &db);
+        VideoAnalysisTask task;
+        if (!loadAnalysisTask(db, job.videoKey, &task, &errorMessage)) {
+            finishFailure(errorMessage, &db, false);
             return;
         }
-        if (!deleteAnalysisArtifacts(db, normalizedKey, m_globalDatabaseManager->hasFts5(), &errorMessage)
-            || !updateAssetState(db, normalizedKey, VideoAnalysisStatus::Running, ConfirmationStatus::Pending, QString(), &errorMessage)) {
-            db.rollback();
-            finishFailure(errorMessage, &db);
-            return;
-        }
-        if (!db.commit()) {
-            finishFailure(db.lastError().text(), &db);
-            return;
-        }
-        notifyCatalogChanged();
+        task.videoKey = job.videoKey;
 
-        const auto cacheDirectory = Paths::projectFrameCacheDirectory(asset.projectDatabasePath, normalizedKey);
-        removeDirectoryContents(cacheDirectory);
+        auto saveTask = [&](VideoAnalysisTaskStage stage, const QString &taskError = QString()) {
+            task.stage = stage;
+            task.lastErrorMessage = taskError;
+            task.lastUpdatedAt = nowIso();
+            return persistAnalysisTask(db, task, &errorMessage);
+        };
 
-        FrameExtractionRequest request;
-        request.assetId = asset.assetId;
-        request.sourcePath = asset.absolutePath;
-        request.outputDirectory = cacheDirectory;
-        request.mode = config.mode;
-        request.frameInterval = config.frameInterval;
+        auto reloadFrames = [&]() {
+            errorMessage.clear();
+            return loadFrameRows(db, job.videoKey, &errorMessage);
+        };
 
-        updateRunning(8, QStringLiteral("正在抽取视频帧：%1").arg(asset.fileName));
-        const auto extraction = m_ffmpegAdapter->extractFrames(request);
-        if (!extraction.success || extraction.frames.isEmpty()) {
-            updateAssetState(db, normalizedKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, extraction.errorMessage, nullptr);
-            finishFailure(extraction.errorMessage, &db, false);
-            return;
-        }
+        auto buildContactSheet = [&](const QVector<FrameAnalysisRecord> &frames) {
+            QStringList imagePaths;
+            imagePaths.reserve(frames.size());
+            for (const auto &frame : frames) {
+                if (!frame.imagePath.trimmed().isEmpty()) {
+                    imagePaths.append(frame.imagePath);
+                }
+            }
+            if (!imagePaths.isEmpty()) {
+                ContactSheetBuilder::build(imagePaths,
+                                           config.contactSheetFrameCount,
+                                           Paths::projectContactSheetPath(asset.projectDatabasePath, job.videoKey, config.contactSheetFrameCount));
+            }
+        };
 
-        if (!db.transaction()) {
-            finishFailure(db.lastError().text(), &db);
-            return;
-        }
-        for (const auto &frame : extraction.frames) {
-            if (!insertFrameRow(db, normalizedKey, frame, &errorMessage)) {
+        auto persistSummaryAndTask = [&](const QVector<FrameAnalysisRecord> &frames, int summaryAttempts, const QString &successMessage) {
+            QString summaryError;
+            int summaryHttpStatus = 0;
+            task.stage = VideoAnalysisTaskStage::Summarizing;
+            task.summaryRetryCount = 0;
+            if (!saveTask(VideoAnalysisTaskStage::Summarizing)) {
+                finishFailure(errorMessage, &db, false);
+                return false;
+            }
+
+            updateRunning(90, QStringLiteral("正在汇总视频内容"));
+            const auto summary = m_visionApiClient->summarizeVideo(asset.fileName,
+                                                                   successfulFrames(frames),
+                                                                   config.baseUrl,
+                                                                   config.apiKey,
+                                                                   config.model,
+                                                                   config.timeoutSec,
+                                                                   &summaryError,
+                                                                   &summaryAttempts,
+                                                                   &summaryHttpStatus);
+            task.summaryRetryCount = qMax(0, summaryAttempts - 1);
+            if (!summary.has_value()) {
+                task.lastErrorMessage = summaryError;
+                task.lastUpdatedAt = nowIso();
+                persistAnalysisTask(db, task, nullptr);
+                updateAssetState(db, job.videoKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, summaryError, nullptr);
+                finishFailure(summaryError, &db, false);
+                return false;
+            }
+
+            if (!db.transaction()) {
+                finishFailure(db.lastError().text(), &db);
+                return false;
+            }
+            if (!persistSummary(db, asset, *summary, frames, m_globalDatabaseManager->hasFts5(), &errorMessage)) {
                 db.rollback();
-                updateAssetState(db, normalizedKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, errorMessage, nullptr);
                 finishFailure(errorMessage, &db, false);
-                return;
+                return false;
             }
-        }
-        if (!db.commit()) {
-            finishFailure(db.lastError().text(), &db);
-            return;
-        }
-
-        QStringList contactSheetFrames;
-        contactSheetFrames.reserve(extraction.frames.size());
-        for (const auto &frame : extraction.frames) {
-            contactSheetFrames.append(frame.imagePath);
-        }
-        ContactSheetBuilder::build(contactSheetFrames,
-                                   config.contactSheetFrameCount,
-                                   Paths::projectContactSheetPath(asset.projectDatabasePath, normalizedKey, config.contactSheetFrameCount));
-        updateRunning(10, QStringLiteral("已抽取 %1 帧，开始视觉解析").arg(extraction.frames.size()));
-
-        QVector<FrameAnalysisRecord> analyzedFrames;
-        analyzedFrames.reserve(extraction.frames.size());
-        int failedFrames = 0;
-        for (int index = 0; index < extraction.frames.size(); ++index) {
-            const auto &frame = extraction.frames.at(index);
-            FrameAnalysisRecord record;
-            record.videoKey = normalizedKey;
-            record.frameNumber = frame.frameNumber;
-            record.timestampMs = frame.timestampMs;
-            record.imagePath = frame.imagePath;
-
-            QString frameError;
-            const auto analysis = m_visionApiClient->analyzeFrame(frame.imagePath,
-                                                                  config.baseUrl,
-                                                                  config.apiKey,
-                                                                  config.model,
-                                                                  config.timeoutSec,
-                                                                  &frameError);
-            if (!analysis.has_value()) {
-                ++failedFrames;
-                record.errorMessage = frameError;
-            } else {
-                record.caption = analysis->caption;
-                record.tags = analysis->tags;
-                record.objects = analysis->objects;
-                record.actions = analysis->actions;
-                record.setting = analysis->setting;
-            }
-            analyzedFrames.append(record);
-
-            if (!updateFrameAnalysis(db, normalizedKey, record, &errorMessage)) {
-                updateAssetState(db, normalizedKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, errorMessage, nullptr);
+            task.stage = VideoAnalysisTaskStage::Completed;
+            task.lastErrorMessage.clear();
+            task.lastUpdatedAt = nowIso();
+            if (!persistAnalysisTask(db, task, &errorMessage)) {
+                db.rollback();
                 finishFailure(errorMessage, &db, false);
-                return;
+                return false;
+            }
+            if (!db.commit()) {
+                finishFailure(db.lastError().text(), &db);
+                return false;
             }
 
-            const auto progress = 10 + ((static_cast<qint64>(index + 1) * 75) / extraction.frames.size());
-            updateRunning(progress,
-                          QStringLiteral("正在解析视频帧 %1/%2，失败 %3 帧")
-                              .arg(index + 1)
-                              .arg(extraction.frames.size())
-                              .arg(failedFrames));
-        }
+            completeJob(jobId, successMessage);
+            reportAnalysisProgress(job.videoKey, 100, successMessage, JobState::Completed);
+            return true;
+        };
 
-        QVector<FrameAnalysisRecord> successfulFrames;
-        for (const auto &frame : analyzedFrames) {
-            if (frame.errorMessage.trimmed().isEmpty()) {
-                successfulFrames.append(frame);
-            }
-        }
-        if (successfulFrames.isEmpty()) {
-            const auto failMessage = QStringLiteral("所有视频帧都解析失败");
-            updateAssetState(db, normalizedKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, failMessage, nullptr);
-            finishFailure(failMessage, &db, false);
-            return;
-        }
-
-        updateRunning(90, QStringLiteral("正在汇总视频内容"));
-        QString summaryError;
-        const auto summary = m_visionApiClient->summarizeVideo(asset.fileName,
-                                                               successfulFrames,
-                                                               config.baseUrl,
-                                                               config.apiKey,
-                                                               config.model,
-                                                               config.timeoutSec,
-                                                               &summaryError);
-        if (!summary.has_value()) {
-            updateAssetState(db, normalizedKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, summaryError, nullptr);
-            finishFailure(summaryError, &db, false);
-            return;
-        }
-
-        if (!db.transaction()) {
-            finishFailure(db.lastError().text(), &db);
-            return;
-        }
-        if (!persistSummary(db, asset, *summary, analyzedFrames, m_globalDatabaseManager->hasFts5(), &errorMessage)) {
-            db.rollback();
-            updateAssetState(db, normalizedKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, errorMessage, nullptr);
+        if (!updateAssetState(db, job.videoKey, VideoAnalysisStatus::Running, ConfirmationStatus::Pending, QString(), &errorMessage)) {
             finishFailure(errorMessage, &db, false);
             return;
         }
-        if (!db.commit()) {
-            finishFailure(db.lastError().text(), &db);
+
+        QVector<FrameAnalysisRecord> frames = reloadFrames();
+        if (!errorMessage.trimmed().isEmpty()) {
+            finishFailure(errorMessage, &db, false);
             return;
         }
 
-        const auto successMessage = failedFrames > 0
-            ? QStringLiteral("视频解析完成，成功 %1 帧，失败 %2 帧，等待确认").arg(successfulFrames.size()).arg(failedFrames)
-            : QStringLiteral("视频解析完成，等待确认");
-        completeJob(jobId, successMessage);
-        reportAnalysisProgress(normalizedKey, 100, successMessage, JobState::Completed);
+        const auto cacheDirectory = Paths::projectFrameCacheDirectory(asset.projectDatabasePath, job.videoKey);
+
+        if (job.mode == AnalysisRunMode::SingleFrame) {
+            auto frameIndex = -1;
+            for (int index = 0; index < frames.size(); ++index) {
+                if (frames.at(index).frameNumber == job.frameNumber) {
+                    frameIndex = index;
+                    break;
+                }
+            }
+            if (frameIndex < 0) {
+                finishFailure(QStringLiteral("当前帧不存在，无法重解析。"), &db, false);
+                return;
+            }
+
+            auto target = frames.at(frameIndex);
+            const auto previousStatus = asset.analysisStatus;
+            int attempt = 0;
+            while (attempt < kMaxFrameRetryCount) {
+                ++attempt;
+                int httpStatusCode = 0;
+                QString frameError;
+                const auto analysis = m_visionApiClient->analyzeFrame(target.imagePath,
+                                                                      config.baseUrl,
+                                                                      config.apiKey,
+                                                                      config.model,
+                                                                      config.timeoutSec,
+                                                                      &frameError,
+                                                                      &httpStatusCode);
+                target.retryCount = attempt;
+                target.lastHttpStatus = httpStatusCode;
+                target.lastAttemptAt = nowIso();
+                if (analysis.has_value()) {
+                    target.caption = analysis->caption;
+                    target.tags = analysis->tags;
+                    target.objects = analysis->objects;
+                    target.actions = analysis->actions;
+                    target.setting = analysis->setting;
+                    target.errorMessage.clear();
+                    target.analysisState = FrameAnalysisState::Success;
+                    break;
+                }
+
+                target.errorMessage = frameError;
+                target.analysisState = attempt >= kMaxFrameRetryCount
+                    ? FrameAnalysisState::Skipped
+                    : FrameAnalysisState::Failed;
+                if (!updateFrameAnalysis(db, job.videoKey, target, &errorMessage)) {
+                    finishFailure(errorMessage, &db, false);
+                    return;
+                }
+            }
+
+            if (!updateFrameAnalysis(db, job.videoKey, target, &errorMessage)) {
+                finishFailure(errorMessage, &db, false);
+                return;
+            }
+            frames[frameIndex] = target;
+            recalculateTaskCounts(frames, &task);
+            task.stage = target.analysisState == FrameAnalysisState::Success
+                ? VideoAnalysisTaskStage::Summarizing
+                : VideoAnalysisTaskStage::AnalyzingFrames;
+            task.lastErrorMessage = target.analysisState == FrameAnalysisState::Success ? QString() : target.errorMessage;
+            task.lastUpdatedAt = nowIso();
+            if (!persistAnalysisTask(db, task, &errorMessage)) {
+                finishFailure(errorMessage, &db, false);
+                return;
+            }
+
+            if (target.analysisState != FrameAnalysisState::Success) {
+                if (previousStatus != VideoAnalysisStatus::Ready) {
+                    updateAssetState(db, job.videoKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, target.errorMessage, nullptr);
+                }
+                finishFailure(target.errorMessage.trimmed().isEmpty() ? QStringLiteral("该帧重解析失败。") : target.errorMessage,
+                              &db,
+                              previousStatus != VideoAnalysisStatus::Ready);
+                return;
+            }
+
+            buildContactSheet(frames);
+            const auto succeededFrames = successfulFrames(frames);
+            if (succeededFrames.isEmpty()) {
+                finishFailure(QStringLiteral("没有可用于汇总的视频帧描述"), &db, false);
+                return;
+            }
+
+            QString successMessage = QStringLiteral("第 %1 帧重解析完成。").arg(job.frameNumber);
+            if (task.skippedFrames > 0) {
+                successMessage += QStringLiteral(" ") + skippedFramesWarning(task.skippedFrames);
+            }
+            if (!persistSummaryAndTask(frames, 0, successMessage)) {
+                return;
+            }
+        } else {
+            bool needsFreshExtraction = job.mode == AnalysisRunMode::Initial || job.mode == AnalysisRunMode::Rebuild || frames.isEmpty();
+            if (needsFreshExtraction) {
+                if (!db.transaction()) {
+                    finishFailure(db.lastError().text(), &db);
+                    return;
+                }
+                if (!deleteAnalysisArtifacts(db, job.videoKey, m_globalDatabaseManager->hasFts5(), &errorMessage)) {
+                    db.rollback();
+                    finishFailure(errorMessage, &db, false);
+                    return;
+                }
+                if (!db.commit()) {
+                    finishFailure(db.lastError().text(), &db);
+                    return;
+                }
+
+                task = {};
+                task.videoKey = job.videoKey;
+                if (!saveTask(VideoAnalysisTaskStage::ExtractingFrames)) {
+                    finishFailure(errorMessage, &db, false);
+                    return;
+                }
+
+                removeDirectoryContents(cacheDirectory);
+                updateRunning(8, QStringLiteral("正在抽取视频帧：%1").arg(asset.fileName));
+
+                FrameExtractionRequest request;
+                request.assetId = asset.assetId;
+                request.sourcePath = asset.absolutePath;
+                request.outputDirectory = cacheDirectory;
+                request.mode = config.mode;
+                request.frameInterval = config.frameInterval;
+
+                const auto extraction = m_ffmpegAdapter->extractFrames(request);
+                if (!extraction.success || extraction.frames.isEmpty()) {
+                    task.lastErrorMessage = extraction.errorMessage;
+                    task.lastUpdatedAt = nowIso();
+                    persistAnalysisTask(db, task, nullptr);
+                    updateAssetState(db, job.videoKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, extraction.errorMessage, nullptr);
+                    finishFailure(extraction.errorMessage, &db, false);
+                    return;
+                }
+
+                if (!db.transaction()) {
+                    finishFailure(db.lastError().text(), &db);
+                    return;
+                }
+                for (const auto &frame : extraction.frames) {
+                    if (!insertFrameRow(db, job.videoKey, frame, &errorMessage)) {
+                        db.rollback();
+                        finishFailure(errorMessage, &db, false);
+                        return;
+                    }
+                }
+                if (!db.commit()) {
+                    finishFailure(db.lastError().text(), &db);
+                    return;
+                }
+
+                frames = reloadFrames();
+                if (!errorMessage.trimmed().isEmpty()) {
+                    finishFailure(errorMessage, &db, false);
+                    return;
+                }
+                recalculateTaskCounts(frames, &task);
+                if (!saveTask(VideoAnalysisTaskStage::AnalyzingFrames)) {
+                    finishFailure(errorMessage, &db, false);
+                    return;
+                }
+                buildContactSheet(frames);
+                updateRunning(10, QStringLiteral("已抽取 %1 帧，开始视觉解析").arg(frames.size()));
+            } else {
+                recalculateTaskCounts(frames, &task);
+                if (task.stage == VideoAnalysisTaskStage::Pending || task.stage == VideoAnalysisTaskStage::ExtractingFrames) {
+                    if (!saveTask(VideoAnalysisTaskStage::AnalyzingFrames)) {
+                        finishFailure(errorMessage, &db, false);
+                        return;
+                    }
+                }
+                buildContactSheet(frames);
+                updateRunning(10,
+                              QStringLiteral("继续解析视频帧，已完成 %1/%2，跳过 %3 帧")
+                                  .arg(task.completedFrames)
+                                  .arg(task.totalFrames)
+                                  .arg(task.skippedFrames));
+            }
+
+            for (int index = 0; index < frames.size(); ++index) {
+                auto &frame = frames[index];
+                if (frame.analysisState == FrameAnalysisState::Success || frame.analysisState == FrameAnalysisState::Skipped) {
+                    continue;
+                }
+
+                int attempt = qBound(0, frame.retryCount, kMaxFrameRetryCount);
+                while (attempt < kMaxFrameRetryCount) {
+                    ++attempt;
+                    int httpStatusCode = 0;
+                    QString frameError;
+                    const auto analysis = m_visionApiClient->analyzeFrame(frame.imagePath,
+                                                                          config.baseUrl,
+                                                                          config.apiKey,
+                                                                          config.model,
+                                                                          config.timeoutSec,
+                                                                          &frameError,
+                                                                          &httpStatusCode);
+                    frame.retryCount = attempt;
+                    frame.lastHttpStatus = httpStatusCode;
+                    frame.lastAttemptAt = nowIso();
+
+                    if (analysis.has_value()) {
+                        frame.caption = analysis->caption;
+                        frame.tags = analysis->tags;
+                        frame.objects = analysis->objects;
+                        frame.actions = analysis->actions;
+                        frame.setting = analysis->setting;
+                        frame.errorMessage.clear();
+                        frame.analysisState = FrameAnalysisState::Success;
+                        break;
+                    }
+
+                    frame.errorMessage = frameError;
+                    frame.analysisState = attempt >= kMaxFrameRetryCount
+                        ? FrameAnalysisState::Skipped
+                        : FrameAnalysisState::Failed;
+                    if (!updateFrameAnalysis(db, job.videoKey, frame, &errorMessage)) {
+                        finishFailure(errorMessage, &db, false);
+                        return;
+                    }
+                }
+
+                if (!updateFrameAnalysis(db, job.videoKey, frame, &errorMessage)) {
+                    finishFailure(errorMessage, &db, false);
+                    return;
+                }
+
+                recalculateTaskCounts(frames, &task);
+                if (!saveTask(VideoAnalysisTaskStage::AnalyzingFrames,
+                              frame.analysisState == FrameAnalysisState::Skipped ? frame.errorMessage : QString())) {
+                    finishFailure(errorMessage, &db, false);
+                    return;
+                }
+
+                const auto progress = task.totalFrames > 0
+                    ? 10 + ((static_cast<qint64>(task.completedFrames) * 75) / task.totalFrames)
+                    : 10;
+                updateRunning(progress,
+                              QStringLiteral("正在解析视频帧，已完成 %1/%2，成功 %3 帧，跳过 %4 帧")
+                                  .arg(task.completedFrames)
+                                  .arg(task.totalFrames)
+                                  .arg(task.successfulFrames)
+                                  .arg(task.skippedFrames));
+            }
+
+            const auto succeededFrames = successfulFrames(frames);
+            if (succeededFrames.isEmpty()) {
+                const auto failMessage = QStringLiteral("所有视频帧都解析失败");
+                task.lastErrorMessage = failMessage;
+                task.lastUpdatedAt = nowIso();
+                persistAnalysisTask(db, task, nullptr);
+                updateAssetState(db, job.videoKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, failMessage, nullptr);
+                finishFailure(failMessage, &db, false);
+                return;
+            }
+
+            QString successMessage = task.skippedFrames > 0
+                ? QStringLiteral("视频解析完成，成功 %1 帧，跳过 %2 帧，等待确认").arg(task.successfulFrames).arg(task.skippedFrames)
+                : QStringLiteral("视频解析完成，等待确认");
+            if (!persistSummaryAndTask(frames, 0, successMessage)) {
+                return;
+            }
+        }
+
         notifyCatalogChanged();
         m_globalDatabaseManager->closeThreadConnection(connectionName);
-        QMetaObject::invokeMethod(this, [this, normalizedKey]() {
-            finishCurrentAnalysis(normalizedKey);
+        QMetaObject::invokeMethod(this, [this, videoKey = job.videoKey]() {
+            finishCurrentAnalysis(videoKey);
         }, Qt::QueuedConnection);
     });
     Q_UNUSED(future);
@@ -725,6 +1186,7 @@ void VideoAnalysisService::finishCurrentAnalysis(const QString &videoKey)
     if (m_currentVideoKey != videoKey) {
         return;
     }
+    m_currentJob = {};
     m_currentVideoKey.clear();
     m_analysisRunning = false;
     emit analysisQueueChanged(m_currentVideoKey, m_analysisQueue.size());

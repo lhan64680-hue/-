@@ -128,6 +128,7 @@ public:
     Q_INVOKABLE void loadMoreSelectedFrames();
     Q_INVOKABLE void showAllSelectedFrames();
     Q_INVOKABLE void collapseSelectedFrames();
+    Q_INVOKABLE void retrySelectedFrame(int frameNumber);
 
 signals:
     void statusChanged();

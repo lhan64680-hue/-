@@ -1,7 +1,9 @@
 #include "infrastructure/network/VisionApiClient.h"
 
+#include "infrastructure/logging/Logger.h"
 #include "infrastructure/network/VisionResponseParser.h"
 
+#include <algorithm>
 #include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
@@ -12,6 +14,7 @@
 #include <QNetworkRequest>
 #include <QTimer>
 #include <QUrl>
+#include <QtMath>
 
 namespace {
 struct HttpResult {
@@ -20,6 +23,112 @@ struct HttpResult {
     QByteArray body;
     QString errorMessage;
 };
+
+QString truncateForLog(QString text, int maxLength = 600)
+{
+    text = text.trimmed();
+    if (text.size() <= maxLength) {
+        return text;
+    }
+    return text.left(maxLength) + QStringLiteral("...");
+}
+
+QString extractServiceErrorMessage(const QByteArray &body)
+{
+    const auto plainText = QString::fromUtf8(body).trimmed();
+    if (plainText.isEmpty()) {
+        return {};
+    }
+
+    QJsonParseError parseError;
+    const auto document = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        return truncateForLog(plainText, 180);
+    }
+
+    const auto object = document.object();
+    const auto errorValue = object.value(QStringLiteral("error"));
+    if (errorValue.isObject()) {
+        const auto errorObject = errorValue.toObject();
+        const auto message = errorObject.value(QStringLiteral("message")).toString().trimmed();
+        if (!message.isEmpty()) {
+            return message;
+        }
+        const auto detail = errorObject.value(QStringLiteral("detail")).toString().trimmed();
+        if (!detail.isEmpty()) {
+            return detail;
+        }
+    }
+
+    for (const auto &key : {QStringLiteral("message"), QStringLiteral("detail"), QStringLiteral("error_message")}) {
+        const auto text = object.value(key).toString().trimmed();
+        if (!text.isEmpty()) {
+            return text;
+        }
+    }
+
+    return truncateForLog(plainText, 180);
+}
+
+QString httpStatusMessage(int statusCode, const QByteArray &body)
+{
+    QString base;
+    if (statusCode == 401) {
+        base = QStringLiteral("视觉接口鉴权失败（401）");
+    } else if (statusCode == 413) {
+        base = QStringLiteral("视觉接口请求内容过大（413）");
+    } else if (statusCode == 429) {
+        base = QStringLiteral("视觉接口触发限流（429）");
+    } else {
+        base = QStringLiteral("视觉接口返回异常状态码：%1").arg(statusCode);
+    }
+
+    const auto detail = extractServiceErrorMessage(body);
+    if (!detail.isEmpty()) {
+        base += QStringLiteral("，%1").arg(detail);
+    }
+    return base;
+}
+
+bool shouldRetrySummaryFailure(int statusCode, const QString &errorMessage)
+{
+    if (statusCode == 400 || statusCode == 413) {
+        return true;
+    }
+
+    const auto normalizedError = errorMessage.toLower();
+    return normalizedError.contains(QStringLiteral("context"))
+        || normalizedError.contains(QStringLiteral("token"))
+        || normalizedError.contains(QStringLiteral("too large"))
+        || normalizedError.contains(QStringLiteral("length"));
+}
+
+QVector<FrameAnalysisRecord> sampleFramesForSummary(const QVector<FrameAnalysisRecord> &frames, int maxFrames)
+{
+    if (maxFrames <= 0 || frames.size() <= maxFrames) {
+        return frames;
+    }
+    if (maxFrames == 1) {
+        return QVector<FrameAnalysisRecord>{frames.first()};
+    }
+
+    QVector<int> indexes;
+    indexes.reserve(maxFrames);
+    for (int index = 0; index < maxFrames; ++index) {
+        const auto mappedIndex = qRound((static_cast<double>(index) * (frames.size() - 1)) / (maxFrames - 1));
+        if (!indexes.contains(mappedIndex)) {
+            indexes.append(mappedIndex);
+        }
+    }
+    std::sort(indexes.begin(), indexes.end());
+
+    QVector<FrameAnalysisRecord> sampled;
+    sampled.reserve(indexes.size());
+    for (const auto index : indexes) {
+        sampled.append(frames.at(index));
+    }
+    return sampled;
+}
 
 QString normalizeEndpoint(QString baseUrl)
 {
@@ -90,13 +199,10 @@ HttpResult postJson(const QString &endpoint,
     }
 
     if (result.statusCode != 200) {
-        if (result.statusCode == 401) {
-            result.errorMessage = QStringLiteral("视觉接口鉴权失败（401）");
-        } else if (result.statusCode == 429) {
-            result.errorMessage = QStringLiteral("视觉接口触发限流（429）");
-        } else {
-            result.errorMessage = QStringLiteral("视觉接口返回异常状态码：%1").arg(result.statusCode);
-        }
+        result.errorMessage = httpStatusMessage(result.statusCode, result.body);
+        Logger::warn(QStringLiteral("视觉接口请求失败：status=%1 endpoint=%2 body=%3")
+                         .arg(result.statusCode)
+                         .arg(endpoint, truncateForLog(QString::fromUtf8(result.body))));
         reply->deleteLater();
         return result;
     }
@@ -309,7 +415,8 @@ std::optional<VisionFrameAnalysis> VisionApiClient::analyzeFrame(const QString &
                                                                  const QString &apiKey,
                                                                  const QString &model,
                                                                  int timeoutSec,
-                                                                 QString *errorMessage) const
+                                                                 QString *errorMessage,
+                                                                 int *httpStatusCode) const
 {
     QFile imageFile(imagePath);
     if (!imageFile.open(QIODevice::ReadOnly)) {
@@ -334,6 +441,9 @@ std::optional<VisionFrameAnalysis> VisionApiClient::analyzeFrame(const QString &
     };
 
     const auto result = postChatPayload(endpoint, apiKey, makeChatPayload(model, content, 300), timeoutSec);
+    if (httpStatusCode) {
+        *httpStatusCode = result.statusCode;
+    }
     if (!result.success) {
         if (errorMessage) {
             *errorMessage = result.errorMessage;
@@ -398,106 +508,174 @@ std::optional<VisionVideoSummary> VisionApiClient::summarizeVideo(const QString 
                                                                   const QString &apiKey,
                                                                   const QString &model,
                                                                   int timeoutSec,
-                                                                  QString *errorMessage) const
+                                                                  QString *errorMessage,
+                                                                  int *attemptCount,
+                                                                  int *httpStatusCode) const
 {
-    QStringList frameLines;
-    for (const auto &frame : frames) {
-        QStringList parts;
-        if (!frame.caption.trimmed().isEmpty()) {
-            parts.append(QStringLiteral("描述：%1").arg(frame.caption.trimmed()));
-        }
-        if (!frame.tags.isEmpty()) {
-            parts.append(QStringLiteral("标签：%1").arg(frame.tags.join(QStringLiteral("、"))));
-        }
-        if (!frame.objects.isEmpty()) {
-            parts.append(QStringLiteral("对象：%1").arg(frame.objects.join(QStringLiteral("、"))));
-        }
-        if (!frame.actions.trimmed().isEmpty()) {
-            parts.append(QStringLiteral("动作：%1").arg(frame.actions.trimmed()));
-        }
-        if (!frame.setting.trimmed().isEmpty()) {
-            parts.append(QStringLiteral("场景：%1").arg(frame.setting.trimmed()));
-        }
-        if (!parts.isEmpty()) {
-            frameLines.append(QStringLiteral("第 %1 帧：%2").arg(frame.frameNumber).arg(parts.join(QStringLiteral("；"))));
-        }
-    }
-
-    if (frameLines.isEmpty()) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("没有可用于汇总的视频帧描述");
-        }
-        return std::nullopt;
-    }
-
     const auto endpoint = normalizeEndpoint(baseUrl);
-    const QJsonArray content = {
-        QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
-                    {QStringLiteral("text"),
-                     QStringLiteral("下面是视频《%1》的抽帧解析结果，请汇总成中文 JSON，格式为 "
-                                    "{\"summary\":\"\",\"keywords\":[],\"scenes\":[]}。"
-                                    "summary 需要比普通标题摘要更详细，用 4-6 句说明视频的主要主体、场景环境、动作变化、"
-                                    "可见物体、情绪/氛围和镜头内容变化；如果抽帧信息有限，也要基于已有帧明确说明可确认内容。"
-                                    "keywords 返回 8-16 个适合搜索的中文关键词，scenes 返回场景/地点/环境类中文关键词数组。"
-                                    "只返回 JSON，不要加入 Markdown。\n\n%2")
-                         .arg(fileName, frameLines.join(QStringLiteral("\n"))) }}
+    if (attemptCount) {
+        *attemptCount = 0;
+    }
+    if (httpStatusCode) {
+        *httpStatusCode = 0;
+    }
+
+    auto attemptSummary = [&](const QVector<FrameAnalysisRecord> &sourceFrames,
+                              int maxTokens,
+                              QString *attemptError,
+                              int *attemptStatusCode) -> std::optional<VisionVideoSummary> {
+        QStringList frameLines;
+        for (const auto &frame : sourceFrames) {
+            QStringList parts;
+            if (!frame.caption.trimmed().isEmpty()) {
+                parts.append(QStringLiteral("描述：%1").arg(frame.caption.trimmed()));
+            }
+            if (!frame.tags.isEmpty()) {
+                parts.append(QStringLiteral("标签：%1").arg(frame.tags.join(QStringLiteral("、"))));
+            }
+            if (!frame.objects.isEmpty()) {
+                parts.append(QStringLiteral("对象：%1").arg(frame.objects.join(QStringLiteral("、"))));
+            }
+            if (!frame.actions.trimmed().isEmpty()) {
+                parts.append(QStringLiteral("动作：%1").arg(frame.actions.trimmed()));
+            }
+            if (!frame.setting.trimmed().isEmpty()) {
+                parts.append(QStringLiteral("场景：%1").arg(frame.setting.trimmed()));
+            }
+            if (!parts.isEmpty()) {
+                frameLines.append(QStringLiteral("第 %1 帧：%2").arg(frame.frameNumber).arg(parts.join(QStringLiteral("；"))));
+            }
+        }
+
+        if (frameLines.isEmpty()) {
+            if (attemptError) {
+                *attemptError = QStringLiteral("没有可用于汇总的视频帧描述");
+            }
+            if (attemptStatusCode) {
+                *attemptStatusCode = 0;
+            }
+            return std::nullopt;
+        }
+
+        const QJsonArray content = {
+            QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
+                        {QStringLiteral("text"),
+                         QStringLiteral("下面是视频《%1》的抽帧解析结果，请汇总成中文 JSON，格式为 "
+                                        "{\"summary\":\"\",\"keywords\":[],\"scenes\":[]}。"
+                                        "summary 需要比普通标题摘要更详细，用 4-6 句说明视频的主要主体、场景环境、动作变化、"
+                                        "可见物体、情绪/氛围和镜头内容变化；如果抽帧信息有限，也要基于已有帧明确说明可确认内容。"
+                                        "keywords 返回 8-16 个适合搜索的中文关键词，scenes 返回场景/地点/环境类中文关键词数组。"
+                                        "只返回 JSON，不要加入 Markdown。\n\n%2")
+                             .arg(fileName, frameLines.join(QStringLiteral("\n"))) }}
+        };
+
+        const auto result = postChatPayload(endpoint, apiKey, makeChatPayload(model, content, maxTokens), timeoutSec);
+        if (attemptStatusCode) {
+            *attemptStatusCode = result.statusCode;
+        }
+        if (!result.success) {
+            if (attemptError) {
+                *attemptError = result.errorMessage;
+            }
+            return std::nullopt;
+        }
+
+        const auto schema = QStringLiteral("{\"summary\":\"\",\"keywords\":[],\"scenes\":[]}");
+        QString parseError;
+        auto payload = VisionResponseParser::parseAssistantJson(result.body, &parseError);
+        auto usedRepair = false;
+        if (!payload.has_value()) {
+            payload = repairAssistantPayload(result.body,
+                                             endpoint,
+                                             apiKey,
+                                             model,
+                                             timeoutSec,
+                                             schema,
+                                             parseError,
+                                             maxTokens,
+                                             attemptError);
+            usedRepair = true;
+            if (!payload.has_value()) {
+                return fallbackVideoSummaryFromResponse(result.body, attemptError);
+            }
+        }
+
+        QString normalizeError;
+        auto summary = VisionResponseParser::normalizeVideoSummary(*payload, &normalizeError);
+        if (!summary.has_value() && !usedRepair) {
+            payload = repairAssistantPayload(result.body,
+                                             endpoint,
+                                             apiKey,
+                                             model,
+                                             timeoutSec,
+                                             schema,
+                                             normalizeError,
+                                             maxTokens,
+                                             attemptError);
+            usedRepair = true;
+            if (payload.has_value()) {
+                summary = VisionResponseParser::normalizeVideoSummary(*payload, &normalizeError);
+            } else {
+                return fallbackVideoSummaryFromResponse(result.body, attemptError);
+            }
+        }
+        if (!summary.has_value()) {
+            auto fallback = fallbackVideoSummaryFromResponse(result.body, attemptError);
+            if (fallback.has_value()) {
+                return fallback;
+            }
+            if (attemptError && attemptError->isEmpty()) {
+                *attemptError = normalizeError;
+            }
+        }
+        return summary;
     };
 
-    const auto result = postChatPayload(endpoint, apiKey, makeChatPayload(model, content, 900), timeoutSec);
-    if (!result.success) {
-        if (errorMessage) {
-            *errorMessage = result.errorMessage;
+    QVector<QPair<int, int>> plans;
+    auto appendPlan = [&](int maxFrames, int maxTokens) {
+        for (const auto &plan : plans) {
+            if (plan.first == maxFrames && plan.second == maxTokens) {
+                return;
+            }
         }
-        return std::nullopt;
+        plans.append({maxFrames, maxTokens});
+    };
+
+    appendPlan(0, 900);
+    appendPlan(qMin(18, frames.size()), 700);
+    appendPlan(qMin(12, frames.size()), 550);
+
+    QString lastError = QStringLiteral("视频内容汇总失败");
+    int lastStatusCode = 0;
+    int usedAttempts = 0;
+    for (int index = 0; index < plans.size(); ++index) {
+        const auto &plan = plans.at(index);
+        ++usedAttempts;
+        const auto sampledFrames = sampleFramesForSummary(frames, plan.first);
+        const auto summary = attemptSummary(sampledFrames, plan.second, &lastError, &lastStatusCode);
+        if (summary.has_value()) {
+            if (attemptCount) {
+                *attemptCount = usedAttempts;
+            }
+            if (httpStatusCode) {
+                *httpStatusCode = lastStatusCode;
+            }
+            return summary;
+        }
+
+        if (index >= plans.size() - 1 || !shouldRetrySummaryFailure(lastStatusCode, lastError)) {
+            break;
+        }
     }
 
-    const auto schema = QStringLiteral("{\"summary\":\"\",\"keywords\":[],\"scenes\":[]}");
-    QString parseError;
-    auto payload = VisionResponseParser::parseAssistantJson(result.body, &parseError);
-    auto usedRepair = false;
-    if (!payload.has_value()) {
-        payload = repairAssistantPayload(result.body,
-                                         endpoint,
-                                         apiKey,
-                                         model,
-                                         timeoutSec,
-                                         schema,
-                                         parseError,
-                                         900,
-                                         errorMessage);
-        usedRepair = true;
-        if (!payload.has_value()) {
-            return fallbackVideoSummaryFromResponse(result.body, errorMessage);
-        }
+    if (attemptCount) {
+        *attemptCount = usedAttempts;
     }
-
-    QString normalizeError;
-    auto summary = VisionResponseParser::normalizeVideoSummary(*payload, &normalizeError);
-    if (!summary.has_value() && !usedRepair) {
-        payload = repairAssistantPayload(result.body,
-                                         endpoint,
-                                         apiKey,
-                                         model,
-                                         timeoutSec,
-                                         schema,
-                                         normalizeError,
-                                         900,
-                                         errorMessage);
-        usedRepair = true;
-        if (payload.has_value()) {
-            summary = VisionResponseParser::normalizeVideoSummary(*payload, &normalizeError);
-        } else {
-            return fallbackVideoSummaryFromResponse(result.body, errorMessage);
-        }
+    if (httpStatusCode) {
+        *httpStatusCode = lastStatusCode;
     }
-    if (!summary.has_value()) {
-        auto fallback = fallbackVideoSummaryFromResponse(result.body, errorMessage);
-        if (fallback.has_value()) {
-            return fallback;
-        }
-        if (errorMessage && errorMessage->isEmpty()) {
-            *errorMessage = normalizeError;
-        }
+    if (errorMessage) {
+        *errorMessage = lastError;
     }
-    return summary;
+    return std::nullopt;
 }

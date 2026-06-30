@@ -882,6 +882,38 @@ Rectangle {
                                             maximumLineCount: 2
                                             elide: Text.ElideRight
                                         }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            visible: modelData.canRetry || modelData.retryLabel.length > 0
+                                            spacing: 8
+
+                                            Text {
+                                                text: modelData.analysisState === 3 ? "状态：已跳过" : (modelData.analysisState === 2 ? "状态：失败" : "")
+                                                visible: text.length > 0
+                                                color: Theme.orange
+                                                font.pixelSize: 11
+                                            }
+
+                                            Text {
+                                                text: modelData.retryLabel
+                                                visible: text.length > 0
+                                                color: Theme.muted
+                                                font.pixelSize: 11
+                                            }
+
+                                            Item {
+                                                Layout.fillWidth: true
+                                            }
+
+                                            ActionButton {
+                                                Layout.preferredWidth: 96
+                                                Layout.preferredHeight: 30
+                                                visible: modelData.canRetry
+                                                text: "重解析该帧"
+                                                onClicked: if (viewModel) viewModel.retrySelectedFrame(modelData.frameNumber)
+                                            }
+                                        }
                                     }
                                 }
                             }
