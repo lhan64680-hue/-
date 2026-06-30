@@ -425,8 +425,7 @@ bool GlobalDatabaseManager::createSchema(QSqlDatabase &db, QString *errorMessage
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_global_video_project ON global_video_asset(project_uuid);"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_global_video_source ON global_video_asset(source_root_name);"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_global_video_status ON global_video_asset(analysis_status, confirmation_status);"),
-        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_frame_video_key ON video_frame_analysis(video_key);"),
-        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_frame_video_state ON video_frame_analysis(video_key, analysis_state, frame_number);")
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_frame_video_key ON video_frame_analysis(video_key);")
     };
 
     if (!executeBatch(db, statements, errorMessage)) {
