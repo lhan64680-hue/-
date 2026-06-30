@@ -466,22 +466,49 @@ bool GlobalDatabaseManager::ensureSchemaCompatibility(QSqlDatabase &db, QString 
                        "last_error_message TEXT NOT NULL DEFAULT '',"
                        "last_updated_at TEXT NOT NULL DEFAULT '',"
                        "FOREIGN KEY(video_key) REFERENCES global_video_asset(video_key) ON DELETE CASCADE"
-                       ");"),
-        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_frame_video_state ON video_frame_analysis(video_key, analysis_state, frame_number);")
+                       ");")
     };
     if (!executeBatch(db, statements, errorMessage)) {
         return false;
     }
 
-    return ensureColumns(db,
-                         QStringLiteral("video_frame_analysis"),
-                         {
-                             {QStringLiteral("analysis_state"), QStringLiteral("analysis_state INTEGER NOT NULL DEFAULT 0")},
-                             {QStringLiteral("retry_count"), QStringLiteral("retry_count INTEGER NOT NULL DEFAULT 0")},
-                             {QStringLiteral("last_http_status"), QStringLiteral("last_http_status INTEGER NOT NULL DEFAULT 0")},
-                             {QStringLiteral("last_attempt_at"), QStringLiteral("last_attempt_at TEXT NOT NULL DEFAULT ''")}
-                         },
-                         errorMessage);
+    if (!ensureColumns(db,
+                       QStringLiteral("video_frame_analysis"),
+                       {
+                           {QStringLiteral("analysis_state"), QStringLiteral("analysis_state INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("retry_count"), QStringLiteral("retry_count INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("last_http_status"), QStringLiteral("last_http_status INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("last_attempt_at"), QStringLiteral("last_attempt_at TEXT NOT NULL DEFAULT ''")}
+                       },
+                       errorMessage)) {
+        return false;
+    }
+
+    if (!ensureColumns(db,
+                       QStringLiteral("video_analysis_task"),
+                       {
+                           {QStringLiteral("stage"), QStringLiteral("stage INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("total_frames"), QStringLiteral("total_frames INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("completed_frames"), QStringLiteral("completed_frames INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("successful_frames"), QStringLiteral("successful_frames INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("skipped_frames"), QStringLiteral("skipped_frames INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("summary_retry_count"), QStringLiteral("summary_retry_count INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("last_error_message"), QStringLiteral("last_error_message TEXT NOT NULL DEFAULT ''")},
+                           {QStringLiteral("last_updated_at"), QStringLiteral("last_updated_at TEXT NOT NULL DEFAULT ''")}
+                       },
+                       errorMessage)) {
+        return false;
+    }
+
+    QSqlQuery query(db);
+    if (!query.exec(QStringLiteral("CREATE INDEX IF NOT EXISTS idx_frame_video_state ON video_frame_analysis(video_key, analysis_state, frame_number);"))) {
+        if (errorMessage) {
+            *errorMessage = query.lastError().text();
+        }
+        return false;
+    }
+
+    return true;
 }
 
 int GlobalDatabaseManager::currentSchemaVersion(QSqlDatabase &db) const
