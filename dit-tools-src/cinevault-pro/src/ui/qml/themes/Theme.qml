@@ -47,4 +47,10 @@ QtObject {
     readonly property color primaryHover: isDark ? "#4F8CFF" : "#1D4ED8"
     readonly property color primaryPressed: isDark ? "#2F6FE0" : "#1E40AF"
     readonly property color primaryText: "#FFFFFF"
+    readonly property color feedbackIncomingBg: isDark ? "#222837" : "#FFFFFF"
+    readonly property color feedbackIncomingBorder: isDark ? "#2E3647" : "#D5DCE8"
+    readonly property color feedbackOutgoingBg: isDark ? "#353D4C" : "#E7ECF4"
+    readonly property color feedbackOutgoingBorder: isDark ? "#4A5364" : "#CDD5E2"
+    readonly property color feedbackOutgoingText: isDark ? "#F4F7FB" : "#172033"
+    readonly property color feedbackOutgoingAttachmentBg: isDark ? "#414A5A" : "#F3F6FA"
 }

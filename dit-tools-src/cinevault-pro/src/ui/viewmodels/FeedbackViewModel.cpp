@@ -4,9 +4,11 @@
 #include "shared/Formatters.h"
 #include "ui/models/FeedbackMessageListModel.h"
 
+#include <QClipboard>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QUrl>
 
 namespace {
@@ -271,6 +273,36 @@ void FeedbackViewModel::removePendingAttachment(int index)
     }
     m_pendingAttachments.removeAt(index);
     emit stateChanged();
+}
+
+void FeedbackViewModel::copyMessageText(qint64 messageId)
+{
+    if (!m_service || messageId <= 0) {
+        return;
+    }
+
+    for (const auto &message : m_service->messages()) {
+        if (message.id == messageId && !message.text.isEmpty()) {
+            if (auto *clipboard = QGuiApplication::clipboard()) {
+                clipboard->setText(message.text);
+            }
+            break;
+        }
+    }
+}
+
+void FeedbackViewModel::deleteOwnMessage(qint64 messageId)
+{
+    if (m_service && messageId > 0) {
+        m_service->deleteMessage(messageId);
+    }
+}
+
+void FeedbackViewModel::clearOwnMessages()
+{
+    if (m_service) {
+        m_service->clearClientMessages();
+    }
 }
 
 void FeedbackViewModel::openAttachment(const QString &url)

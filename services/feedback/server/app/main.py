@@ -4,6 +4,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -66,6 +67,15 @@ def json_loads(value: str | None, fallback: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return fallback
+
+
+def latest_preview_from_message(text: str, attachments: list[dict[str, Any]]) -> str:
+    normalized_text = text.strip()
+    if normalized_text:
+        return normalized_text[:200]
+    if attachments:
+        return str(attachments[0].get("name") or "新消息")[:200]
+    return ""
 
 
 class ClientSessionPayload(BaseModel):
@@ -308,7 +318,7 @@ class Database:
                 raise HTTPException(status_code=404, detail="会话不存在。")
 
             now = utc_now()
-            latest_preview = normalized_text if normalized_text else (attachments[0]["name"] if attachments else "新消息")
+            latest_preview = latest_preview_from_message(normalized_text, attachments)
             conn.execute(
                 """
                 INSERT INTO messages (conversation_id, sender_role, text, attachments_json, created_at)
@@ -343,6 +353,72 @@ class Database:
             message_row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
             summary_row = self._conversation_row_with_unread(conn, conversation_id)
             return self._conversation_summary(request, summary_row), self._message_payload(request, message_row)
+
+    def delete_client_message(
+        self,
+        request: Request,
+        conversation_id: str,
+        message_id: int,
+        client_id: str,
+        client_token: str,
+    ) -> tuple[dict[str, Any], int]:
+        with self._connect() as conn:
+            conversation_row = conn.execute(
+                "SELECT * FROM conversations WHERE id = ? AND client_id = ? AND client_token = ? LIMIT 1",
+                (conversation_id, client_id, client_token),
+            ).fetchone()
+            if conversation_row is None:
+                raise HTTPException(status_code=401, detail="客户端身份验证失败。")
+
+            message_row = conn.execute(
+                "SELECT * FROM messages WHERE id = ? AND conversation_id = ? LIMIT 1",
+                (message_id, conversation_id),
+            ).fetchone()
+            if message_row is None:
+                raise HTTPException(status_code=404, detail="消息不存在。")
+            if message_row["sender_role"] != "client":
+                raise HTTPException(status_code=403, detail="只能删除自己发送的消息。")
+
+            self._delete_messages(conn, conversation_id, [message_row])
+            summary_row = self._conversation_row_with_unread(conn, conversation_id)
+            summary = self._conversation_summary(request, summary_row)
+            return self._attach_client_realtime(request, summary, conversation_row), int(message_id)
+
+    def clear_client_messages(
+        self,
+        request: Request,
+        conversation_id: str,
+        client_id: str,
+        client_token: str,
+    ) -> tuple[dict[str, Any], list[int]]:
+        with self._connect() as conn:
+            conversation_row = conn.execute(
+                "SELECT * FROM conversations WHERE id = ? AND client_id = ? AND client_token = ? LIMIT 1",
+                (conversation_id, client_id, client_token),
+            ).fetchone()
+            if conversation_row is None:
+                raise HTTPException(status_code=401, detail="客户端身份验证失败。")
+
+            message_rows = conn.execute(
+                """
+                SELECT * FROM messages
+                WHERE conversation_id = ? AND sender_role = 'client'
+                ORDER BY id ASC
+                """,
+                (conversation_id,),
+            ).fetchall()
+
+            deleted_ids = [int(row["id"]) for row in message_rows]
+            if deleted_ids:
+                self._delete_messages(conn, conversation_id, message_rows)
+            else:
+                summary_row = self._conversation_row_with_unread(conn, conversation_id)
+                summary = self._conversation_summary(request, summary_row)
+                return self._attach_client_realtime(request, summary, conversation_row), []
+
+            summary_row = self._conversation_row_with_unread(conn, conversation_id)
+            summary = self._conversation_summary(request, summary_row)
+            return self._attach_client_realtime(request, summary, conversation_row), deleted_ids
 
     def list_conversations(self, request: Request) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -394,6 +470,22 @@ class Database:
             summary_row = self._conversation_row_with_unread(conn, conversation_id)
             return self._conversation_summary(request, summary_row)
 
+    def delete_conversation(self, conversation_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM conversations WHERE id = ? LIMIT 1", (conversation_id,)).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="会话不存在。")
+
+            client_id = row["client_id"]
+            conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+            conn.commit()
+
+        shutil.rmtree(UPLOADS_DIR / conversation_id, ignore_errors=True)
+        return {
+            "conversation_id": conversation_id,
+            "client_id": client_id,
+        }
+
     def get_client_token(self, client_id: str) -> str | None:
         with self._connect() as conn:
             row = conn.execute("SELECT client_token FROM conversations WHERE client_id = ? LIMIT 1", (client_id,)).fetchone()
@@ -441,6 +533,74 @@ class Database:
         ).fetchall()
         return [self._message_payload(request, row) for row in rows]
 
+    def _attachment_file_path(self, conversation_id: str, attachment: dict[str, Any]) -> Path:
+        stored_name = str(attachment.get("stored_name") or "").strip()
+        if not stored_name:
+            attachment_id = str(attachment.get("id") or "").strip()
+            safe_name = sanitize_filename(str(attachment.get("name") or "file"))
+            stored_name = f"{attachment_id}__{safe_name}" if attachment_id else safe_name
+        return UPLOADS_DIR / conversation_id / stored_name
+
+    def _delete_message_attachments(self, conversation_id: str, message_rows: list[sqlite3.Row] | tuple[sqlite3.Row, ...]) -> None:
+        for row in message_rows:
+            for attachment in json_loads(row["attachments_json"], []):
+                target = self._attachment_file_path(conversation_id, dict(attachment))
+                if target.exists():
+                    target.unlink()
+        conversation_dir = UPLOADS_DIR / conversation_id
+        if conversation_dir.exists():
+            try:
+                next(conversation_dir.iterdir())
+            except StopIteration:
+                conversation_dir.rmdir()
+
+    def _refresh_conversation_after_message_mutation(self, conn: sqlite3.Connection, conversation_id: str) -> None:
+        latest_row = conn.execute(
+            """
+            SELECT * FROM messages
+            WHERE conversation_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (conversation_id,),
+        ).fetchone()
+
+        latest_preview = ""
+        latest_message_at = ""
+        if latest_row is not None:
+            attachments = json_loads(latest_row["attachments_json"], [])
+            latest_preview = latest_preview_from_message(latest_row["text"], attachments)
+            latest_message_at = latest_row["created_at"]
+
+        conn.execute(
+            """
+            UPDATE conversations
+            SET latest_preview = ?, latest_message_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (latest_preview, latest_message_at, utc_now(), conversation_id),
+        )
+        conn.commit()
+
+    def _delete_messages(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        message_rows: list[sqlite3.Row] | tuple[sqlite3.Row, ...],
+    ) -> None:
+        if not message_rows:
+            return
+
+        ids = [int(row["id"]) for row in message_rows]
+        placeholders = ",".join("?" for _ in ids)
+        conn.execute(
+            f"DELETE FROM messages WHERE conversation_id = ? AND id IN ({placeholders})",
+            [conversation_id, *ids],
+        )
+        conn.commit()
+        self._delete_message_attachments(conversation_id, message_rows)
+        self._refresh_conversation_after_message_mutation(conn, conversation_id)
+
 
 class RealtimeHub:
     def __init__(self) -> None:
@@ -476,6 +636,33 @@ class RealtimeHub:
         payload = {"type": "conversation.updated", "conversation": conversation}
         await self._broadcast(self.admin_connections, payload)
         client_connections = self.client_connections.get(conversation["client_id"], set())
+        await self._broadcast(client_connections, payload)
+
+    async def broadcast_message_deleted(self, conversation: dict[str, Any], message_id: int) -> None:
+        payload = {"type": "message.deleted", "conversation": conversation, "message_id": message_id}
+        await self._broadcast(self.admin_connections, payload)
+        client_connections = self.client_connections.get(conversation["client_id"], set())
+        await self._broadcast(client_connections, payload)
+
+    async def broadcast_messages_cleared(self, conversation: dict[str, Any], message_ids: list[int]) -> None:
+        payload = {
+            "type": "messages.cleared",
+            "conversation": conversation,
+            "message_ids": message_ids,
+            "deleted_count": len(message_ids),
+        }
+        await self._broadcast(self.admin_connections, payload)
+        client_connections = self.client_connections.get(conversation["client_id"], set())
+        await self._broadcast(client_connections, payload)
+
+    async def broadcast_conversation_deleted(self, conversation_id: str, client_id: str) -> None:
+        payload = {
+            "type": "conversation.deleted",
+            "conversation_id": conversation_id,
+            "client_id": client_id,
+        }
+        await self._broadcast(self.admin_connections, payload)
+        client_connections = self.client_connections.get(client_id, set())
         await self._broadcast(client_connections, payload)
 
     async def _broadcast(self, sockets: set[WebSocket], payload: dict[str, Any]) -> None:
@@ -619,6 +806,49 @@ async def post_client_message(
     return JSONResponse({"conversation": conversation, "message": message})
 
 
+@app.delete("/api/client/conversations/{conversation_id}/messages/{message_id}")
+async def delete_client_message(
+    request: Request,
+    conversation_id: str,
+    message_id: int,
+    client_id: str = Query(...),
+    client_token: str = Query(...),
+) -> JSONResponse:
+    conversation, deleted_message_id = database.delete_client_message(
+        request,
+        conversation_id,
+        message_id,
+        client_id,
+        client_token,
+    )
+    await hub.broadcast_message_deleted(conversation, deleted_message_id)
+    return JSONResponse({"conversation": conversation, "message_id": deleted_message_id})
+
+
+@app.delete("/api/client/conversations/{conversation_id}/messages")
+async def clear_client_messages(
+    request: Request,
+    conversation_id: str,
+    client_id: str = Query(...),
+    client_token: str = Query(...),
+) -> JSONResponse:
+    conversation, deleted_message_ids = database.clear_client_messages(
+        request,
+        conversation_id,
+        client_id,
+        client_token,
+    )
+    if deleted_message_ids:
+        await hub.broadcast_messages_cleared(conversation, deleted_message_ids)
+    return JSONResponse(
+        {
+            "conversation": conversation,
+            "message_ids": deleted_message_ids,
+            "deleted_count": len(deleted_message_ids),
+        }
+    )
+
+
 @app.post("/api/admin/login")
 async def admin_login(payload: AdminLoginPayload) -> JSONResponse:
     if payload.username != ADMIN_USERNAME or payload.password != ADMIN_PASSWORD:
@@ -668,6 +898,17 @@ async def update_admin_status(
     conversation = database.update_status(request, conversation_id, payload.status)
     await hub.broadcast_conversation(conversation)
     return JSONResponse({"conversation": conversation})
+
+
+@app.delete("/api/admin/conversations/{conversation_id}")
+async def delete_admin_conversation(
+    conversation_id: str,
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    verify_admin_token(parse_bearer_token(authorization))
+    deletion = database.delete_conversation(conversation_id)
+    await hub.broadcast_conversation_deleted(deletion["conversation_id"], deletion["client_id"])
+    return JSONResponse(deletion)
 
 
 @app.get("/files/{conversation_id}/{attachment_id}/{filename}")

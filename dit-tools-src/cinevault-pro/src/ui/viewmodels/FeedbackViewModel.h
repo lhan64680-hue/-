@@ -52,6 +52,9 @@ public:
     Q_INVOKABLE void sendMessage(const QString &text);
     Q_INVOKABLE void addAttachmentUrls(const QVariantList &urls);
     Q_INVOKABLE void removePendingAttachment(int index);
+    Q_INVOKABLE void copyMessageText(qint64 messageId);
+    Q_INVOKABLE void deleteOwnMessage(qint64 messageId);
+    Q_INVOKABLE void clearOwnMessages();
     Q_INVOKABLE void openAttachment(const QString &url);
 
 signals:

@@ -31,13 +31,16 @@
           <p id="conversation-subtitle" class="muted">可查看用户的历史消息、附件与当前处理状态。</p>
         </div>
 
-        <div class="status-group">
-          <label for="conversation-status">处理状态</label>
-          <select id="conversation-status" disabled>
-            <option value="pending">待处理</option>
-            <option value="in_progress">跟进中</option>
-            <option value="resolved">已解决</option>
-          </select>
+        <div class="header-actions">
+          <div class="status-group">
+            <label for="conversation-status">处理状态</label>
+            <select id="conversation-status" disabled>
+              <option value="pending">待处理</option>
+              <option value="in_progress">跟进中</option>
+              <option value="resolved">已解决</option>
+            </select>
+          </div>
+          <button id="delete-conversation" class="danger-button" disabled>删除会话</button>
         </div>
       </section>
 
@@ -48,13 +51,13 @@
           </div>
 
           <div class="composer">
+            <div id="reply-file-list" class="file-list"></div>
             <textarea id="reply-text" placeholder="输入回复内容，支持结合附件一并发送。" rows="4"></textarea>
             <div class="composer-actions">
               <label class="file-button">
                 <input id="reply-files" type="file" multiple hidden>
                 添加附件
               </label>
-              <div id="reply-file-list" class="file-list"></div>
               <button id="send-reply" class="primary-button" disabled>发送回复</button>
             </div>
           </div>

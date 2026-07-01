@@ -39,6 +39,8 @@ public slots:
     void createOrRestoreSession(const QString &nickname, const QString &contact);
     void refreshMessages();
     void sendMessage(const QString &text, const QStringList &filePaths);
+    void deleteMessage(qint64 messageId);
+    void clearClientMessages();
 
 signals:
     void stateChanged();
@@ -85,6 +87,8 @@ private:
     bool hasClientAuth() const;
     bool hasMessage(qint64 messageId) const;
     void appendOrReplaceMessage(const FeedbackMessage &message);
+    void removeMessages(const QList<qint64> &messageIds);
+    void resetConversationState(const QString &statusMessage, bool recreateSession);
     FeedbackAttachment parseAttachment(const QJsonObject &object) const;
     FeedbackMessage parseMessage(const QJsonObject &object) const;
     FeedbackConversation parseConversation(const QJsonObject &object) const;

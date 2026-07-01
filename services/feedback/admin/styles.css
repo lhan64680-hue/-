@@ -6,7 +6,7 @@
   --panel-soft: rgba(17, 34, 53, 0.76);
   --panel-strong: rgba(8, 18, 30, 0.96);
   --line: rgba(148, 177, 210, 0.18);
-  --line-strong: rgba(103, 160, 235, 0.38);
+  --line-strong: rgba(150, 165, 188, 0.4);
   --text: #edf5ff;
   --muted: #90a4bf;
   --weak: #647991;
@@ -15,6 +15,10 @@
   --green: #36d399;
   --orange: #f4b860;
   --red: #ff7a84;
+  --bubble-peer: rgba(9, 17, 27, 0.92);
+  --bubble-self: rgba(42, 50, 64, 0.94);
+  --bubble-self-border: rgba(185, 194, 208, 0.22);
+  --bubble-peer-border: rgba(148, 177, 210, 0.16);
   --shadow: 0 22px 60px rgba(0, 0, 0, 0.35);
   --radius-lg: 28px;
   --radius-md: 18px;
@@ -277,6 +281,12 @@ select {
   font-size: 28px;
 }
 
+.header-actions {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
 .status-group {
   min-width: 180px;
 }
@@ -338,16 +348,20 @@ select {
 }
 
 .message-bubble {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: fit-content;
   max-width: min(78%, 760px);
   padding: 14px 16px 12px;
   border-radius: 20px;
-  border: 1px solid rgba(87, 167, 255, 0.12);
-  background: rgba(8, 18, 30, 0.85);
+  border: 1px solid var(--bubble-peer-border);
+  background: var(--bubble-peer);
 }
 
 .message-group.admin .message-bubble {
-  background: linear-gradient(135deg, rgba(31, 123, 230, 0.94), rgba(45, 155, 255, 0.92));
-  border-color: rgba(159, 210, 255, 0.32);
+  background: var(--bubble-self);
+  border-color: var(--bubble-self-border);
 }
 
 .message-role {
@@ -379,10 +393,12 @@ select {
 }
 
 .attachment-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  display: inline-grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 220px));
   gap: 10px;
   margin-top: 12px;
+  width: min(100%, 460px);
+  max-width: 100%;
 }
 
 .attachment-card {
@@ -391,12 +407,12 @@ select {
   text-decoration: none;
   border-radius: 14px;
   color: inherit;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .attachment-card:hover {
-  border-color: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 .attachment-card img {
@@ -437,13 +453,15 @@ select {
 .composer-actions {
   display: flex;
   gap: 12px;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
   margin-top: 12px;
 }
 
 .file-button,
 .ghost-button,
-.primary-button {
+.primary-button,
+.danger-button {
   min-height: 44px;
   padding: 0 16px;
   border-radius: 14px;
@@ -457,7 +475,8 @@ select {
 
 .file-button:hover,
 .ghost-button:hover,
-.primary-button:hover {
+.primary-button:hover,
+.danger-button:hover {
   transform: translateY(-1px);
 }
 
@@ -473,19 +492,25 @@ select {
   color: white;
 }
 
+.danger-button {
+  background: rgba(255, 122, 132, 0.14);
+  border-color: rgba(255, 122, 132, 0.28);
+  color: #ffdce0;
+}
+
 .primary-button[disabled],
-.ghost-button[disabled] {
+.ghost-button[disabled],
+.danger-button[disabled] {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
 }
 
 .file-list {
-  flex: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding-top: 4px;
+  min-height: 0;
 }
 
 .pending-file {
@@ -495,7 +520,8 @@ select {
   min-height: 34px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgba(87, 167, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(148, 177, 210, 0.16);
   color: var(--text);
   font-size: 12px;
 }
@@ -641,6 +667,7 @@ select {
 
   .sidebar-toolbar,
   .panel-header,
+  .header-actions,
   .composer-actions {
     flex-direction: column;
   }
@@ -651,5 +678,10 @@ select {
 
   .message-bubble {
     max-width: 100%;
+  }
+
+  .attachment-grid {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
   }
 }

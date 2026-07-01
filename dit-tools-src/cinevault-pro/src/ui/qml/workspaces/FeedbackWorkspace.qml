@@ -30,6 +30,14 @@ Rectangle {
         onAccepted: if (viewModel) viewModel.addAttachmentUrls(selectedFiles)
     }
 
+    MessageDialog {
+        id: clearConversationDialog
+        title: "清空会话窗口"
+        text: "这会删除你自己发送的全部消息，开发者回复会保留。是否继续？"
+        buttons: MessageDialog.Ok | MessageDialog.Cancel
+        onAccepted: if (viewModel) viewModel.clearOwnMessages()
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
@@ -289,17 +297,47 @@ Rectangle {
 
                         delegate: Item {
                             width: ListView.view.width
+                            property real maxBubbleWidth: Math.min(parent.width * 0.78, 720)
+                            property real attachmentPreferredWidth: hasAttachments
+                                ? Math.min(maxBubbleWidth - 24, attachments.length > 1 ? 460 : (attachments[0].isImage ? 180 : 220))
+                                : 0
+                            property real textPreferredWidth: hasText ? Math.min(textMeasure.implicitWidth, maxBubbleWidth - 24) : 0
+                            property real headerPreferredWidth: Math.min(maxBubbleWidth - 24, senderText.implicitWidth + timestampText.implicitWidth + 24)
+                            property real bubbleContentWidth: Math.max(120, Math.min(maxBubbleWidth - 24, Math.max(headerPreferredWidth, textPreferredWidth, attachmentPreferredWidth)))
                             height: bubble.implicitHeight
+
+                            Text {
+                                id: textMeasure
+                                visible: false
+                                text: model.text
+                                font.pixelSize: 14
+                                wrapMode: Text.NoWrap
+                            }
+
+                            ThemedMenu {
+                                id: messageContextMenu
+
+                                ThemedMenuItem {
+                                    text: "复制"
+                                    enabled: hasText
+                                    onTriggered: if (viewModel) viewModel.copyMessageText(messageId)
+                                }
+                                ThemedMenuItem {
+                                    text: "删除"
+                                    enabled: outgoing
+                                    onTriggered: if (viewModel) viewModel.deleteOwnMessage(messageId)
+                                }
+                            }
 
                             Rectangle {
                                 id: bubble
-                                width: Math.min(parent.width * 0.78, 720)
+                                width: bubbleContentWidth + 24
                                 anchors.left: outgoing ? undefined : parent.left
                                 anchors.right: outgoing ? parent.right : undefined
                                 radius: 20
-                                color: outgoing ? Theme.primaryBg : Theme.card
+                                color: outgoing ? Theme.feedbackOutgoingBg : Theme.feedbackIncomingBg
                                 border.width: 1
-                                border.color: outgoing ? Qt.rgba(1, 1, 1, 0.12) : Theme.line
+                                border.color: outgoing ? Theme.feedbackOutgoingBorder : Theme.feedbackIncomingBorder
                                 implicitHeight: contentColumn.implicitHeight + 24
 
                                 Column {
@@ -313,8 +351,9 @@ Rectangle {
                                         spacing: 8
 
                                         Text {
+                                            id: senderText
                                             text: senderLabel
-                                            color: outgoing ? Theme.primaryText : Theme.text
+                                            color: outgoing ? Theme.feedbackOutgoingText : Theme.text
                                             font.pixelSize: 13
                                             font.weight: Font.DemiBold
                                         }
@@ -322,24 +361,26 @@ Rectangle {
                                         Item { Layout.fillWidth: true }
 
                                         Text {
+                                            id: timestampText
                                             text: createdAtLabel
-                                            color: outgoing ? Qt.rgba(1, 1, 1, 0.82) : Theme.weak
+                                            color: outgoing ? Theme.feedbackOutgoingText : Theme.weak
+                                            opacity: outgoing ? 0.82 : 1
                                             font.pixelSize: 11
                                         }
                                     }
 
                                     Text {
                                         visible: hasText
-                                        width: parent.width
+                                        width: bubbleContentWidth
                                         text: model.text
-                                        color: outgoing ? Theme.primaryText : Theme.text
+                                        color: outgoing ? Theme.feedbackOutgoingText : Theme.text
                                         font.pixelSize: 14
                                         wrapMode: Text.Wrap
                                     }
 
                                     Flow {
                                         visible: hasAttachments
-                                        width: parent.width
+                                        width: bubbleContentWidth
                                         spacing: 10
 
                                         Repeater {
@@ -349,9 +390,9 @@ Rectangle {
                                                 width: modelData.isImage ? 180 : 220
                                                 height: modelData.isImage ? 176 : 74
                                                 radius: 16
-                                                color: outgoing ? Qt.rgba(1, 1, 1, 0.12) : Theme.panel
+                                                color: outgoing ? Theme.feedbackOutgoingAttachmentBg : Theme.panel
                                                 border.width: 1
-                                                border.color: outgoing ? Qt.rgba(1, 1, 1, 0.18) : Theme.line
+                                                border.color: outgoing ? Theme.feedbackOutgoingBorder : Theme.line
                                                 clip: true
 
                                                 MouseArea {
@@ -377,7 +418,7 @@ Rectangle {
                                                     Text {
                                                         width: parent.width
                                                         text: modelData.name
-                                                        color: outgoing ? Theme.primaryText : Theme.text
+                                                        color: outgoing ? Theme.feedbackOutgoingText : Theme.text
                                                         font.pixelSize: 12
                                                         font.weight: Font.DemiBold
                                                         elide: Text.ElideRight
@@ -386,13 +427,24 @@ Rectangle {
                                                     Text {
                                                         width: parent.width
                                                         text: modelData.sizeLabel
-                                                        color: outgoing ? Qt.rgba(1, 1, 1, 0.78) : Theme.weak
+                                                        color: outgoing ? Theme.feedbackOutgoingText : Theme.weak
+                                                        opacity: outgoing ? 0.78 : 1
                                                         font.pixelSize: 11
                                                         elide: Text.ElideRight
                                                     }
                                                 }
                                             }
                                         }
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: bubbleContextArea
+                                    anchors.fill: parent
+                                    acceptedButtons: Qt.RightButton
+                                    propagateComposedEvents: true
+                                    onClicked: function(mouse) {
+                                        messageContextMenu.popup(bubbleContextArea, mouse.x, mouse.y)
                                     }
                                 }
                             }
@@ -444,36 +496,6 @@ Rectangle {
                             anchors.margins: 12
                             spacing: 10
 
-                            TextArea {
-                                id: draftMessageArea
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 120
-                                placeholderText: "描述你遇到的问题、复现步骤、期望结果，或直接附上截图和日志..."
-                                wrapMode: TextEdit.Wrap
-                                color: Theme.text
-                                selectionColor: Theme.blue
-                                selectedTextColor: Theme.primaryText
-                                Keys.onPressed: function(event) {
-                                    if (draftMessageArea.inputMethodComposing) {
-                                        return
-                                    }
-                                    if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
-                                            && !(event.modifiers & Qt.ControlModifier)
-                                            && !(event.modifiers & Qt.ShiftModifier)
-                                            && !(event.modifiers & Qt.AltModifier)
-                                            && !(event.modifiers & Qt.MetaModifier)) {
-                                        event.accepted = true
-                                        root.submitDraftMessage(draftMessageArea.text)
-                                    }
-                                }
-                                background: Rectangle {
-                                    radius: 14
-                                    color: Theme.panel
-                                    border.width: 1
-                                    border.color: draftMessageArea.activeFocus ? Theme.blue : Theme.line
-                                }
-                            }
-
                             Flow {
                                 Layout.fillWidth: true
                                 spacing: 8
@@ -517,6 +539,36 @@ Rectangle {
                                 }
                             }
 
+                            TextArea {
+                                id: draftMessageArea
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 120
+                                placeholderText: "描述你遇到的问题、复现步骤、期望结果，或直接附上截图和日志..."
+                                wrapMode: TextEdit.Wrap
+                                color: Theme.text
+                                selectionColor: Theme.blue
+                                selectedTextColor: Theme.primaryText
+                                Keys.onPressed: function(event) {
+                                    if (draftMessageArea.inputMethodComposing) {
+                                        return
+                                    }
+                                    if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                            && !(event.modifiers & Qt.ControlModifier)
+                                            && !(event.modifiers & Qt.ShiftModifier)
+                                            && !(event.modifiers & Qt.AltModifier)
+                                            && !(event.modifiers & Qt.MetaModifier)) {
+                                        event.accepted = true
+                                        root.submitDraftMessage(draftMessageArea.text)
+                                    }
+                                }
+                                background: Rectangle {
+                                    radius: 14
+                                    color: Theme.panel
+                                    border.width: 1
+                                    border.color: draftMessageArea.activeFocus ? Theme.blue : Theme.line
+                                }
+                            }
+
                             RowLayout {
                                 Layout.fillWidth: true
 
@@ -531,6 +583,7 @@ Rectangle {
                                     Layout.preferredWidth: 92
                                     Layout.preferredHeight: 38
                                     text: "刷新"
+                                    enabled: viewModel && viewModel.ready && !viewModel.busy
                                     onClicked: if (viewModel) viewModel.refresh()
                                 }
 
@@ -540,7 +593,7 @@ Rectangle {
                                     Layout.preferredWidth: 128
                                     Layout.preferredHeight: 38
                                     text: viewModel && viewModel.sending ? "发送中..." : "发送反馈"
-                                    enabled: viewModel && !viewModel.sending
+                                    enabled: viewModel && viewModel.ready && !viewModel.sending
                                     primary: true
                                     onClicked: root.submitDraftMessage(draftMessageArea.text)
                                 }
@@ -675,6 +728,14 @@ Rectangle {
                     }
 
                     Item { Layout.fillHeight: true }
+
+                    ActionButton {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 40
+                        text: viewModel && viewModel.sending ? "处理中..." : "清空会话窗口"
+                        enabled: viewModel && viewModel.ready && !viewModel.sending
+                        onClicked: clearConversationDialog.open()
+                    }
 
                     Rectangle {
                         Layout.fillWidth: true

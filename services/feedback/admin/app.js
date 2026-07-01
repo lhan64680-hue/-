@@ -24,6 +24,7 @@ const elements = {
   conversationTitle: document.getElementById("conversation-title"),
   conversationSubtitle: document.getElementById("conversation-subtitle"),
   conversationStatus: document.getElementById("conversation-status"),
+  deleteConversation: document.getElementById("delete-conversation"),
   messageList: document.getElementById("message-list"),
   replyText: document.getElementById("reply-text"),
   replyFiles: document.getElementById("reply-files"),
@@ -179,7 +180,7 @@ function logout(message = "") {
   renderMessages();
   renderConversationMeta();
   setComposerEnabled(false);
-  elements.conversationStatus.disabled = true;
+  setConversationActionsEnabled(false);
   elements.loginOverlay.classList.remove("hidden");
   elements.loginPassword.value = "";
   elements.loginError.textContent = message;
@@ -190,6 +191,11 @@ function setComposerEnabled(enabled) {
   elements.sendReply.disabled = !enabled;
   elements.replyText.disabled = !enabled;
   elements.replyFiles.disabled = !enabled;
+}
+
+function setConversationActionsEnabled(enabled) {
+  elements.conversationStatus.disabled = !enabled;
+  elements.deleteConversation.disabled = !enabled;
 }
 
 function updatePendingFiles() {
@@ -218,6 +224,10 @@ function mergeConversation(conversation) {
     const rightTime = right.latest_message_at || right.updated_at || "";
     return rightTime.localeCompare(leftTime);
   });
+}
+
+function removeConversation(conversationId) {
+  state.conversations = state.conversations.filter((item) => item.conversation_id !== conversationId);
 }
 
 function renderConversationList() {
@@ -329,7 +339,7 @@ function renderMessages() {
         .join("");
       return `
         <div class="message-group ${message.sender_role}">
-          <div class="message-bubble">
+          <div class="message-bubble${attachments ? " has-attachments" : ""}">
             <div class="message-role">
               <strong>${roleLabel}</strong>
               <span>${escapeHtml(formatDateTime(message.created_at))}</span>
@@ -364,8 +374,8 @@ async function loadConversations() {
     return;
   }
   if (state.selectedConversationId && !selectedConversation()) {
-    state.selectedConversationId = "";
-    state.messages = [];
+    clearSelectedConversation();
+    return;
   }
   renderConversationMeta();
 }
@@ -391,7 +401,7 @@ async function selectConversation(conversationId) {
   if (!conversationId) {
     return;
   }
-  elements.conversationStatus.disabled = false;
+  setConversationActionsEnabled(true);
   setComposerEnabled(true);
   await loadConversationMessages(conversationId);
 }
@@ -402,6 +412,24 @@ function appendMessage(message) {
   }
   state.messages.push(message);
   state.messages.sort((left, right) => left.id - right.id);
+}
+
+function removeMessagesByIds(messageIds) {
+  if (!Array.isArray(messageIds) || messageIds.length === 0) {
+    return;
+  }
+  const deleted = new Set(messageIds.map((value) => Number(value)));
+  state.messages = state.messages.filter((item) => !deleted.has(Number(item.id)));
+}
+
+function clearSelectedConversation() {
+  state.selectedConversationId = "";
+  state.messages = [];
+  renderConversationList();
+  renderConversationMeta();
+  renderMessages();
+  setComposerEnabled(false);
+  setConversationActionsEnabled(false);
 }
 
 async function sendReply() {
@@ -461,6 +489,39 @@ async function updateStatus(status) {
   renderConversationMeta();
 }
 
+async function deleteConversation() {
+  const conversation = selectedConversation();
+  if (!conversation) {
+    return;
+  }
+
+  const confirmed = window.confirm(`确认永久删除会话“${conversation.nickname || "未命名用户"}”吗？此操作会删除全部消息与附件，且无法恢复。`);
+  if (!confirmed) {
+    return;
+  }
+
+  elements.deleteConversation.disabled = true;
+  try {
+    const data = await requestJson(endpoint(`api/admin/conversations/${conversation.conversation_id}`), {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    removeConversation(data.conversation_id);
+    if (state.selectedConversationId === data.conversation_id) {
+      clearSelectedConversation();
+    } else {
+      renderConversationList();
+      renderConversationMeta();
+      renderMessages();
+    }
+    setConnectionStatus("会话已删除");
+  } finally {
+    if (selectedConversation()) {
+      elements.deleteConversation.disabled = false;
+    }
+  }
+}
+
 function disconnectSocket() {
   if (state.heartbeatTimer) {
     window.clearInterval(state.heartbeatTimer);
@@ -514,6 +575,31 @@ function connectSocket() {
         }
       }
     }
+
+    if (payload.type === "message.deleted" && payload.message_id) {
+      if (payload.conversation?.conversation_id === state.selectedConversationId) {
+        removeMessagesByIds([payload.message_id]);
+        renderConversationMeta();
+        renderMessages();
+      }
+    }
+
+    if (payload.type === "messages.cleared") {
+      if (payload.conversation?.conversation_id === state.selectedConversationId) {
+        removeMessagesByIds(payload.message_ids || []);
+        renderConversationMeta();
+        renderMessages();
+      }
+    }
+
+    if (payload.type === "conversation.deleted" && payload.conversation_id) {
+      removeConversation(payload.conversation_id);
+      if (payload.conversation_id === state.selectedConversationId) {
+        clearSelectedConversation();
+      } else {
+        renderConversationList();
+      }
+    }
   };
 
   socket.onclose = () => {
@@ -550,7 +636,7 @@ async function login(username, password) {
 
 async function bootstrap() {
   setComposerEnabled(false);
-  elements.conversationStatus.disabled = true;
+  setConversationActionsEnabled(false);
   renderConversationMeta();
   renderConversationList();
   updatePendingFiles();
@@ -582,6 +668,17 @@ async function bootstrap() {
       await updateStatus(elements.conversationStatus.value);
     } catch (error) {
       setConnectionStatus(error.message || "状态更新失败", true);
+    }
+  });
+
+  elements.deleteConversation.addEventListener("click", async () => {
+    try {
+      await deleteConversation();
+    } catch (error) {
+      setConnectionStatus(error.message || "删除会话失败", true);
+      if (selectedConversation()) {
+        elements.deleteConversation.disabled = false;
+      }
     }
   });
 

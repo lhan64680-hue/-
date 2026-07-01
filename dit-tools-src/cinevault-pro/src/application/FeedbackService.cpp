@@ -15,6 +15,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSet>
 #include <QScopeGuard>
 #include <QSysInfo>
 #include <QTimer>
@@ -38,6 +39,16 @@ qint64 jsonInt64(const QJsonObject &object, const QString &key)
 int jsonInt(const QJsonObject &object, const QString &key)
 {
     return object.value(key).toInt();
+}
+
+QList<qint64> jsonInt64List(const QJsonArray &array)
+{
+    QList<qint64> values;
+    values.reserve(array.size());
+    for (const auto &value : array) {
+        values.append(static_cast<qint64>(value.toDouble()));
+    }
+    return values;
 }
 
 QString errorDetailFromPayload(const QByteArray &payload)
@@ -426,6 +437,104 @@ void FeedbackService::sendMessage(const QString &text, const QStringList &filePa
     });
 }
 
+void FeedbackService::deleteMessage(qint64 messageId)
+{
+    if (!ready() || m_sending || messageId <= 0 || !hasMessage(messageId)) {
+        return;
+    }
+
+    auto url = serviceUrl(QStringLiteral("api/client/conversations/%1/messages/%2").arg(m_conversation.conversationId).arg(messageId));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("client_id"), m_session.clientId);
+    query.addQueryItem(QStringLiteral("client_token"), m_session.clientToken);
+    url.setQuery(query);
+
+    auto request = QNetworkRequest(url);
+    request.setTransferTimeout(kTransferTimeoutMs);
+
+    setSending(true);
+    setStatusMessage(QStringLiteral("正在删除消息..."));
+
+    auto *reply = m_network->sendCustomRequest(request, QByteArrayLiteral("DELETE"));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, messageId]() {
+        const auto cleanup = qScopeGuard([reply]() { reply->deleteLater(); });
+        setSending(false);
+
+        if (reply->error() != QNetworkReply::NoError
+            || reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() >= 400) {
+            handleNetworkFailure(reply, QStringLiteral("删除消息失败"));
+            return;
+        }
+
+        const auto document = QJsonDocument::fromJson(reply->readAll());
+        if (!document.isObject()) {
+            setStatusMessage(QStringLiteral("删除消息成功，但返回内容无法解析。"));
+            return;
+        }
+
+        const auto object = document.object();
+        applyConversationPayload(object.value(QStringLiteral("conversation")).toObject());
+        removeMessages({object.value(QStringLiteral("message_id")).toVariant().toLongLong()});
+        if (m_workspaceActive) {
+            markMessagesRead();
+        } else {
+            recomputeUnreadCount();
+        }
+        setStatusMessage(QStringLiteral("消息已删除。"));
+        emit messagesChanged();
+        emit stateChanged();
+    });
+}
+
+void FeedbackService::clearClientMessages()
+{
+    if (!ready() || m_sending) {
+        return;
+    }
+
+    auto url = serviceUrl(QStringLiteral("api/client/conversations/%1/messages").arg(m_conversation.conversationId));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("client_id"), m_session.clientId);
+    query.addQueryItem(QStringLiteral("client_token"), m_session.clientToken);
+    url.setQuery(query);
+
+    auto request = QNetworkRequest(url);
+    request.setTransferTimeout(kTransferTimeoutMs);
+
+    setSending(true);
+    setStatusMessage(QStringLiteral("正在清空自己发送的消息..."));
+
+    auto *reply = m_network->sendCustomRequest(request, QByteArrayLiteral("DELETE"));
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        const auto cleanup = qScopeGuard([reply]() { reply->deleteLater(); });
+        setSending(false);
+
+        if (reply->error() != QNetworkReply::NoError
+            || reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() >= 400) {
+            handleNetworkFailure(reply, QStringLiteral("清空会话窗口失败"));
+            return;
+        }
+
+        const auto document = QJsonDocument::fromJson(reply->readAll());
+        if (!document.isObject()) {
+            setStatusMessage(QStringLiteral("清空成功，但返回内容无法解析。"));
+            return;
+        }
+
+        const auto object = document.object();
+        applyConversationPayload(object.value(QStringLiteral("conversation")).toObject());
+        removeMessages(jsonInt64List(object.value(QStringLiteral("message_ids")).toArray()));
+        if (m_workspaceActive) {
+            markMessagesRead();
+        } else {
+            recomputeUnreadCount();
+        }
+        setStatusMessage(QStringLiteral("已清空自己发送的消息。"));
+        emit messagesChanged();
+        emit stateChanged();
+    });
+}
+
 void FeedbackService::openRealtime()
 {
     if (!hasClientAuth()) {
@@ -459,7 +568,7 @@ void FeedbackService::handleRealtimeDisconnected()
     const auto wasConnected = m_socketConnected;
     m_socketConnected = false;
     emit stateChanged();
-    if (hasProfile()) {
+    if (hasClientAuth()) {
         if (wasConnected) {
             setStatusMessage(QStringLiteral("反馈实时通道已断开，正在尝试重连..."));
         }
@@ -475,9 +584,17 @@ void FeedbackService::handleRealtimeTextMessage(const QString &payload)
     }
 
     const auto object = document.object();
+    const auto type = object.value(QStringLiteral("type")).toString();
+    if (type == QStringLiteral("conversation.deleted")) {
+        if (jsonString(object, QStringLiteral("conversation_id")) == m_conversation.conversationId) {
+            resetConversationState(QStringLiteral("当前反馈会话已被删除，正在重新建立会话..."), true);
+        }
+        return;
+    }
+
     applyConversationPayload(object.value(QStringLiteral("conversation")).toObject());
 
-    if (object.value(QStringLiteral("type")).toString() == QStringLiteral("message.created")) {
+    if (type == QStringLiteral("message.created")) {
         const auto message = parseMessage(object.value(QStringLiteral("message")).toObject());
         if (message.id > 0) {
             appendOrReplaceMessage(message);
@@ -488,6 +605,22 @@ void FeedbackService::handleRealtimeTextMessage(const QString &payload)
             }
             emit messagesChanged();
         }
+    } else if (type == QStringLiteral("message.deleted")) {
+        removeMessages({jsonInt64(object, QStringLiteral("message_id"))});
+        if (m_workspaceActive) {
+            markMessagesRead();
+        } else {
+            recomputeUnreadCount();
+        }
+        emit messagesChanged();
+    } else if (type == QStringLiteral("messages.cleared")) {
+        removeMessages(jsonInt64List(object.value(QStringLiteral("message_ids")).toArray()));
+        if (m_workspaceActive) {
+            markMessagesRead();
+        } else {
+            recomputeUnreadCount();
+        }
+        emit messagesChanged();
     }
     emit stateChanged();
 }
@@ -718,6 +851,11 @@ void FeedbackService::scheduleReconnect()
 
 void FeedbackService::handleNetworkFailure(QNetworkReply *reply, const QString &fallbackMessage)
 {
+    const auto statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (hasProfile() && hasClientAuth() && (statusCode == 401 || statusCode == 404)) {
+        resetConversationState(QStringLiteral("当前反馈会话已失效，正在重新建立会话..."), true);
+        return;
+    }
     setStatusMessage(replyErrorMessage(reply, fallbackMessage));
     scheduleReconnect();
 }
@@ -754,6 +892,45 @@ void FeedbackService::appendOrReplaceMessage(const FeedbackMessage &message)
     std::sort(m_messages.begin(), m_messages.end(), [](const FeedbackMessage &left, const FeedbackMessage &right) {
         return left.id < right.id;
     });
+}
+
+void FeedbackService::removeMessages(const QList<qint64> &messageIds)
+{
+    if (messageIds.isEmpty()) {
+        return;
+    }
+
+    QSet<qint64> deletedIds(messageIds.begin(), messageIds.end());
+    QVector<FeedbackMessage> nextMessages;
+    nextMessages.reserve(m_messages.size());
+    for (const auto &message : m_messages) {
+        if (!deletedIds.contains(message.id)) {
+            nextMessages.append(message);
+        }
+    }
+    m_messages = nextMessages;
+}
+
+void FeedbackService::resetConversationState(const QString &statusMessage, bool recreateSession)
+{
+    disconnectRealtime();
+    m_socketConnected = false;
+    m_conversation = FeedbackConversation{};
+    m_messages.clear();
+    m_session.conversationId.clear();
+    m_session.clientId.clear();
+    m_session.clientToken.clear();
+    m_session.lastReadMessageId = 0;
+    m_restoreAttempted = false;
+    persistStoredSession();
+    setUnreadCount(0);
+    setStatusMessage(statusMessage);
+    emit messagesChanged();
+    emit stateChanged();
+
+    if (recreateSession && hasProfile()) {
+        QTimer::singleShot(0, this, &FeedbackService::activate);
+    }
 }
 
 FeedbackAttachment FeedbackService::parseAttachment(const QJsonObject &object) const
