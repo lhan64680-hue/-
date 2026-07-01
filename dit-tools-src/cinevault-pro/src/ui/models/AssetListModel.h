@@ -22,6 +22,8 @@ public:
         ModifiedAtRole,
         ReadableRole,
         ThumbnailPathRole,
+        ThumbnailStatusRole,
+        ThumbnailLoadingRole,
         DurationLabelRole,
         BitRateLabelRole,
         TechnicalSummaryRole,

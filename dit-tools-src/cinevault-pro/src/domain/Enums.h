@@ -41,7 +41,8 @@ enum class WorkspaceId : qint32 {
     MaterialCenter,
     Qc,
     Report,
-    Jobs
+    Jobs,
+    Feedback
 };
 
 enum class SelectionKind : qint32 {
@@ -66,9 +67,17 @@ enum class MediaType : qint32 {
     Image
 };
 
+enum class ThumbnailStatus : qint32 {
+    Pending = 0,
+    Success = 1,
+    Running = 2,
+    Failed = 4
+};
+
 enum class AnalysisMode : qint32 {
-    EveryNFrames = 0,
-    EveryFrame
+    Every10Frames = 0,
+    EveryFrame = 1,
+    CustomInterval = 2
 };
 
 enum class VideoAnalysisStatus : qint32 {

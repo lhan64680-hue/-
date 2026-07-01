@@ -28,6 +28,10 @@ if [[ -d installer ]]; then
   cp -a installer "$target/"
 fi
 
+if [[ -d services ]]; then
+  cp -a services "$target/"
+fi
+
 if [[ -f .gitignore ]]; then
   cp .gitignore "$target/"
 fi

@@ -1,5 +1,6 @@
 #include "ui/viewmodels/ShellViewModel.h"
 
+#include "application/FeedbackService.h"
 #include "application/ImportService.h"
 #include "application/ProjectService.h"
 
@@ -18,27 +19,32 @@ void showWarning(const QString &title, const QString &message)
     QMessageBox::warning(dialogParent(), title, message);
 }
 
-QVariantMap workspaceTab(const QString &label, WorkspaceId workspace, int buttonWidth, bool enabled)
+QVariantMap workspaceTab(const QString &label, WorkspaceId workspace, int buttonWidth, bool enabled, int badgeCount = 0)
 {
     return QVariantMap{
         {QStringLiteral("label"), label},
         {QStringLiteral("value"), static_cast<int>(workspace)},
         {QStringLiteral("buttonWidth"), buttonWidth},
-        {QStringLiteral("enabled"), enabled}
+        {QStringLiteral("enabled"), enabled},
+        {QStringLiteral("badgeCount"), badgeCount}
     };
 }
 }
 
-ShellViewModel::ShellViewModel(ProjectService *projectService, ImportService *importService, QObject *parent)
+ShellViewModel::ShellViewModel(ProjectService *projectService, ImportService *importService, FeedbackService *feedbackService, QObject *parent)
     : QObject(parent)
     , m_projectService(projectService)
     , m_importService(importService)
+    , m_feedbackService(feedbackService)
 {
     connect(m_projectService, &ProjectService::projectChanged, this, &ShellViewModel::stateChanged);
     connect(m_importService, &ImportService::importStateChanged, this, [this]() {
         m_lastMessage = m_importService->lastMessage();
         emit stateChanged();
     });
+    if (m_feedbackService) {
+        connect(m_feedbackService, &FeedbackService::unreadCountChanged, this, &ShellViewModel::stateChanged);
+    }
 }
 
 QString ShellViewModel::projectName() const
@@ -91,7 +97,8 @@ QVariantList ShellViewModel::workspaceTabs() const
         workspaceTab(QStringLiteral("素材库"), WorkspaceId::Library, 70, projectReady),
         workspaceTab(QStringLiteral("素材管理中心"), WorkspaceId::MaterialCenter, 108, projectReady),
         workspaceTab(QStringLiteral("报表"), WorkspaceId::Report, 56, projectReady),
-        workspaceTab(QStringLiteral("任务"), WorkspaceId::Jobs, 56, projectReady)
+        workspaceTab(QStringLiteral("任务"), WorkspaceId::Jobs, 56, projectReady),
+        workspaceTab(QStringLiteral("使用反馈"), WorkspaceId::Feedback, 92, true, m_feedbackService ? m_feedbackService->unreadCount() : 0)
     };
 }
 
@@ -125,11 +132,16 @@ int ShellViewModel::jobsWorkspaceId() const
     return static_cast<int>(WorkspaceId::Jobs);
 }
 
+int ShellViewModel::feedbackWorkspaceId() const
+{
+    return static_cast<int>(WorkspaceId::Feedback);
+}
+
 void ShellViewModel::resetProjectUiState()
 {
     if (!m_projectService->hasOpenProject()) {
         m_projectEntered = false;
-        if (m_currentWorkspace != WorkspaceId::ProjectLibrary) {
+        if (m_currentWorkspace != WorkspaceId::ProjectLibrary && m_currentWorkspace != WorkspaceId::Feedback) {
             m_currentWorkspace = WorkspaceId::ProjectLibrary;
             emit currentWorkspaceChanged();
         }
@@ -176,7 +188,9 @@ void ShellViewModel::setCurrentWorkspace(int workspace)
     const auto normalizedValue = value == WorkspaceId::Qc
         ? WorkspaceId::Library
         : value;
-    if (normalizedValue != WorkspaceId::ProjectLibrary && !projectEntered()) {
+    if (normalizedValue != WorkspaceId::ProjectLibrary
+        && normalizedValue != WorkspaceId::Feedback
+        && !projectEntered()) {
         m_lastMessage = QStringLiteral("请先在项目库点击项目卡片进入项目。");
         if (m_currentWorkspace != WorkspaceId::ProjectLibrary) {
             m_currentWorkspace = WorkspaceId::ProjectLibrary;

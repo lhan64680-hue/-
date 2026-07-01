@@ -28,7 +28,7 @@ struct AnalysisConfig {
     QString baseUrl;
     QString apiKey;
     QString model;
-    AnalysisMode mode = AnalysisMode::EveryNFrames;
+    AnalysisMode mode = AnalysisMode::Every10Frames;
     int frameInterval = 10;
     int contactSheetFrameCount = 24;
     int timeoutSec = 60;
@@ -194,6 +194,10 @@ bool persistAnalysisTask(QSqlDatabase &db, const VideoAnalysisTask &task, QStrin
         "summary_retry_count = excluded.summary_retry_count, "
         "last_error_message = excluded.last_error_message, "
         "last_updated_at = excluded.last_updated_at"));
+    const auto normalizedLastErrorMessage = task.lastErrorMessage.isNull()
+        ? QStringLiteral("")
+        : task.lastErrorMessage;
+    const auto lastUpdatedAt = task.lastUpdatedAt.isEmpty() ? nowIso() : task.lastUpdatedAt;
     query.addBindValue(task.videoKey);
     query.addBindValue(static_cast<int>(task.stage));
     query.addBindValue(task.totalFrames);
@@ -201,8 +205,8 @@ bool persistAnalysisTask(QSqlDatabase &db, const VideoAnalysisTask &task, QStrin
     query.addBindValue(task.successfulFrames);
     query.addBindValue(task.skippedFrames);
     query.addBindValue(task.summaryRetryCount);
-    query.addBindValue(task.lastErrorMessage);
-    query.addBindValue(task.lastUpdatedAt.isEmpty() ? nowIso() : task.lastUpdatedAt);
+    query.addBindValue(normalizedLastErrorMessage);
+    query.addBindValue(lastUpdatedAt);
     return execQuery(query, errorMessage);
 }
 
@@ -568,6 +572,106 @@ VideoAnalysisService::VideoAnalysisService(GlobalDatabaseManager *globalDatabase
 {
 }
 
+bool VideoAnalysisService::hasBatchSummary() const
+{
+    return !m_batchStates.isEmpty();
+}
+
+int VideoAnalysisService::batchTotalCount() const
+{
+    return m_batchStates.size();
+}
+
+int VideoAnalysisService::batchFinishedCount() const
+{
+    int finished = 0;
+    for (auto it = m_batchStates.cbegin(); it != m_batchStates.cend(); ++it) {
+        if (it.value() == BatchItemState::Completed || it.value() == BatchItemState::Failed) {
+            ++finished;
+        }
+    }
+    return finished;
+}
+
+int VideoAnalysisService::batchFailedCount() const
+{
+    int failed = 0;
+    for (auto it = m_batchStates.cbegin(); it != m_batchStates.cend(); ++it) {
+        if (it.value() == BatchItemState::Failed) {
+            ++failed;
+        }
+    }
+    return failed;
+}
+
+int VideoAnalysisService::batchSuccessfulCount() const
+{
+    return qMax(0, batchFinishedCount() - batchFailedCount());
+}
+
+int VideoAnalysisService::batchQueuedCount() const
+{
+    int queued = 0;
+    for (auto it = m_batchStates.cbegin(); it != m_batchStates.cend(); ++it) {
+        if (it.value() == BatchItemState::Queued) {
+            ++queued;
+        }
+    }
+    return queued;
+}
+
+qint64 VideoAnalysisService::batchProgressPercent() const
+{
+    const auto total = batchTotalCount();
+    if (total <= 0) {
+        return 0;
+    }
+    const auto currentProgress = m_currentVideoKey.trimmed().isEmpty()
+        ? 0
+        : qBound<qint64>(0LL, m_batchCurrentProgress, 100LL);
+    return qBound<qint64>(0LL,
+                          ((static_cast<qint64>(batchFinishedCount()) * 100LL) + currentProgress) / static_cast<qint64>(total),
+                          100LL);
+}
+
+QString VideoAnalysisService::batchCurrentLabel() const
+{
+    const auto key = m_currentVideoKey.trimmed();
+    if (key.isEmpty()) {
+        return QString();
+    }
+    return m_batchLabels.value(key, key);
+}
+
+QString VideoAnalysisService::batchStatusText() const
+{
+    if (!hasBatchSummary()) {
+        return QStringLiteral("暂无视频解析批次。");
+    }
+
+    const auto total = batchTotalCount();
+    const auto finished = batchFinishedCount();
+    const auto failed = batchFailedCount();
+    const auto queued = batchQueuedCount();
+    const auto currentLabel = batchCurrentLabel();
+
+    if (!currentLabel.isEmpty()) {
+        return QStringLiteral("当前解析：%1 · 已处理 %2/%3 · 失败 %4 · 排队 %5")
+            .arg(currentLabel)
+            .arg(finished)
+            .arg(total)
+            .arg(failed)
+            .arg(queued);
+    }
+
+    return failed > 0
+        ? QStringLiteral("本批次完成：已处理 %1/%2 · 失败 %3")
+              .arg(finished)
+              .arg(total)
+              .arg(failed)
+        : QStringLiteral("本批次完成：已处理 %1/%2").arg(finished).arg(total);
+}
+
 bool VideoAnalysisService::validateReadyForEnqueue(const QString &videoKey, QString *errorMessage) const
 {
     const auto normalizedKey = videoKey.trimmed();
@@ -629,6 +733,9 @@ bool VideoAnalysisService::enqueueJob(const AnalysisJob &job, QString *errorMess
 
     AnalysisJob normalizedJob = job;
     normalizedJob.videoKey = normalizedKey;
+    resetBatchSummaryIfIdle();
+    ensureBatchItem(normalizedKey);
+    setBatchItemState(normalizedKey, BatchItemState::Queued);
     m_analysisQueue.enqueue(normalizedJob);
     m_queuedVideoKeys.insert(normalizedKey);
     const auto detail = normalizedJob.mode == AnalysisRunMode::SingleFrame
@@ -636,6 +743,7 @@ bool VideoAnalysisService::enqueueJob(const AnalysisJob &job, QString *errorMess
         : QStringLiteral("等待解析队列");
     reportAnalysisProgress(normalizedKey, 0, detail, JobState::Pending);
     emit analysisQueueChanged(m_currentVideoKey, m_analysisQueue.size());
+    notifyBatchChanged();
     startNextAnalysis();
     return true;
 }
@@ -740,7 +848,14 @@ void VideoAnalysisService::startNextAnalysis()
     m_currentJob = job;
     m_currentVideoKey = job.videoKey;
     m_analysisRunning = true;
+    ensureBatchItem(job.videoKey);
+    setBatchItemState(job.videoKey, BatchItemState::Running);
+    m_batchCurrentProgress = 0;
+    m_batchCurrentDetail = job.mode == AnalysisRunMode::SingleFrame
+        ? QStringLiteral("准备重解析失败视频帧")
+        : QStringLiteral("准备解析视频素材内容");
     emit analysisQueueChanged(m_currentVideoKey, m_analysisQueue.size());
+    notifyBatchChanged();
 
     const auto config = loadConfig(m_settings);
     if (config.baseUrl.isEmpty() || config.apiKey.isEmpty() || config.model.isEmpty()) {
@@ -1189,7 +1304,10 @@ void VideoAnalysisService::finishCurrentAnalysis(const QString &videoKey)
     m_currentJob = {};
     m_currentVideoKey.clear();
     m_analysisRunning = false;
+    m_batchCurrentProgress = 0;
+    m_batchCurrentDetail.clear();
     emit analysisQueueChanged(m_currentVideoKey, m_analysisQueue.size());
+    notifyBatchChanged();
     startNextAnalysis();
 }
 
@@ -1240,6 +1358,35 @@ void VideoAnalysisService::reportAnalysisProgress(const QString &videoKey,
                                                   const QString &errorMessage)
 {
     const auto normalizedProgress = qBound<qint64>(0LL, progress, 100LL);
+    ensureBatchItem(videoKey);
+    switch (state) {
+    case JobState::Pending:
+        setBatchItemState(videoKey, BatchItemState::Queued);
+        break;
+    case JobState::Running:
+        setBatchItemState(videoKey, BatchItemState::Running);
+        m_batchCurrentProgress = normalizedProgress;
+        m_batchCurrentDetail = detail;
+        break;
+    case JobState::Completed:
+        setBatchItemState(videoKey, BatchItemState::Completed);
+        if (m_currentVideoKey == videoKey) {
+            m_batchCurrentProgress = 100;
+            m_batchCurrentDetail = detail;
+        }
+        break;
+    case JobState::Failed:
+        setBatchItemState(videoKey, BatchItemState::Failed);
+        if (m_currentVideoKey == videoKey) {
+            m_batchCurrentProgress = 100;
+            m_batchCurrentDetail = errorMessage.trimmed().isEmpty() ? detail : errorMessage;
+        }
+        break;
+    case JobState::Cancelled:
+        break;
+    }
+    notifyBatchChanged();
+
     if (QThread::currentThread() == thread()) {
         emit analysisProgressChanged(videoKey, normalizedProgress, detail, static_cast<int>(state), errorMessage);
         return;
@@ -1248,6 +1395,72 @@ void VideoAnalysisService::reportAnalysisProgress(const QString &videoKey,
     QMetaObject::invokeMethod(this, [this, videoKey, normalizedProgress, detail, state, errorMessage]() {
         emit analysisProgressChanged(videoKey, normalizedProgress, detail, static_cast<int>(state), errorMessage);
     }, Qt::QueuedConnection);
+}
+
+void VideoAnalysisService::resetBatchSummaryIfIdle()
+{
+    if (m_analysisRunning || !m_currentVideoKey.trimmed().isEmpty() || !m_analysisQueue.isEmpty()) {
+        return;
+    }
+    if (m_batchStates.isEmpty()) {
+        return;
+    }
+    m_batchStates.clear();
+    m_batchLabels.clear();
+    m_batchCurrentProgress = 0;
+    m_batchCurrentDetail.clear();
+}
+
+void VideoAnalysisService::ensureBatchItem(const QString &videoKey)
+{
+    const auto normalizedKey = videoKey.trimmed();
+    if (normalizedKey.isEmpty()) {
+        return;
+    }
+    if (!m_batchStates.contains(normalizedKey)) {
+        m_batchStates.insert(normalizedKey, BatchItemState::Queued);
+    }
+    if (!m_batchLabels.contains(normalizedKey)) {
+        m_batchLabels.insert(normalizedKey, lookupVideoLabel(normalizedKey));
+    }
+}
+
+void VideoAnalysisService::setBatchItemState(const QString &videoKey, BatchItemState state)
+{
+    const auto normalizedKey = videoKey.trimmed();
+    if (normalizedKey.isEmpty()) {
+        return;
+    }
+    m_batchStates.insert(normalizedKey, state);
+}
+
+void VideoAnalysisService::notifyBatchChanged()
+{
+    if (QThread::currentThread() == thread()) {
+        emit analysisBatchChanged();
+        return;
+    }
+
+    QMetaObject::invokeMethod(this, [this]() {
+        emit analysisBatchChanged();
+    }, Qt::QueuedConnection);
+}
+
+QString VideoAnalysisService::lookupVideoLabel(const QString &videoKey) const
+{
+    if (!m_globalDatabaseManager || !m_globalDatabaseManager->isOpen()) {
+        return videoKey;
+    }
+
+    QSqlQuery query(m_globalDatabaseManager->database());
+    query.prepare(QStringLiteral("SELECT file_name FROM global_video_asset WHERE video_key = ? LIMIT 1"));
+    query.addBindValue(videoKey);
+    if (!query.exec() || !query.next()) {
+        return videoKey;
+    }
+
+    const auto label = query.value(0).toString().trimmed();
+    return label.isEmpty() ? videoKey : label;
 }
 
 void VideoAnalysisService::updateJob(qint64 jobId, qint64 progress, const QString &detail)

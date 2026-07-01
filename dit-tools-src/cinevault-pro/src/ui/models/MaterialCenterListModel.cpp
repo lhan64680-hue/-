@@ -32,6 +32,8 @@ QVariant MaterialCenterListModel::data(const QModelIndex &index, int role) const
     case ConfirmationStatusLabelRole: return Formatters::confirmationStatusLabel(item.confirmationStatus);
     case IsConfirmedRole: return item.confirmationStatus == ConfirmationStatus::Confirmed;
     case ThumbnailPathRole: return item.thumbnailPath;
+    case ThumbnailStatusRole: return static_cast<int>(item.thumbnailStatus);
+    case ThumbnailLoadingRole: return item.thumbnailStatus == ThumbnailStatus::Running && item.thumbnailPath.isEmpty();
     case UpdatedAtRole: return item.updatedAt;
     case DurationMsRole: return item.durationMs;
     case ErrorMessageRole: return item.errorMessage;
@@ -54,6 +56,8 @@ QHash<int, QByteArray> MaterialCenterListModel::roleNames() const
         {ConfirmationStatusLabelRole, "confirmationStatusLabel"},
         {IsConfirmedRole, "isConfirmed"},
         {ThumbnailPathRole, "thumbnailPath"},
+        {ThumbnailStatusRole, "thumbnailStatus"},
+        {ThumbnailLoadingRole, "thumbnailLoading"},
         {UpdatedAtRole, "updatedAt"},
         {DurationMsRole, "durationMs"},
         {ErrorMessageRole, "errorMessage"}

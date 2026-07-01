@@ -36,6 +36,7 @@ Rectangle {
     property bool fullscreenFrameRequested: false
     property int pendingFullscreenPosition: 0
     property bool pendingFullscreenPlay: false
+    property bool pendingFullscreenOpen: false
 
     function formatTime(milliseconds) {
         if (!milliseconds || milliseconds < 0) {
@@ -73,6 +74,8 @@ Rectangle {
         previewSeekPauseTimer.stop()
         pendingFullscreenPosition = 0
         pendingFullscreenPlay = false
+        pendingFullscreenOpen = false
+        fullscreenPrimePauseTimer.stop()
         if (fullScreenWindow.visibility !== Window.Hidden) {
             closeFullscreen(false)
         }
@@ -183,6 +186,7 @@ Rectangle {
         }
         pendingFullscreenPosition = mediaPlayer.position
         pendingFullscreenPlay = previewPlaybackRequested || mediaPlayer.playbackState === MediaPlayer.PlayingState
+        pendingFullscreenOpen = pendingFullscreenPosition <= 0 && !pendingFullscreenPlay
         fullscreenFrameRequested = pendingFullscreenPosition > 0 || pendingFullscreenPlay
         mediaPlayer.pause()
         previewPlaybackRequested = false
@@ -190,6 +194,11 @@ Rectangle {
         fullScreenPlayer.stop()
         fullScreenPlayer.source = ""
         fullScreenPlayer.source = sourceUrl
+        if (pendingFullscreenOpen) {
+            fullscreenPrimePauseTimer.stop()
+            fullScreenPlayer.play()
+            return
+        }
         fullScreenWindow.visibility = Window.FullScreen
         fullScreenRoot.forceActiveFocus()
         Qt.callLater(primeFullscreenPlayback)
@@ -219,6 +228,8 @@ Rectangle {
         fullscreenFrameRequested = false
         pendingFullscreenPosition = 0
         pendingFullscreenPlay = false
+        pendingFullscreenOpen = false
+        fullscreenPrimePauseTimer.stop()
     }
 
     radius: 16
@@ -451,23 +462,51 @@ Rectangle {
 
         MediaPlayer {
             id: fullScreenPlayer
-            audioOutput: AudioOutput {}
+            audioOutput: AudioOutput {
+                id: fullScreenAudioOutput
+                muted: videoPreview.pendingFullscreenOpen || fullScreenWindow.visibility !== Window.FullScreen
+            }
             videoOutput: fullScreenOutput
 
             onMediaStatusChanged: {
-                if (mediaStatus === MediaPlayer.LoadedMedia
+                if (videoPreview.pendingFullscreenOpen
+                        && (mediaStatus === MediaPlayer.LoadedMedia
+                            || mediaStatus === MediaPlayer.BufferedMedia
+                            || mediaStatus === MediaPlayer.BufferingMedia)) {
+                    fullscreenPrimePauseTimer.restart()
+                } else if (mediaStatus === MediaPlayer.LoadedMedia
                         || mediaStatus === MediaPlayer.BufferedMedia
                         || mediaStatus === MediaPlayer.BufferingMedia) {
                     videoPreview.primeFullscreenPlayback()
                 } else if (mediaStatus === MediaPlayer.InvalidMedia) {
+                    videoPreview.pendingFullscreenOpen = false
+                    fullscreenPrimePauseTimer.stop()
                     videoPreview.fullscreenFrameRequested = false
                 }
             }
 
             onPlaybackStateChanged: {
-                if (playbackState === MediaPlayer.PlayingState) {
+                if (videoPreview.pendingFullscreenOpen && playbackState === MediaPlayer.PlayingState) {
+                    fullscreenPrimePauseTimer.restart()
+                } else if (playbackState === MediaPlayer.PlayingState) {
                     videoPreview.fullscreenFrameRequested = true
                 }
+            }
+        }
+
+        Timer {
+            id: fullscreenPrimePauseTimer
+            interval: 120
+            repeat: false
+            onTriggered: {
+                if (!videoPreview.pendingFullscreenOpen) {
+                    return
+                }
+                videoPreview.pendingFullscreenOpen = false
+                videoPreview.fullscreenFrameRequested = true
+                fullScreenPlayer.pause()
+                fullScreenWindow.visibility = Window.FullScreen
+                fullScreenRoot.forceActiveFocus()
             }
         }
 

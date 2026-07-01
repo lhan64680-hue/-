@@ -313,6 +313,7 @@ Rectangle {
                     meta: model.technicalSummary.length > 0 ? model.technicalSummary + " · " + model.sizeLabel : model.sizeLabel + " · " + model.modifiedAt
                     tag: model.typeLabel
                     thumbnailPath: model.thumbnailPath
+                    thumbnailLoading: model.thumbnailLoading
                     favorite: model.favorite
                     selected: viewModel.selectedAssetId === assetId
                     previewHeight: libraryRoot.gridPreviewHeight

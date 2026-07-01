@@ -334,8 +334,8 @@ bool GlobalDatabaseManager::initializeSchema(QSqlDatabase &db, QString *errorMes
     }
 
     auto version = currentSchemaVersion(db);
-    if (version < 2) {
-        if (!setSchemaVersion(db, 2, errorMessage)) {
+    if (version < 3) {
+        if (!setSchemaVersion(db, 3, errorMessage)) {
             return false;
         }
     }
@@ -373,6 +373,7 @@ bool GlobalDatabaseManager::createSchema(QSqlDatabase &db, QString *errorMessage
                        "modified_at TEXT NOT NULL DEFAULT '',"
                        "duration_ms INTEGER NOT NULL DEFAULT 0,"
                        "thumbnail_path TEXT,"
+                       "thumbnail_status INTEGER NOT NULL DEFAULT 0,"
                        "analysis_status INTEGER NOT NULL DEFAULT 0,"
                        "confirmation_status INTEGER NOT NULL DEFAULT 0,"
                        "error_message TEXT,"
@@ -468,6 +469,15 @@ bool GlobalDatabaseManager::ensureSchemaCompatibility(QSqlDatabase &db, QString 
                        ");")
     };
     if (!executeBatch(db, statements, errorMessage)) {
+        return false;
+    }
+
+    if (!ensureColumns(db,
+                       QStringLiteral("global_video_asset"),
+                       {
+                           {QStringLiteral("thumbnail_status"), QStringLiteral("thumbnail_status INTEGER NOT NULL DEFAULT 0")}
+                       },
+                       errorMessage)) {
         return false;
     }
 

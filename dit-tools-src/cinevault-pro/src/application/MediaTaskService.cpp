@@ -234,6 +234,13 @@ bool MediaTaskService::runThumbnailJob(QSqlDatabase &db,
         return true;
     }
 
+    QString stateError;
+    if (!markThumbnailsRunning(db, assets, &stateError)) {
+        failJob(jobId, QStringLiteral("缩略图状态初始化失败：%1").arg(stateError));
+        return false;
+    }
+    notifyCatalogChanged();
+
     int processed = 0;
     int failed = 0;
     for (const auto &asset : assets) {
@@ -257,6 +264,9 @@ bool MediaTaskService::runThumbnailJob(QSqlDatabase &db,
         updateJob(jobId,
                   progressFor(processed, assets.size()),
                   QStringLiteral("已生成 %1/%2 张缩略图，失败 %3 张").arg(processed).arg(assets.size()).arg(failed));
+        if ((processed % 6) == 0 || processed == assets.size()) {
+            notifyCatalogChanged();
+        }
     }
 
     if (failed == assets.size()) {
@@ -267,6 +277,49 @@ bool MediaTaskService::runThumbnailJob(QSqlDatabase &db,
     completeJob(jobId, failed > 0
         ? QStringLiteral("缩略图生成完成，成功 %1 张，失败 %2 张").arg(assets.size() - failed).arg(failed)
         : QStringLiteral("缩略图生成完成，共 %1 张").arg(assets.size()));
+    return true;
+}
+
+bool MediaTaskService::markThumbnailsRunning(QSqlDatabase &db, const QVector<AssetFile> &assets, QString *errorMessage) const
+{
+    if (assets.isEmpty()) {
+        return true;
+    }
+
+    if (!db.transaction()) {
+        if (errorMessage) {
+            *errorMessage = db.lastError().text();
+        }
+        return false;
+    }
+
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "INSERT OR REPLACE INTO thumbnail (asset_id, status, image_path, updated_at, error_message) "
+        "VALUES (?, ?, '', ?, '')"));
+    const auto now = QDateTime::currentDateTime().toString(Qt::ISODate);
+
+    for (const auto &asset : assets) {
+        query.addBindValue(asset.id);
+        query.addBindValue(static_cast<int>(ThumbnailStatus::Running));
+        query.addBindValue(now);
+        if (!query.exec()) {
+            db.rollback();
+            if (errorMessage) {
+                *errorMessage = query.lastError().text();
+            }
+            return false;
+        }
+        query.finish();
+    }
+
+    if (!db.commit()) {
+        db.rollback();
+        if (errorMessage) {
+            *errorMessage = db.lastError().text();
+        }
+        return false;
+    }
     return true;
 }
 
@@ -355,7 +408,7 @@ bool MediaTaskService::persistThumbnail(QSqlDatabase &db, const ThumbnailResult 
         "INSERT OR REPLACE INTO thumbnail (asset_id, status, image_path, updated_at, error_message) "
         "VALUES (?, ?, ?, ?, ?)"));
     query.addBindValue(result.assetId);
-    query.addBindValue(static_cast<int>(result.success ? ProbeStatus::Success : ProbeStatus::Failed));
+    query.addBindValue(static_cast<int>(result.success ? ThumbnailStatus::Success : ThumbnailStatus::Failed));
     query.addBindValue(result.success ? result.outputPath : QString());
     query.addBindValue(QDateTime::currentDateTime().toString(Qt::ISODate));
     query.addBindValue(result.errorMessage);

@@ -21,6 +21,7 @@ class MinimalShellViewModel : public QObject {
     Q_PROPERTY(int materialCenterWorkspaceId READ materialCenterWorkspaceId CONSTANT)
     Q_PROPERTY(int reportWorkspaceId READ reportWorkspaceId CONSTANT)
     Q_PROPERTY(int jobsWorkspaceId READ jobsWorkspaceId CONSTANT)
+    Q_PROPERTY(int feedbackWorkspaceId READ feedbackWorkspaceId CONSTANT)
 
 public:
     explicit MinimalShellViewModel(QObject *parent = nullptr);
@@ -39,6 +40,7 @@ public:
     int materialCenterWorkspaceId() const;
     int reportWorkspaceId() const;
     int jobsWorkspaceId() const;
+    int feedbackWorkspaceId() const;
 
     void setGlobalSearchText(const QString &text);
     void setCurrentWorkspace(int workspace);

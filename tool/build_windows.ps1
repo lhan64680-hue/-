@@ -100,6 +100,27 @@ $deployedExe = Join-Path $stagingDir "CineVault.exe"
 $deployMode = if ($Configuration -ieq "Debug") { "--debug" } else { "--release" }
 Invoke-VcVarsCommand "`"$($context.WindeployQt)`" $deployMode --qmldir `"$projectRoot\src\ui\qml`" `"$deployedExe`""
 
+if ($context.HasFfmpegCli) {
+    $ffmpegTargetRoot = Join-Path $stagingDir "ffmpeg"
+    $ffmpegTargetBinDir = Join-Path $ffmpegTargetRoot "bin"
+    $ffmpegSourceBinDir = Join-Path $context.FfmpegCliRoot "bin"
+
+    New-Item -ItemType Directory -Force -Path $ffmpegTargetBinDir | Out-Null
+
+    foreach ($exeName in @("ffmpeg.exe", "ffprobe.exe")) {
+        Copy-Item (Join-Path $ffmpegSourceBinDir $exeName) -Destination (Join-Path $ffmpegTargetBinDir $exeName) -Force
+    }
+
+    foreach ($supportFile in @("LICENSE", "README.txt")) {
+        $sourcePath = Join-Path $context.FfmpegCliRoot $supportFile
+        if (Test-Path $sourcePath) {
+            Copy-Item $sourcePath -Destination (Join-Path $ffmpegTargetRoot $supportFile) -Force
+        }
+    }
+} else {
+    Write-Warning "FFmpeg CLI runtime root was not found. Installer will not include ffmpeg.exe or ffprobe.exe."
+}
+
 $installerScript = Join-Path $context.RepoRoot "installer\windows\cinevault.iss"
 if (-not (Test-Path $installerScript)) {
     throw "Installer script was not found: $installerScript"

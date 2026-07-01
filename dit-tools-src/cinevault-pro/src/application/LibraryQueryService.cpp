@@ -409,12 +409,14 @@ QVector<AssetFile> LibraryQueryService::fetchAssets(const QString &keyword,
         "SELECT af.id, af.source_root_id, af.name, af.extension, af.absolute_path, af.relative_path, af.parent_path, "
         "af.asset_type, af.size_bytes, af.modified_at, af.is_readable, "
         "af.is_favorite, "
-        "CASE WHEN af.asset_type = %1 AND COALESCE(th.image_path, '') = '' THEN af.absolute_path ELSE COALESCE(th.image_path, '') END, "
-        "COALESCE(mm.container, ''), COALESCE(mm.duration_ms, 0), "
+        "CASE WHEN af.asset_type = %1 AND COALESCE(th.image_path, '') = '' THEN af.absolute_path "
+        "WHEN COALESCE(th.status, 0) = 1 THEN COALESCE(th.image_path, '') "
+        "ELSE '' END, "
+        "COALESCE(th.status, 0), COALESCE(mm.container, ''), COALESCE(mm.duration_ms, 0), "
         "COALESCE(mm.bit_rate, 0), COALESCE(mm.probe_status, 0) "
         "FROM asset_file af "
         "LEFT JOIN media_metadata mm ON mm.asset_id = af.id "
-        "LEFT JOIN thumbnail th ON th.asset_id = af.id AND th.status = 1 "
+        "LEFT JOIN thumbnail th ON th.asset_id = af.id "
         "WHERE 1 = 1").arg(static_cast<int>(AssetType::Image));
 
     QVariantList binds;
@@ -463,10 +465,11 @@ QVector<AssetFile> LibraryQueryService::fetchAssets(const QString &keyword,
         row.readable = query.value(10).toInt() == 1;
         row.favorite = query.value(11).toInt() == 1;
         row.thumbnailPath = query.value(12).toString();
-        row.container = query.value(13).toString();
-        row.durationMs = query.value(14).toLongLong();
-        row.bitRate = query.value(15).toLongLong();
-        row.probeStatus = static_cast<ProbeStatus>(query.value(16).toInt());
+        row.thumbnailStatus = static_cast<ThumbnailStatus>(query.value(13).toInt());
+        row.container = query.value(14).toString();
+        row.durationMs = query.value(15).toLongLong();
+        row.bitRate = query.value(16).toLongLong();
+        row.probeStatus = static_cast<ProbeStatus>(query.value(17).toInt());
         row.technicalSummary = makeTechnicalSummary(row);
         rows.append(row);
     }
@@ -528,11 +531,14 @@ InspectorState LibraryQueryService::buildAssetInspector(qint64 assetId) const
     query.prepare(QStringLiteral(
         "SELECT af.name, af.absolute_path, af.relative_path, af.asset_type, af.size_bytes, af.modified_at, af.is_readable, "
         "af.is_favorite, mm.probe_status, mm.container, mm.duration_ms, mm.bit_rate, mm.error_message, "
-        "CASE WHEN af.asset_type = %1 AND COALESCE(th.image_path, '') = '' THEN af.absolute_path ELSE th.image_path END, "
+        "CASE WHEN af.asset_type = %1 AND COALESCE(th.image_path, '') = '' THEN af.absolute_path "
+        "WHEN COALESCE(th.status, 0) = 1 THEN COALESCE(th.image_path, '') "
+        "ELSE '' END, "
+        "COALESCE(th.status, 0), "
         "mm.raw_json "
         "FROM asset_file af "
         "LEFT JOIN media_metadata mm ON mm.asset_id = af.id "
-        "LEFT JOIN thumbnail th ON th.asset_id = af.id AND th.status = 1 "
+        "LEFT JOIN thumbnail th ON th.asset_id = af.id "
         "WHERE af.id = ?").arg(static_cast<int>(AssetType::Image)));
     query.addBindValue(assetId);
     if (!execOrLog(query, QStringLiteral("读取素材检查器"))) {
@@ -572,11 +578,13 @@ InspectorState LibraryQueryService::buildAssetInspector(qint64 assetId) const
         }
         if (!query.value(13).toString().isEmpty()) {
             details.append({QStringLiteral("缩略图"), query.value(13).toString()});
+        } else if (static_cast<ThumbnailStatus>(query.value(14).toInt()) == ThumbnailStatus::Running) {
+            details.append({QStringLiteral("缩略图"), QStringLiteral("缩略图生成中")});
         }
         if (probeStatus != ProbeStatus::Success && !query.value(12).toString().isEmpty()) {
             details.append({QStringLiteral("媒体错误"), query.value(12).toString()});
         }
-        appendFfprobeJsonDetails(details, query.value(14).toString());
+        appendFfprobeJsonDetails(details, query.value(15).toString());
 
         QSqlQuery streamQuery(m_databaseManager->database());
         streamQuery.prepare(QStringLiteral(

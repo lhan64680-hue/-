@@ -16,6 +16,7 @@
 #include "application/ImportService.h"
 #include "application/JobService.h"
 #include "application/LibraryQueryService.h"
+#include "application/FeedbackService.h"
 #include "application/DocumentPreviewService.h"
 #include "application/MaterialBackupService.h"
 #include "application/MaterialCatalogSyncService.h"
@@ -43,6 +44,7 @@
 #include "ui/viewmodels/ProjectLibraryViewModel.h"
 #include "ui/viewmodels/ReportWorkspaceViewModel.h"
 #include "ui/viewmodels/SettingsViewModel.h"
+#include "ui/viewmodels/FeedbackViewModel.h"
 #include "ui/viewmodels/ShellViewModel.h"
 #include "ui/viewmodels/SourceRailViewModel.h"
 #endif
@@ -91,8 +93,9 @@ AppContext::AppContext(QObject *parent)
     , m_materialBackupService(new MaterialBackupService(m_jobEngine, this))
     , m_visionApiClient(new VisionApiClient)
     , m_videoAnalysisService(new VideoAnalysisService(m_globalDatabaseManager, m_jobEngine, &m_settings, m_ffmpegAdapter, m_visionApiClient, this))
+    , m_feedbackService(new FeedbackService(&m_settings, m_projectService, this))
     , m_updateService(new UpdateService(&m_settings, this))
-    , m_shellViewModel(new ShellViewModel(m_projectService, m_importService, this))
+    , m_shellViewModel(new ShellViewModel(m_projectService, m_importService, m_feedbackService, this))
     , m_projectLibraryViewModel(new ProjectLibraryViewModel(m_projectService, this))
     , m_sourceRailViewModel(new SourceRailViewModel(m_libraryQueryService, this))
     , m_importWorkspaceViewModel(new ImportWorkspaceViewModel(m_importService, this))
@@ -100,9 +103,10 @@ AppContext::AppContext(QObject *parent)
     , m_libraryWorkspaceViewModel(new LibraryWorkspaceViewModel(m_libraryQueryService, this))
     , m_materialCenterViewModel(new MaterialCenterViewModel(m_materialCenterQueryService, m_materialCatalogSyncService, m_videoAnalysisService, m_projectService, &m_settings, this))
     , m_inspectorViewModel(new InspectorViewModel(m_libraryQueryService, this))
-    , m_jobTimelineViewModel(new JobTimelineViewModel(m_jobService, this))
+    , m_jobTimelineViewModel(new JobTimelineViewModel(m_jobService, m_videoAnalysisService, this))
     , m_reportWorkspaceViewModel(new ReportWorkspaceViewModel(m_projectService, m_libraryQueryService, m_reportExportService, this))
     , m_settingsViewModel(new SettingsViewModel(&m_settings, m_visionApiClient, m_videoAnalysisService, m_updateService, this))
+    , m_feedbackViewModel(new FeedbackViewModel(m_feedbackService, this))
 {
     QString globalDbError;
     m_globalDatabaseManager->openDatabase(&globalDbError);
@@ -131,6 +135,8 @@ AppContext::AppContext(QObject *parent)
             m_projectLibraryViewModel->setSearchText(text);
         } else if (m_shellViewModel->currentWorkspace() == static_cast<int>(WorkspaceId::MaterialCenter)) {
             m_materialCenterViewModel->setSearchText(text);
+        } else if (m_shellViewModel->currentWorkspace() == static_cast<int>(WorkspaceId::Feedback)) {
+            return;
         } else {
             m_libraryWorkspaceViewModel->setSearchText(text);
         }
@@ -163,10 +169,12 @@ void AppContext::expose(QQmlApplicationEngine &engine)
     context->setContextProperty(QStringLiteral("materialCenterVm"), QVariant());
     context->setContextProperty(QStringLiteral("documentPreviewVm"), QVariant());
     context->setContextProperty(QStringLiteral("settingsVm"), QVariant());
+    context->setContextProperty(QStringLiteral("feedbackVm"), QVariant());
 #else
     context->setContextProperty(QStringLiteral("projectLibraryVm"), m_projectLibraryViewModel);
     context->setContextProperty(QStringLiteral("materialCenterVm"), m_materialCenterViewModel);
     context->setContextProperty(QStringLiteral("documentPreviewVm"), m_documentPreviewService);
     context->setContextProperty(QStringLiteral("settingsVm"), m_settingsViewModel);
+    context->setContextProperty(QStringLiteral("feedbackVm"), m_feedbackViewModel);
 #endif
 }

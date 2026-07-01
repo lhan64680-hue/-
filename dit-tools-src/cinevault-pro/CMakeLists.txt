@@ -39,6 +39,7 @@ if(NOT CINEVAULT_BUILD_MINIMAL_GUI)
     list(APPEND CINEVAULT_QT_COMPONENTS
         Sql
         Concurrent
+        WebSockets
     )
 endif()
 
@@ -186,6 +187,8 @@ else()
     src/application/ImportService.cpp
     src/application/LibraryQueryService.h
     src/application/LibraryQueryService.cpp
+    src/application/FeedbackService.h
+    src/application/FeedbackService.cpp
     src/application/ReportExportService.h
     src/application/ReportExportService.cpp
     src/application/UpdateService.h
@@ -218,8 +221,12 @@ else()
     src/ui/viewmodels/ReportWorkspaceViewModel.cpp
     src/ui/viewmodels/SettingsViewModel.h
     src/ui/viewmodels/SettingsViewModel.cpp
+    src/ui/viewmodels/FeedbackViewModel.h
+    src/ui/viewmodels/FeedbackViewModel.cpp
     src/ui/models/MaterialCenterListModel.h
     src/ui/models/MaterialCenterListModel.cpp
+    src/ui/models/FeedbackMessageListModel.h
+    src/ui/models/FeedbackMessageListModel.cpp
     )
 endif()
 
@@ -275,6 +282,7 @@ qt_add_qml_module(CineVault
         src/ui/qml/workspaces/MaterialCenterWorkspace.qml
         src/ui/qml/workspaces/ReportWorkspace.qml
         src/ui/qml/workspaces/JobsWorkspace.qml
+        src/ui/qml/workspaces/FeedbackWorkspace.qml
 )
 
 target_include_directories(CineVault PRIVATE src)
@@ -314,6 +322,7 @@ if(NOT CINEVAULT_BUILD_MINIMAL_GUI)
     target_link_libraries(CineVault PRIVATE
         Qt6::Sql
         Qt6::Concurrent
+        Qt6::WebSockets
     )
 endif()
 

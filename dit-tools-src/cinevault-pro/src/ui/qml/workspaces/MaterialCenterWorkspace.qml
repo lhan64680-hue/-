@@ -262,10 +262,36 @@ Rectangle {
 
                                 Text {
                                     anchors.centerIn: parent
-                                    visible: thumbnailPath.length === 0
+                                    visible: thumbnailPath.length === 0 && !thumbnailLoading
                                     text: "暂无缩略图"
                                     color: Theme.muted
                                     font.pixelSize: 12
+                                }
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    visible: thumbnailLoading && thumbnailPath.length === 0
+                                    color: Qt.rgba(0.03, 0.04, 0.06, 0.62)
+
+                                    Column {
+                                        anchors.centerIn: parent
+                                        spacing: 8
+
+                                        BusyIndicator {
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            running: parent.parent.visible
+                                            width: 28
+                                            height: 28
+                                        }
+
+                                        Text {
+                                            text: "缩略图生成中"
+                                            color: Theme.text
+                                            font.pixelSize: 12
+                                            font.weight: Font.DemiBold
+                                            horizontalAlignment: Text.AlignHCenter
+                                        }
+                                    }
                                 }
 
                                 MouseArea {
@@ -425,7 +451,9 @@ Rectangle {
                             Text {
                                 anchors.centerIn: parent
                                 visible: !viewModel || !viewModel.hasSelection || viewModel.selectedThumbnailUrl.toString().length === 0
-                                text: viewModel && viewModel.selectedFramesLoading ? "正在加载预览..." : "暂无多宫格拼图"
+                                text: viewModel && viewModel.selectedThumbnailLoading
+                                    ? "缩略图生成中..."
+                                    : (viewModel && viewModel.selectedFramesLoading ? "正在加载预览..." : "暂无多宫格拼图")
                                 color: Theme.muted
                             }
 

@@ -107,9 +107,13 @@ void SettingsViewModel::setAnalysisMode(int value)
     if (!m_settings || analysisMode() == value) {
         return;
     }
-    m_settings->setAnalysisMode(value == static_cast<int>(AnalysisMode::EveryFrame)
-        ? AnalysisMode::EveryFrame
-        : AnalysisMode::EveryNFrames);
+    if (value == static_cast<int>(AnalysisMode::EveryFrame)) {
+        m_settings->setAnalysisMode(AnalysisMode::EveryFrame);
+    } else if (value == static_cast<int>(AnalysisMode::CustomInterval)) {
+        m_settings->setAnalysisMode(AnalysisMode::CustomInterval);
+    } else {
+        m_settings->setAnalysisMode(AnalysisMode::Every10Frames);
+    }
     emit settingsChanged();
 }
 
@@ -287,10 +291,14 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
     m_settings->setVisionBaseUrl(visionBaseUrl);
     m_settings->setVisionApiKey(visionApiKey);
     m_settings->setVisionModel(visionModel);
-    m_settings->setAnalysisMode(analysisMode == static_cast<int>(AnalysisMode::EveryFrame)
-        ? AnalysisMode::EveryFrame
-        : AnalysisMode::EveryNFrames);
-    m_settings->setFrameInterval(frameInterval);
+    AnalysisMode resolvedMode = AnalysisMode::Every10Frames;
+    if (analysisMode == static_cast<int>(AnalysisMode::EveryFrame)) {
+        resolvedMode = AnalysisMode::EveryFrame;
+    } else if (analysisMode == static_cast<int>(AnalysisMode::CustomInterval)) {
+        resolvedMode = AnalysisMode::CustomInterval;
+    }
+    m_settings->setAnalysisMode(resolvedMode);
+    m_settings->setFrameInterval(resolvedMode == AnalysisMode::Every10Frames ? 10 : frameInterval);
     m_settings->setThumbnailFrameIndex(thumbnailFrameIndex);
     m_settings->setContactSheetFrameCount(contactSheetFrameCount);
     m_settings->setAnalysisTimeoutSec(analysisTimeoutSec);

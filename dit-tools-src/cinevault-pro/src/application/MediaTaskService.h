@@ -40,6 +40,7 @@ private:
                          qint64 sourceRootId,
                          qint64 jobId,
                          const QVector<AssetFile> &assets);
+    bool markThumbnailsRunning(QSqlDatabase &db, const QVector<AssetFile> &assets, QString *errorMessage) const;
     bool persistMediaProbe(QSqlDatabase &db, const MediaProbeResult &result, QString *errorMessage) const;
     bool persistThumbnail(QSqlDatabase &db, const ThumbnailResult &result, QString *errorMessage) const;
     void updateJob(qint64 jobId, qint64 progress, const QString &detail);

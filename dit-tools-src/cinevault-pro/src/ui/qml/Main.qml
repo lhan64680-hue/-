@@ -19,14 +19,17 @@ ApplicationWindow {
     property var jobTimelineViewModel: jobTimelineVm
     property var reportViewModel: reportWorkspaceVm
     property var settingsViewModel: settingsVm
+    property var feedbackViewModel: feedbackVm
     readonly property bool hasOpenProject: root.shellViewModel && root.shellViewModel.projectEntered
     readonly property bool isProjectLibraryWorkspace: root.shellViewModel && root.shellViewModel.currentWorkspace === root.shellViewModel.projectLibraryWorkspaceId
+    readonly property bool isFeedbackWorkspace: root.shellViewModel && root.shellViewModel.currentWorkspace === root.shellViewModel.feedbackWorkspaceId
     property bool projectLibraryWorkspaceLoaded: true
     property bool materialBackupWorkspaceLoaded: false
     property bool libraryWorkspaceLoaded: false
     property bool materialCenterWorkspaceLoaded: false
     property bool reportWorkspaceLoaded: false
     property bool jobsWorkspaceLoaded: false
+    property bool feedbackWorkspaceLoaded: false
     property bool sourceRailCollapsed: false
 
     visible: true
@@ -57,6 +60,8 @@ ApplicationWindow {
             root.reportWorkspaceLoaded = true
         } else if (workspace === root.shellViewModel.jobsWorkspaceId) {
             root.jobsWorkspaceLoaded = true
+        } else if (workspace === root.shellViewModel.feedbackWorkspaceId) {
+            root.feedbackWorkspaceLoaded = true
         } else {
             root.libraryWorkspaceLoaded = true
         }
@@ -140,6 +145,7 @@ ApplicationWindow {
                 SourceRail {
                     Layout.preferredWidth: root.shellViewModel.currentWorkspace === root.shellViewModel.materialCenterWorkspaceId
                         || root.shellViewModel.currentWorkspace === root.shellViewModel.materialBackupWorkspaceId
+                        || root.isFeedbackWorkspace
                         || root.isProjectLibraryWorkspace
                         || !root.hasOpenProject
                         ? 0
@@ -147,6 +153,7 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     visible: root.shellViewModel.currentWorkspace !== root.shellViewModel.materialCenterWorkspaceId
                         && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialBackupWorkspaceId
+                        && !root.isFeedbackWorkspace
                         && !root.isProjectLibraryWorkspace
                         && root.hasOpenProject
                     shellVm: root.shellViewModel
@@ -185,6 +192,7 @@ ApplicationWindow {
                             && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialCenterWorkspaceId
                             && root.shellViewModel.currentWorkspace !== root.shellViewModel.reportWorkspaceId
                             && root.shellViewModel.currentWorkspace !== root.shellViewModel.jobsWorkspaceId
+                            && root.shellViewModel.currentWorkspace !== root.shellViewModel.feedbackWorkspaceId
                         asynchronous: true
                         sourceComponent: libraryWorkspaceComponent
                     }
@@ -212,12 +220,21 @@ ApplicationWindow {
                         asynchronous: true
                         sourceComponent: jobsWorkspaceComponent
                     }
+
+                    Loader {
+                        anchors.fill: parent
+                        active: root.feedbackWorkspaceLoaded
+                        visible: root.shellViewModel.currentWorkspace === root.shellViewModel.feedbackWorkspaceId
+                        asynchronous: true
+                        sourceComponent: feedbackWorkspaceComponent
+                    }
                 }
 
                 InspectorPane {
                     Layout.preferredWidth: root.shellViewModel.currentWorkspace === root.shellViewModel.reportWorkspaceId
                         || root.shellViewModel.currentWorkspace === root.shellViewModel.materialCenterWorkspaceId
                         || root.shellViewModel.currentWorkspace === root.shellViewModel.materialBackupWorkspaceId
+                        || root.isFeedbackWorkspace
                         || root.isProjectLibraryWorkspace
                         || !root.hasOpenProject
                         ? 0
@@ -226,6 +243,7 @@ ApplicationWindow {
                     visible: root.shellViewModel.currentWorkspace !== root.shellViewModel.reportWorkspaceId
                         && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialCenterWorkspaceId
                         && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialBackupWorkspaceId
+                        && !root.isFeedbackWorkspace
                         && !root.isProjectLibraryWorkspace
                         && root.hasOpenProject
                     viewModel: root.inspectorViewModel
@@ -235,8 +253,14 @@ ApplicationWindow {
 
             JobTimelineBar {
                 Layout.fillWidth: true
-                Layout.preferredHeight: root.isProjectLibraryWorkspace || root.shellViewModel.currentWorkspace === root.shellViewModel.materialBackupWorkspaceId ? 0 : implicitHeight
-                visible: !root.isProjectLibraryWorkspace && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialBackupWorkspaceId
+                Layout.preferredHeight: root.isProjectLibraryWorkspace
+                    || root.shellViewModel.currentWorkspace === root.shellViewModel.materialBackupWorkspaceId
+                    || root.isFeedbackWorkspace
+                    ? 0
+                    : implicitHeight
+                visible: !root.isProjectLibraryWorkspace
+                    && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialBackupWorkspaceId
+                    && !root.isFeedbackWorkspace
                 viewModel: root.jobTimelineViewModel
                 libraryViewModel: root.libraryViewModel
             }
@@ -300,8 +324,15 @@ ApplicationWindow {
 
     Component {
         id: jobsWorkspaceComponent
-            JobsWorkspace {
+        JobsWorkspace {
             viewModel: root.jobTimelineViewModel
+        }
+    }
+
+    Component {
+        id: feedbackWorkspaceComponent
+        FeedbackWorkspace {
+            viewModel: root.feedbackViewModel
         }
     }
 }

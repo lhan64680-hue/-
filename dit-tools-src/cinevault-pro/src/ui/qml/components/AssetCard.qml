@@ -11,6 +11,7 @@ Rectangle {
     property string meta: ""
     property string tag: ""
     property string thumbnailPath: ""
+    property bool thumbnailLoading: false
     property string thumbnailSource: localImageUrlHelper ? localImageUrlHelper.sourceForInput(thumbnailPath) : ""
     property bool selected: false
     property bool favorite: false
@@ -227,6 +228,32 @@ Rectangle {
                 asynchronous: true
                 cache: true
                 visible: status === Image.Ready
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                visible: assetCard.thumbnailLoading && previewImage.status !== Image.Ready
+                color: Qt.rgba(0.03, 0.04, 0.06, 0.62)
+
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 8
+
+                    BusyIndicator {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        running: parent.parent.visible
+                        width: 30
+                        height: 30
+                    }
+
+                    Text {
+                        text: "缩略图生成中"
+                        color: "#F3F7FF"
+                        font.pixelSize: 12
+                        font.weight: Font.DemiBold
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                }
             }
 
             Rectangle {

@@ -7,6 +7,7 @@
 #include <QUrl>
 
 class ImportService;
+class FeedbackService;
 class ProjectService;
 
 class ShellViewModel : public QObject {
@@ -25,9 +26,10 @@ class ShellViewModel : public QObject {
     Q_PROPERTY(int materialCenterWorkspaceId READ materialCenterWorkspaceId CONSTANT)
     Q_PROPERTY(int reportWorkspaceId READ reportWorkspaceId CONSTANT)
     Q_PROPERTY(int jobsWorkspaceId READ jobsWorkspaceId CONSTANT)
+    Q_PROPERTY(int feedbackWorkspaceId READ feedbackWorkspaceId CONSTANT)
 
 public:
-    explicit ShellViewModel(ProjectService *projectService, ImportService *importService, QObject *parent = nullptr);
+    explicit ShellViewModel(ProjectService *projectService, ImportService *importService, FeedbackService *feedbackService, QObject *parent = nullptr);
 
     QString projectName() const;
     QString projectPath() const;
@@ -43,6 +45,7 @@ public:
     int materialCenterWorkspaceId() const;
     int reportWorkspaceId() const;
     int jobsWorkspaceId() const;
+    int feedbackWorkspaceId() const;
 
     void resetProjectUiState();
     void enterProjectFromLibrary();
@@ -69,6 +72,7 @@ signals:
 private:
     ProjectService *m_projectService = nullptr;
     ImportService *m_importService = nullptr;
+    FeedbackService *m_feedbackService = nullptr;
     QString m_globalSearchText;
     WorkspaceId m_currentWorkspace = WorkspaceId::ProjectLibrary;
     QString m_lastMessage;

@@ -155,6 +155,66 @@ function Resolve-FfmpegDevRoot {
     return $null
 }
 
+function Resolve-FfmpegCliRoot {
+    param(
+        [string]$FfmpegDevRoot,
+        [switch]$Required
+    )
+
+    $binCandidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:CINEVAULT_FFMPEG_BIN)) {
+        $binCandidates += $env:CINEVAULT_FFMPEG_BIN
+    }
+
+    foreach ($candidate in $binCandidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        $ffmpegExe = Join-Path $candidate "ffmpeg.exe"
+        $ffprobeExe = Join-Path $candidate "ffprobe.exe"
+        if ((Test-Path $ffmpegExe) -and (Test-Path $ffprobeExe)) {
+            return Split-Path -Parent $candidate
+        }
+    }
+
+    $rootCandidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:CINEVAULT_FFMPEG_ROOT)) {
+        $rootCandidates += $env:CINEVAULT_FFMPEG_ROOT
+    }
+    if (-not [string]::IsNullOrWhiteSpace($FfmpegDevRoot)) {
+        $rootCandidates += $FfmpegDevRoot
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:FFMPEG_DEV_ROOT)) {
+        $rootCandidates += $env:FFMPEG_DEV_ROOT
+    }
+    $rootCandidates += @(
+        "G:\data\app\DIT\ffmpeg",
+        "G:\data\app\DIT\ffmpeg-dev",
+        "C:\ffmpeg",
+        "C:\ffmpeg-dev"
+    )
+
+    foreach ($candidate in $rootCandidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        $binDir = Join-Path $candidate "bin"
+        $ffmpegExe = Join-Path $binDir "ffmpeg.exe"
+        $ffprobeExe = Join-Path $binDir "ffprobe.exe"
+        if ((Test-Path $ffmpegExe) -and (Test-Path $ffprobeExe)) {
+            return $candidate
+        }
+    }
+
+    if ($Required) {
+        throw "FFmpeg CLI runtime package was not found. Set CINEVAULT_FFMPEG_ROOT or CINEVAULT_FFMPEG_BIN to a directory containing ffmpeg.exe and ffprobe.exe."
+    }
+
+    return $null
+}
+
 function Invoke-VcVarsCommand {
     param(
         [string]$CommandLine
@@ -181,6 +241,7 @@ function Get-CineVaultBuildContext {
 
     $resolvedQtRoot = $null
     $resolvedFfmpegDevRoot = $null
+    $resolvedFfmpegCliRoot = $null
     $resolvedInnoSetupCompiler = $null
     $errors = New-Object System.Collections.Generic.List[string]
 
@@ -203,6 +264,12 @@ function Get-CineVaultBuildContext {
     }
 
     try {
+        $resolvedFfmpegCliRoot = Resolve-FfmpegCliRoot -FfmpegDevRoot $FfmpegDevRoot
+    } catch {
+        $errors.Add($_.Exception.Message)
+    }
+
+    try {
         $resolvedInnoSetupCompiler = Get-InnoSetupCompilerPath
     } catch {
         $errors.Add($_.Exception.Message)
@@ -217,6 +284,8 @@ function Get-CineVaultBuildContext {
         QtRoot = $resolvedQtRoot
         FfmpegDevRoot = $resolvedFfmpegDevRoot
         HasFfmpeg = -not [string]::IsNullOrWhiteSpace($resolvedFfmpegDevRoot)
+        FfmpegCliRoot = $resolvedFfmpegCliRoot
+        HasFfmpegCli = -not [string]::IsNullOrWhiteSpace($resolvedFfmpegCliRoot)
         WindeployQt = (Get-WindeployQtPath -QtRoot $resolvedQtRoot)
         InnoSetupCompiler = $resolvedInnoSetupCompiler
     }

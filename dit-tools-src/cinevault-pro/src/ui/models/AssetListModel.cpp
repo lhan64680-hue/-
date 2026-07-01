@@ -32,6 +32,8 @@ QVariant AssetListModel::data(const QModelIndex &index, int role) const
     case ModifiedAtRole: return item.modifiedAt;
     case ReadableRole: return item.readable;
     case ThumbnailPathRole: return item.thumbnailPath;
+    case ThumbnailStatusRole: return static_cast<int>(item.thumbnailStatus);
+    case ThumbnailLoadingRole: return item.thumbnailStatus == ThumbnailStatus::Running && item.thumbnailPath.isEmpty();
     case DurationLabelRole: return Formatters::formatDuration(item.durationMs);
     case BitRateLabelRole: return Formatters::formatBitRate(item.bitRate);
     case TechnicalSummaryRole: return item.technicalSummary;
@@ -56,6 +58,8 @@ QHash<int, QByteArray> AssetListModel::roleNames() const
         {ModifiedAtRole, "modifiedAt"},
         {ReadableRole, "readable"},
         {ThumbnailPathRole, "thumbnailPath"},
+        {ThumbnailStatusRole, "thumbnailStatus"},
+        {ThumbnailLoadingRole, "thumbnailLoading"},
         {DurationLabelRole, "durationLabel"},
         {BitRateLabelRole, "bitRateLabel"},
         {TechnicalSummaryRole, "technicalSummary"},

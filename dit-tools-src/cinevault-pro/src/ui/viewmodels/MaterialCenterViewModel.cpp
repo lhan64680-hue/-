@@ -357,6 +357,13 @@ bool MaterialCenterViewModel::selectedFramesLoading() const
     return m_selectedFramesLoading;
 }
 
+bool MaterialCenterViewModel::selectedThumbnailLoading() const
+{
+    return hasSelection()
+        && m_detail.asset.thumbnailStatus == ThumbnailStatus::Running
+        && m_selectedThumbnailUrlCache.isEmpty();
+}
+
 QUrl MaterialCenterViewModel::selectedThumbnailUrl() const
 {
     return m_selectedThumbnailUrlCache;

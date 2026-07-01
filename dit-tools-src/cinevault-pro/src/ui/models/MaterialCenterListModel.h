@@ -22,6 +22,8 @@ public:
         ConfirmationStatusLabelRole,
         IsConfirmedRole,
         ThumbnailPathRole,
+        ThumbnailStatusRole,
+        ThumbnailLoadingRole,
         UpdatedAtRole,
         DurationMsRole,
         ErrorMessageRole

@@ -42,6 +42,7 @@ class MaterialCenterViewModel : public QObject {
     Q_PROPERTY(bool canExpandSelectedFrames READ canExpandSelectedFrames NOTIFY selectionChanged)
     Q_PROPERTY(bool canLoadMoreSelectedFrames READ canLoadMoreSelectedFrames NOTIFY selectionChanged)
     Q_PROPERTY(bool selectedFramesLoading READ selectedFramesLoading NOTIFY selectionChanged)
+    Q_PROPERTY(bool selectedThumbnailLoading READ selectedThumbnailLoading NOTIFY selectionChanged)
     Q_PROPERTY(QUrl selectedThumbnailUrl READ selectedThumbnailUrl NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedFilePath READ selectedFilePath NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedCachePath READ selectedCachePath NOTIFY selectionChanged)
@@ -90,6 +91,7 @@ public:
     bool canExpandSelectedFrames() const;
     bool canLoadMoreSelectedFrames() const;
     bool selectedFramesLoading() const;
+    bool selectedThumbnailLoading() const;
     QUrl selectedThumbnailUrl() const;
     QString selectedFilePath() const;
     QString selectedCachePath() const;

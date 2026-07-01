@@ -20,6 +20,7 @@ constexpr auto kPendingUpdateVersionKey = "updates/pendingVersion";
 constexpr auto kPendingUpdateInstallerPathKey = "updates/pendingInstallerPath";
 constexpr auto kDownloadedUpdateVersionKey = "updates/downloadedVersion";
 constexpr auto kMaterialBackupQueuePrefix = "materialBackup/queues/";
+constexpr auto kFeedbackSessionKey = "feedback/sessionJson";
 
 int normalizedThemeMode(int value)
 {
@@ -166,13 +167,24 @@ void AppSettings::setVisionModel(const QString &value)
 
 AnalysisMode AppSettings::analysisMode() const
 {
-    const auto value = m_settings->value(QLatin1String(kAnalysisModeKey), static_cast<int>(AnalysisMode::EveryNFrames)).toInt();
-    return value == static_cast<int>(AnalysisMode::EveryFrame) ? AnalysisMode::EveryFrame : AnalysisMode::EveryNFrames;
+    const auto value = m_settings->value(QLatin1String(kAnalysisModeKey), static_cast<int>(AnalysisMode::Every10Frames)).toInt();
+    if (value == static_cast<int>(AnalysisMode::EveryFrame)) {
+        return AnalysisMode::EveryFrame;
+    }
+    if (value == static_cast<int>(AnalysisMode::CustomInterval)) {
+        return AnalysisMode::CustomInterval;
+    }
+
+    const auto storedInterval = qMax(1, m_settings->value(QLatin1String(kFrameIntervalKey), 10).toInt());
+    return storedInterval == 10 ? AnalysisMode::Every10Frames : AnalysisMode::CustomInterval;
 }
 
 void AppSettings::setAnalysisMode(AnalysisMode mode)
 {
     m_settings->setValue(QLatin1String(kAnalysisModeKey), static_cast<int>(mode));
+    if (mode == AnalysisMode::Every10Frames) {
+        m_settings->setValue(QLatin1String(kFrameIntervalKey), 10);
+    }
 }
 
 int AppSettings::frameInterval() const
@@ -279,6 +291,21 @@ void AppSettings::setMaterialBackupQueueJson(const QString &projectDatabasePath,
         m_settings->remove(key);
     } else {
         m_settings->setValue(key, json);
+    }
+    m_settings->sync();
+}
+
+QString AppSettings::feedbackSessionJson() const
+{
+    return m_settings->value(QLatin1String(kFeedbackSessionKey)).toString();
+}
+
+void AppSettings::setFeedbackSessionJson(const QString &json)
+{
+    if (json.trimmed().isEmpty()) {
+        m_settings->remove(QLatin1String(kFeedbackSessionKey));
+    } else {
+        m_settings->setValue(QLatin1String(kFeedbackSessionKey), json);
     }
     m_settings->sync();
 }

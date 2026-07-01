@@ -1,5 +1,6 @@
 #include "infrastructure/ffmpeg/FFmpegAdapter.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -22,6 +23,11 @@ struct ProcessResult {
 QString envPath(const char *name)
 {
     return QDir::fromNativeSeparators(QString::fromLocal8Bit(qgetenv(name)).trimmed());
+}
+
+QString appPath()
+{
+    return QDir::fromNativeSeparators(QCoreApplication::applicationDirPath().trimmed());
 }
 
 QString existingFile(const QStringList &candidates)
@@ -119,11 +125,17 @@ FFmpegAdapter::FFmpegAdapter()
     const auto ffmpegRoot = envPath("CINEVAULT_FFMPEG_ROOT");
     const auto legacyDevRoot = envPath("FFMPEG_DEV_ROOT");
     const auto defaultRoot = QStringLiteral("G:/data/app/DIT/ffmpeg");
+    const auto bundledAppDir = appPath();
+    const auto bundledFfmpegRoot = bundledAppDir.isEmpty()
+        ? QString()
+        : QDir(bundledAppDir).filePath(QStringLiteral("ffmpeg"));
 
     m_ffprobePath = existingFile({
         envPath("CINEVAULT_FFPROBE_PATH"),
         exeFromBin(ffmpegBinRoot, QStringLiteral("ffprobe.exe")),
         exeFromRoot(ffmpegRoot, QStringLiteral("ffprobe.exe")),
+        exeFromRoot(bundledFfmpegRoot, QStringLiteral("ffprobe.exe")),
+        exeFromBin(bundledAppDir, QStringLiteral("ffprobe.exe")),
         exeFromRoot(legacyDevRoot, QStringLiteral("ffprobe.exe")),
         exeFromRoot(defaultRoot, QStringLiteral("ffprobe.exe"))
     });
@@ -131,6 +143,8 @@ FFmpegAdapter::FFmpegAdapter()
         envPath("CINEVAULT_FFMPEG_PATH"),
         exeFromBin(ffmpegBinRoot, QStringLiteral("ffmpeg.exe")),
         exeFromRoot(ffmpegRoot, QStringLiteral("ffmpeg.exe")),
+        exeFromRoot(bundledFfmpegRoot, QStringLiteral("ffmpeg.exe")),
+        exeFromBin(bundledAppDir, QStringLiteral("ffmpeg.exe")),
         exeFromRoot(legacyDevRoot, QStringLiteral("ffmpeg.exe")),
         exeFromRoot(defaultRoot, QStringLiteral("ffmpeg.exe"))
     });
@@ -286,7 +300,9 @@ FrameExtractionResult FFmpegAdapter::extractFrames(const FrameExtractionRequest 
 
     QVector<ExtractedFrame> selectedFrames;
     selectedFrames.reserve(frames.size());
-    const int interval = request.mode == AnalysisMode::EveryFrame ? 1 : qMax(1, request.frameInterval);
+    const int interval = request.mode == AnalysisMode::EveryFrame
+        ? 1
+        : (request.mode == AnalysisMode::Every10Frames ? 10 : qMax(1, request.frameInterval));
     for (int index = 0; index < frames.size(); ++index) {
         if (request.mode != AnalysisMode::EveryFrame && (index % interval) != 0) {
             continue;

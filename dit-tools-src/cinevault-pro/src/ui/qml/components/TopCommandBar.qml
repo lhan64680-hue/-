@@ -17,6 +17,8 @@ Rectangle {
         anchors.rightMargin: 18
         spacing: 8
 
+        readonly property bool isFeedbackWorkspace: shellVm && shellVm.currentWorkspace === shellVm.feedbackWorkspaceId
+
         Text {
             text: "影资管家"
             color: Theme.text
@@ -53,6 +55,7 @@ Rectangle {
 
             delegate: Button {
                 readonly property bool tabEnabled: modelData.enabled === undefined || modelData.enabled
+                readonly property int badgeCount: modelData.badgeCount === undefined ? 0 : Number(modelData.badgeCount)
 
                 Layout.preferredWidth: modelData.buttonWidth
                 Layout.preferredHeight: 36
@@ -66,6 +69,27 @@ Rectangle {
                     color: shellVm.currentWorkspace === modelData.value ? Theme.selectedBg : "transparent"
                     border.width: shellVm.currentWorkspace === modelData.value ? 1 : 0
                     border.color: Theme.selectedLine
+
+                    Rectangle {
+                        visible: badgeCount > 0
+                        width: badgeText.implicitWidth + 10
+                        height: 18
+                        radius: 9
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.rightMargin: 4
+                        anchors.topMargin: -4
+                        color: Theme.red
+
+                        Text {
+                            id: badgeText
+                            anchors.centerIn: parent
+                            text: badgeCount > 99 ? "99+" : badgeCount
+                            color: Theme.primaryText
+                            font.pixelSize: 10
+                            font.weight: Font.Bold
+                        }
+                    }
                 }
                 contentItem: Text {
                     text: parent.text
@@ -84,9 +108,11 @@ Rectangle {
         Item { Layout.fillWidth: true }
 
         ThemedTextField {
-            Layout.preferredWidth: 220
-            Layout.minimumWidth: 160
-            Layout.maximumWidth: 260
+            Layout.preferredWidth: visible ? 220 : 0
+            Layout.minimumWidth: visible ? 160 : 0
+            Layout.maximumWidth: visible ? 260 : 0
+            visible: !parent.isFeedbackWorkspace
+            Layout.preferredHeight: visible ? implicitHeight : 0
             placeholderText: shellVm && shellVm.currentWorkspace === shellVm.projectLibraryWorkspaceId ? "搜索项目..." : "搜索素材..."
             text: shellVm.globalSearchText
             onTextChanged: shellVm.globalSearchText = text

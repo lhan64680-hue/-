@@ -63,11 +63,12 @@ QVector<GlobalVideoAsset> fetchProjectVideos(QSqlDatabase &projectDb, const Proj
     QSqlQuery query(projectDb);
     query.prepare(QStringLiteral(
         "SELECT af.id, af.source_root_id, COALESCE(sr.name, ''), af.name, af.absolute_path, af.relative_path, "
-        "af.size_bytes, af.modified_at, COALESCE(mm.duration_ms, 0), COALESCE(th.image_path, '') "
+        "af.size_bytes, af.modified_at, COALESCE(mm.duration_ms, 0), "
+        "CASE WHEN COALESCE(th.status, 0) = 1 THEN COALESCE(th.image_path, '') ELSE '' END, COALESCE(th.status, 0) "
         "FROM asset_file af "
         "LEFT JOIN source_root sr ON sr.id = af.source_root_id "
         "LEFT JOIN media_metadata mm ON mm.asset_id = af.id "
-        "LEFT JOIN thumbnail th ON th.asset_id = af.id AND th.status = 1 "
+        "LEFT JOIN thumbnail th ON th.asset_id = af.id "
         "WHERE af.asset_type = ? "
         "ORDER BY af.id"));
     query.addBindValue(static_cast<int>(AssetType::Video));
@@ -90,6 +91,7 @@ QVector<GlobalVideoAsset> fetchProjectVideos(QSqlDatabase &projectDb, const Proj
         asset.modifiedAt = query.value(7).toString();
         asset.durationMs = query.value(8).toLongLong();
         asset.thumbnailPath = query.value(9).toString();
+        asset.thumbnailStatus = static_cast<ThumbnailStatus>(query.value(10).toInt());
         asset.videoKey = QStringLiteral("%1:%2").arg(project.id).arg(asset.assetId);
         videos.append(asset);
     }
@@ -211,9 +213,9 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
     upsert.prepare(QStringLiteral(
         "INSERT INTO global_video_asset "
         "(video_key, project_uuid, project_name, project_database_path, source_root_id, source_root_name, asset_id, "
-        "file_name, absolute_path, relative_path, size_bytes, modified_at, duration_ms, thumbnail_path, "
+        "file_name, absolute_path, relative_path, size_bytes, modified_at, duration_ms, thumbnail_path, thumbnail_status, "
         "analysis_status, confirmation_status, error_message, last_synced_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(video_key) DO UPDATE SET "
         "project_uuid = excluded.project_uuid, "
         "project_name = excluded.project_name, "
@@ -228,6 +230,7 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         "modified_at = excluded.modified_at, "
         "duration_ms = excluded.duration_ms, "
         "thumbnail_path = excluded.thumbnail_path, "
+        "thumbnail_status = excluded.thumbnail_status, "
         "analysis_status = excluded.analysis_status, "
         "confirmation_status = excluded.confirmation_status, "
         "error_message = excluded.error_message, "
@@ -276,6 +279,7 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         upsert.addBindValue(video.modifiedAt);
         upsert.addBindValue(video.durationMs);
         upsert.addBindValue(video.thumbnailPath);
+        upsert.addBindValue(static_cast<int>(video.thumbnailStatus));
         upsert.addBindValue(static_cast<int>(changed ? VideoAnalysisStatus::Pending : existing.analysisStatus));
         upsert.addBindValue(static_cast<int>(changed ? ConfirmationStatus::Pending : existing.confirmationStatus));
         upsert.addBindValue(changed ? QString() : existing.errorMessage);

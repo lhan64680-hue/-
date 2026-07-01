@@ -27,6 +27,15 @@ public:
     bool enqueueVideo(const QString &videoKey, QString *errorMessage = nullptr);
     int enqueueVideos(const QStringList &videoKeys, QString *errorMessage = nullptr);
     bool retryFrame(const QString &videoKey, int frameNumber, QString *errorMessage = nullptr);
+    bool hasBatchSummary() const;
+    int batchTotalCount() const;
+    int batchFinishedCount() const;
+    int batchFailedCount() const;
+    int batchSuccessfulCount() const;
+    int batchQueuedCount() const;
+    qint64 batchProgressPercent() const;
+    QString batchCurrentLabel() const;
+    QString batchStatusText() const;
 
 public slots:
     void analyzeVideo(const QString &videoKey);
@@ -41,8 +50,16 @@ signals:
                                  int state,
                                  const QString &errorMessage);
     void analysisQueueChanged(const QString &currentVideoKey, int queuedCount);
+    void analysisBatchChanged();
 
 private:
+    enum class BatchItemState {
+        Queued = 0,
+        Running,
+        Completed,
+        Failed
+    };
+
     bool validateReadyForEnqueue(const QString &videoKey, QString *errorMessage) const;
     bool enqueueJob(const AnalysisJob &job, QString *errorMessage);
     void startNextAnalysis();
@@ -52,6 +69,11 @@ private:
                                 const QString &detail,
                                 JobState state,
                                 const QString &errorMessage = QString());
+    void resetBatchSummaryIfIdle();
+    void ensureBatchItem(const QString &videoKey);
+    void setBatchItemState(const QString &videoKey, BatchItemState state);
+    void notifyBatchChanged();
+    QString lookupVideoLabel(const QString &videoKey) const;
     void updateJob(qint64 jobId, qint64 progress, const QString &detail);
     void completeJob(qint64 jobId, const QString &detail);
     void failJob(qint64 jobId, const QString &errorMessage);
@@ -67,4 +89,8 @@ private:
     AnalysisJob m_currentJob;
     QString m_currentVideoKey;
     bool m_analysisRunning = false;
+    QHash<QString, BatchItemState> m_batchStates;
+    QHash<QString, QString> m_batchLabels;
+    qint64 m_batchCurrentProgress = 0;
+    QString m_batchCurrentDetail;
 };

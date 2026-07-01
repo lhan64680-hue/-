@@ -108,6 +108,7 @@ QString Formatters::workspaceLabel(WorkspaceId workspaceId)
     case WorkspaceId::Qc: return QStringLiteral("素材库");
     case WorkspaceId::Report: return QStringLiteral("报表");
     case WorkspaceId::Jobs: return QStringLiteral("任务");
+    case WorkspaceId::Feedback: return QStringLiteral("使用反馈");
     }
     return QStringLiteral("导入");
 }
@@ -127,11 +128,13 @@ QString Formatters::probeStatusLabel(ProbeStatus status)
 QString Formatters::analysisModeLabel(AnalysisMode mode)
 {
     switch (mode) {
+    case AnalysisMode::Every10Frames:
+        return QStringLiteral("每10帧抽1帧");
     case AnalysisMode::EveryFrame:
         return QStringLiteral("逐帧解析");
-    case AnalysisMode::EveryNFrames:
+    case AnalysisMode::CustomInterval:
     default:
-        return QStringLiteral("每 N 帧抽 1 帧");
+        return QStringLiteral("自定义抽帧间隔");
     }
 }
 

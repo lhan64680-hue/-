@@ -62,6 +62,7 @@ struct AssetFile {
     QString modifiedAt;
     bool readable = false;
     QString thumbnailPath;
+    ThumbnailStatus thumbnailStatus = ThumbnailStatus::Pending;
     QString container;
     qint64 durationMs = 0;
     qint64 bitRate = 0;
@@ -124,7 +125,7 @@ struct FrameExtractionRequest {
     qint64 assetId = 0;
     QString sourcePath;
     QString outputDirectory;
-    AnalysisMode mode = AnalysisMode::EveryNFrames;
+    AnalysisMode mode = AnalysisMode::Every10Frames;
     int frameInterval = 10;
     int maxWidth = 1920;
     int maxHeight = 1080;
@@ -184,6 +185,7 @@ struct GlobalVideoAsset {
     QString modifiedAt;
     qint64 durationMs = 0;
     QString thumbnailPath;
+    ThumbnailStatus thumbnailStatus = ThumbnailStatus::Pending;
     VideoAnalysisStatus analysisStatus = VideoAnalysisStatus::Pending;
     ConfirmationStatus confirmationStatus = ConfirmationStatus::Pending;
     QString summary;
@@ -213,6 +215,43 @@ struct FrameAnalysisRecord {
     int retryCount = 0;
     int lastHttpStatus = 0;
     QString lastAttemptAt;
+};
+
+struct FeedbackAttachment {
+    QString id;
+    QString name;
+    QString mimeType;
+    QString url;
+    qint64 sizeBytes = 0;
+};
+
+struct FeedbackMessage {
+    qint64 id = 0;
+    QString conversationId;
+    QString senderRole;
+    QString text;
+    QVector<FeedbackAttachment> attachments;
+    QString createdAt;
+};
+
+struct FeedbackConversation {
+    QString conversationId;
+    QString clientId;
+    QString clientToken;
+    QString clientWsUrl;
+    QString nickname;
+    QString contact;
+    QString status;
+    QString appVersion;
+    QString systemSummary;
+    QString projectName;
+    QString projectPath;
+    QString latestPreview;
+    QString latestMessageAt;
+    QString createdAt;
+    QString updatedAt;
+    int unreadAdmin = 0;
+    int unreadClient = 0;
 };
 
 struct BackupSource {

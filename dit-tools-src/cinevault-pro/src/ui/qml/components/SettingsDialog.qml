@@ -291,14 +291,16 @@ Dialog {
                                 font.pixelSize: root.bodyFontSize
                                 model: [
                                     { label: "每10帧抽1帧", value: 0 },
-                                    { label: "逐帧解析", value: 1 }
+                                    { label: "逐帧解析", value: 1 },
+                                    { label: "自定义间隔", value: 2 }
                                 ]
                                 textRole: "label"
-                                currentIndex: root.draftAnalysisMode === 1 ? 1 : 0
+                                currentIndex: root.draftAnalysisMode === 1 ? 1 : (root.draftAnalysisMode === 2 ? 2 : 0)
                                 onActivated: root.draftAnalysisMode = model[index].value
                             }
 
                             Text {
+                                visible: root.draftAnalysisMode === 2
                                 Layout.preferredWidth: root.formLabelWidth
                                 Layout.alignment: Qt.AlignVCenter
                                 text: "抽帧间隔"
@@ -307,13 +309,13 @@ Dialog {
                             }
 
                             ThemedSpinBox {
+                                visible: root.draftAnalysisMode === 2
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: root.controlHeight
                                 font.pixelSize: root.bodyFontSize
                                 from: 1
                                 to: 240
                                 value: root.draftFrameInterval
-                                enabled: root.draftAnalysisMode === 0
                                 onValueModified: root.draftFrameInterval = value
                             }
 

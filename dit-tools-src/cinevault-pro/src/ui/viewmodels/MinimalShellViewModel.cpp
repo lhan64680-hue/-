@@ -50,7 +50,8 @@ QVariantList MinimalShellViewModel::workspaceTabs() const
         QVariantMap{{QStringLiteral("label"), QStringLiteral("素材库")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::Library)}, {QStringLiteral("buttonWidth"), 70}, {QStringLiteral("enabled"), true}},
         QVariantMap{{QStringLiteral("label"), QStringLiteral("素材管理中心")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::MaterialCenter)}, {QStringLiteral("buttonWidth"), 108}, {QStringLiteral("enabled"), true}},
         QVariantMap{{QStringLiteral("label"), QStringLiteral("报表")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::Report)}, {QStringLiteral("buttonWidth"), 56}, {QStringLiteral("enabled"), true}},
-        QVariantMap{{QStringLiteral("label"), QStringLiteral("任务")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::Jobs)}, {QStringLiteral("buttonWidth"), 56}, {QStringLiteral("enabled"), true}}
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("任务")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::Jobs)}, {QStringLiteral("buttonWidth"), 56}, {QStringLiteral("enabled"), true}},
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("使用反馈")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::Feedback)}, {QStringLiteral("buttonWidth"), 92}, {QStringLiteral("enabled"), true}}
     };
 }
 
@@ -82,6 +83,11 @@ int MinimalShellViewModel::reportWorkspaceId() const
 int MinimalShellViewModel::jobsWorkspaceId() const
 {
     return static_cast<int>(WorkspaceId::Jobs);
+}
+
+int MinimalShellViewModel::feedbackWorkspaceId() const
+{
+    return static_cast<int>(WorkspaceId::Feedback);
 }
 
 void MinimalShellViewModel::setGlobalSearchText(const QString &text)

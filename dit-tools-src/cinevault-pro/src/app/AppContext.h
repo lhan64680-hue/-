@@ -32,6 +32,7 @@ class MaterialCatalogSyncService;
 class MaterialCenterQueryService;
 class MaterialBackupService;
 class VideoAnalysisService;
+class FeedbackService;
 class UpdateService;
 class ImportService;
 class LibraryQueryService;
@@ -49,6 +50,7 @@ class InspectorViewModel;
 class JobTimelineViewModel;
 class ReportWorkspaceViewModel;
 class SettingsViewModel;
+class FeedbackViewModel;
 #endif
 
 class AppContext : public QObject {
@@ -90,6 +92,7 @@ private:
     MaterialBackupService *m_materialBackupService = nullptr;
     VisionApiClient *m_visionApiClient = nullptr;
     VideoAnalysisService *m_videoAnalysisService = nullptr;
+    FeedbackService *m_feedbackService = nullptr;
     UpdateService *m_updateService = nullptr;
     ImportService *m_importService = nullptr;
     LibraryQueryService *m_libraryQueryService = nullptr;
@@ -106,5 +109,6 @@ private:
     JobTimelineViewModel *m_jobTimelineViewModel = nullptr;
     ReportWorkspaceViewModel *m_reportWorkspaceViewModel = nullptr;
     SettingsViewModel *m_settingsViewModel = nullptr;
+    FeedbackViewModel *m_feedbackViewModel = nullptr;
 #endif
 };
