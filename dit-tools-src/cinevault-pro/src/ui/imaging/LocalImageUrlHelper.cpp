@@ -7,6 +7,14 @@
 namespace {
 constexpr auto kProviderPrefix = "image://cinevault-local/";
 
+bool looksLikeWindowsDrivePath(const QString &value)
+{
+    return value.size() >= 3
+        && value.at(1) == QLatin1Char(':')
+        && (value.at(2) == QLatin1Char('/') || value.at(2) == QLatin1Char('\\'))
+        && value.at(0).isLetter();
+}
+
 bool isWebpFile(const QString &localPath)
 {
     return QFileInfo(localPath).suffix().compare(QStringLiteral("webp"), Qt::CaseInsensitive) == 0;
@@ -50,6 +58,14 @@ QString LocalImageUrlHelper::sourceForInputString(const QString &input)
     }
 
     if (trimmed.startsWith(QLatin1String(kProviderPrefix), Qt::CaseInsensitive)) {
+        return trimmed;
+    }
+
+    const auto directUrl = QUrl(trimmed);
+    if (directUrl.isValid()
+        && !directUrl.scheme().isEmpty()
+        && !directUrl.isLocalFile()
+        && !looksLikeWindowsDrivePath(trimmed)) {
         return trimmed;
     }
 

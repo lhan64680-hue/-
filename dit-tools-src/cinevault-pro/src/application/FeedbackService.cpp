@@ -2,9 +2,11 @@
 
 #include "application/ProjectService.h"
 #include "infrastructure/config/AppSettings.h"
+#include "shared/Paths.h"
 
 #include <algorithm>
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QHttpMultiPart>
@@ -15,6 +17,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
 #include <QSet>
 #include <QScopeGuard>
 #include <QSysInfo>
@@ -138,6 +141,44 @@ qint64 latestAdminMessageId(const QVector<FeedbackMessage> &messages)
         }
     }
     return latestId;
+}
+
+QString fallbackAttachmentName(const QString &displayName, const QUrl &sourceUrl)
+{
+    const auto normalizedName = QFileInfo(displayName.trimmed()).fileName();
+    if (!normalizedName.isEmpty()) {
+        return normalizedName;
+    }
+
+    const auto pathName = QFileInfo(sourceUrl.path()).fileName();
+    return pathName.isEmpty() ? QStringLiteral("attachment") : pathName;
+}
+
+QString sanitizeAttachmentFileName(const QString &fileName)
+{
+    auto cleaned = QFileInfo(fileName.trimmed()).fileName();
+    if (cleaned.isEmpty()) {
+        cleaned = QStringLiteral("attachment");
+    }
+    cleaned.replace(QRegularExpression(QStringLiteral(R"([^A-Za-z0-9._-]+)")), QStringLiteral("_"));
+    cleaned = cleaned.trimmed();
+    cleaned.remove(QRegularExpression(QStringLiteral(R"(^[._-]+|[._-]+$)")));
+    return cleaned.isEmpty() ? QStringLiteral("attachment") : cleaned;
+}
+
+QString feedbackAttachmentCacheRoot()
+{
+    return QDir(Paths::cacheRoot()).filePath(QStringLiteral("feedback-attachments"));
+}
+
+QString feedbackAttachmentCachePath(const QString &attachmentId, const QString &name)
+{
+    const auto normalizedId = attachmentId.trimmed().isEmpty()
+        ? QStringLiteral("attachment")
+        : sanitizeAttachmentFileName(attachmentId.trimmed());
+    const auto normalizedName = sanitizeAttachmentFileName(name);
+    return QDir(feedbackAttachmentCacheRoot())
+        .filePath(QStringLiteral("%1__%2").arg(normalizedId, normalizedName));
 }
 }
 
@@ -434,6 +475,94 @@ void FeedbackService::sendMessage(const QString &text, const QStringList &filePa
         emit messagesChanged();
         emit stateChanged();
         emit messageSubmitted(true);
+    });
+}
+
+void FeedbackService::downloadAttachment(const QString &url, const QString &targetPath, const QString &displayName)
+{
+    const auto normalizedTargetPath = QDir::cleanPath(targetPath.trimmed());
+    const auto sourceUrl = QUrl::fromUserInput(url.trimmed());
+    if (!sourceUrl.isValid() || normalizedTargetPath.isEmpty()) {
+        setStatusMessage(QStringLiteral("附件保存失败：缺少可用的文件地址或保存路径。"));
+        emit stateChanged();
+        return;
+    }
+
+    const QFileInfo targetInfo(normalizedTargetPath);
+    const auto targetDirectory = targetInfo.absolutePath();
+    if (!QDir().mkpath(targetDirectory)) {
+        setStatusMessage(QStringLiteral("附件保存失败：无法创建目录 %1").arg(targetDirectory));
+        emit stateChanged();
+        return;
+    }
+
+    const auto downloadName = fallbackAttachmentName(displayName, sourceUrl);
+    setStatusMessage(QStringLiteral("正在保存附件：%1").arg(downloadName));
+    emit stateChanged();
+
+    transferAttachmentToPath(sourceUrl, normalizedTargetPath, downloadName, [this, normalizedTargetPath](bool success, const QString &errorMessage) {
+        if (!success) {
+            setStatusMessage(errorMessage);
+            emit stateChanged();
+            return;
+        }
+        setStatusMessage(QStringLiteral("附件已保存到：%1").arg(normalizedTargetPath));
+        emit stateChanged();
+    });
+}
+
+void FeedbackService::ensureAttachmentCached(const QString &attachmentId,
+                                            const QString &url,
+                                            const QString &name,
+                                            AttachmentCacheCallback callback)
+{
+    const auto targetPath = feedbackAttachmentCachePath(attachmentId, name);
+    const auto sourceUrl = QUrl::fromUserInput(url.trimmed());
+    if (!sourceUrl.isValid()) {
+        if (callback) {
+            callback(false, {}, QStringLiteral("文档预览准备失败：附件地址无效。"));
+        }
+        setStatusMessage(QStringLiteral("文档预览准备失败：附件地址无效。"));
+        emit stateChanged();
+        return;
+    }
+
+    if (!QDir().mkpath(feedbackAttachmentCacheRoot())) {
+        const auto errorMessage = QStringLiteral("文档预览准备失败：无法创建附件缓存目录。");
+        if (callback) {
+            callback(false, {}, errorMessage);
+        }
+        setStatusMessage(errorMessage);
+        emit stateChanged();
+        return;
+    }
+
+    QFileInfo targetInfo(targetPath);
+    if (targetInfo.exists() && targetInfo.isFile() && targetInfo.size() > 0) {
+        if (callback) {
+            callback(true, targetInfo.absoluteFilePath(), {});
+        }
+        return;
+    }
+
+    if (targetInfo.exists() && targetInfo.size() <= 0) {
+        QFile::remove(targetPath);
+    }
+
+    transferAttachmentToPath(sourceUrl, targetPath, name, [this, callback, targetPath](bool success, const QString &errorMessage) {
+        if (!success) {
+            QFile::remove(targetPath);
+            if (callback) {
+                callback(false, {}, errorMessage);
+            }
+            setStatusMessage(errorMessage);
+            emit stateChanged();
+            return;
+        }
+
+        if (callback) {
+            callback(true, QFileInfo(targetPath).absoluteFilePath(), {});
+        }
     });
 }
 
@@ -875,6 +1004,93 @@ bool FeedbackService::hasMessage(qint64 messageId) const
         }
     }
     return false;
+}
+
+void FeedbackService::transferAttachmentToPath(const QUrl &sourceUrl,
+                                               const QString &targetPath,
+                                               const QString &displayName,
+                                               const std::function<void(bool, const QString &)> &callback)
+{
+    const auto normalizedTargetPath = QDir::cleanPath(targetPath.trimmed());
+    if (!sourceUrl.isValid() || normalizedTargetPath.isEmpty()) {
+        if (callback) {
+            callback(false, QStringLiteral("附件保存失败：缺少可用的文件地址或保存路径。"));
+        }
+        return;
+    }
+
+    const QFileInfo targetInfo(normalizedTargetPath);
+    const auto targetDirectory = targetInfo.absolutePath();
+    if (!QDir().mkpath(targetDirectory)) {
+        if (callback) {
+            callback(false, QStringLiteral("附件保存失败：无法创建目录 %1").arg(targetDirectory));
+        }
+        return;
+    }
+
+    if (sourceUrl.isLocalFile()) {
+        const auto sourcePath = QDir::cleanPath(sourceUrl.toLocalFile());
+        const QFileInfo sourceInfo(sourcePath);
+        if (sourcePath.isEmpty() || !sourceInfo.exists() || !sourceInfo.isFile()) {
+            if (callback) {
+                callback(false, QStringLiteral("附件保存失败：源文件不存在。"));
+            }
+            return;
+        }
+
+        if (QFileInfo(normalizedTargetPath).absoluteFilePath() == sourceInfo.absoluteFilePath()) {
+            if (callback) {
+                callback(true, {});
+            }
+            return;
+        }
+
+        QFile::remove(normalizedTargetPath);
+        if (!QFile::copy(sourceInfo.absoluteFilePath(), normalizedTargetPath)) {
+            if (callback) {
+                callback(false, QStringLiteral("附件保存失败：无法写入 %1").arg(normalizedTargetPath));
+            }
+            return;
+        }
+
+        if (callback) {
+            callback(true, {});
+        }
+        return;
+    }
+
+    auto request = QNetworkRequest(sourceUrl);
+    request.setTransferTimeout(kTransferTimeoutMs);
+
+    auto *reply = m_network->get(request);
+    connect(reply, &QNetworkReply::finished, this, [reply, callback, normalizedTargetPath, displayName]() {
+        const auto cleanup = qScopeGuard([reply]() { reply->deleteLater(); });
+
+        if (reply->error() != QNetworkReply::NoError
+            || reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() >= 400) {
+            const auto fallbackName = fallbackAttachmentName(displayName, reply->url());
+            const auto detail = replyErrorMessage(reply, QStringLiteral("附件下载失败：%1").arg(fallbackName));
+            if (callback) {
+                callback(false, detail);
+            }
+            return;
+        }
+
+        QFile::remove(normalizedTargetPath);
+        QFile outputFile(normalizedTargetPath);
+        if (!outputFile.open(QIODevice::WriteOnly)) {
+            if (callback) {
+                callback(false, QStringLiteral("附件保存失败：无法写入 %1").arg(normalizedTargetPath));
+            }
+            return;
+        }
+
+        outputFile.write(reply->readAll());
+        outputFile.close();
+        if (callback) {
+            callback(true, {});
+        }
+    });
 }
 
 void FeedbackService::appendOrReplaceMessage(const FeedbackMessage &message)

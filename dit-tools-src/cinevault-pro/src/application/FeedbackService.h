@@ -2,6 +2,7 @@
 
 #include "domain/Entities.h"
 
+#include <functional>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
@@ -19,6 +20,8 @@ class FeedbackService : public QObject {
     Q_OBJECT
 
 public:
+    using AttachmentCacheCallback = std::function<void(bool, const QString &, const QString &)>;
+
     explicit FeedbackService(AppSettings *settings, ProjectService *projectService, QObject *parent = nullptr);
     ~FeedbackService() override;
 
@@ -31,6 +34,10 @@ public:
     int unreadCount() const;
     FeedbackConversation conversation() const;
     QVector<FeedbackMessage> messages() const;
+    void ensureAttachmentCached(const QString &attachmentId,
+                                const QString &url,
+                                const QString &name,
+                                AttachmentCacheCallback callback);
 
     void setWorkspaceActive(bool active);
 
@@ -39,6 +46,7 @@ public slots:
     void createOrRestoreSession(const QString &nickname, const QString &contact);
     void refreshMessages();
     void sendMessage(const QString &text, const QStringList &filePaths);
+    void downloadAttachment(const QString &url, const QString &targetPath, const QString &displayName = QString());
     void deleteMessage(qint64 messageId);
     void clearClientMessages();
 
@@ -86,6 +94,10 @@ private:
     void handleNetworkFailure(QNetworkReply *reply, const QString &fallbackMessage);
     bool hasClientAuth() const;
     bool hasMessage(qint64 messageId) const;
+    void transferAttachmentToPath(const QUrl &sourceUrl,
+                                  const QString &targetPath,
+                                  const QString &displayName,
+                                  const std::function<void(bool, const QString &)> &callback);
     void appendOrReplaceMessage(const FeedbackMessage &message);
     void removeMessages(const QList<qint64> &messageIds);
     void resetConversationState(const QString &statusMessage, bool recreateSession);

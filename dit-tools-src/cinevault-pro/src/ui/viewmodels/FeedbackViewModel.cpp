@@ -4,13 +4,25 @@
 #include "shared/Formatters.h"
 #include "ui/models/FeedbackMessageListModel.h"
 
+#include <QApplication>
 #include <QClipboard>
 #include <QDateTime>
 #include <QDir>
 #include <QDesktopServices>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QPointer>
+#include <QStandardPaths>
 #include <QUrl>
+#include <QWidget>
+
+namespace {
+QWidget *dialogParent()
+{
+    return QApplication::activeWindow();
+}
+}
 
 namespace {
 QString displayTime(const QString &value)
@@ -231,6 +243,26 @@ QString FeedbackViewModel::attachmentSelectionError() const
     return m_attachmentSelectionError;
 }
 
+bool FeedbackViewModel::attachmentPreviewBusy() const
+{
+    return m_attachmentPreviewBusy;
+}
+
+QString FeedbackViewModel::attachmentPreviewError() const
+{
+    return m_attachmentPreviewError;
+}
+
+QUrl FeedbackViewModel::attachmentPreviewLocalUrl() const
+{
+    return m_attachmentPreviewLocalUrl;
+}
+
+QString FeedbackViewModel::attachmentPreviewTitle() const
+{
+    return m_attachmentPreviewTitle;
+}
+
 int FeedbackViewModel::unreadCount() const
 {
     return m_service ? m_service->unreadCount() : 0;
@@ -373,6 +405,74 @@ void FeedbackViewModel::clearOwnMessages()
     if (m_service) {
         m_service->clearClientMessages();
     }
+}
+
+void FeedbackViewModel::saveAttachment(const QString &url, const QString &name)
+{
+    if (!m_service) {
+        return;
+    }
+
+    const auto suggestedName = QFileInfo(name.trimmed()).fileName().isEmpty()
+        ? QStringLiteral("attachment")
+        : QFileInfo(name.trimmed()).fileName();
+    auto defaultDirectory = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    if (defaultDirectory.isEmpty()) {
+        defaultDirectory = QDir::homePath();
+    }
+
+    const auto selectedPath = QFileDialog::getSaveFileName(dialogParent(),
+                                                           QStringLiteral("保存附件"),
+                                                           QDir(defaultDirectory).filePath(suggestedName),
+                                                           QStringLiteral("所有文件 (*.*)"));
+    if (selectedPath.isEmpty()) {
+        return;
+    }
+
+    m_service->downloadAttachment(url, selectedPath, suggestedName);
+}
+
+void FeedbackViewModel::previewDocumentAttachment(const QString &attachmentId, const QString &url, const QString &name)
+{
+    if (!m_service) {
+        return;
+    }
+
+    ++m_attachmentPreviewRequestId;
+    const auto requestId = m_attachmentPreviewRequestId;
+    m_attachmentPreviewBusy = true;
+    m_attachmentPreviewError.clear();
+    m_attachmentPreviewLocalUrl = {};
+    m_attachmentPreviewTitle = QFileInfo(name.trimmed()).fileName().isEmpty()
+        ? QStringLiteral("文档预览")
+        : QFileInfo(name.trimmed()).fileName();
+    emit attachmentPreviewChanged();
+
+    QPointer<FeedbackViewModel> guard(this);
+    m_service->ensureAttachmentCached(attachmentId, url, name, [guard, requestId](bool success, const QString &localPath, const QString &errorMessage) {
+        if (!guard || guard->m_attachmentPreviewRequestId != requestId) {
+            return;
+        }
+
+        guard->m_attachmentPreviewBusy = false;
+        guard->m_attachmentPreviewLocalUrl = success ? QUrl::fromLocalFile(localPath) : QUrl{};
+        guard->m_attachmentPreviewError = success
+            ? QString()
+            : (errorMessage.trimmed().isEmpty()
+                ? QStringLiteral("文档预览准备失败。")
+                : errorMessage.trimmed());
+        emit guard->attachmentPreviewChanged();
+    });
+}
+
+void FeedbackViewModel::clearAttachmentPreview()
+{
+    ++m_attachmentPreviewRequestId;
+    m_attachmentPreviewBusy = false;
+    m_attachmentPreviewError.clear();
+    m_attachmentPreviewLocalUrl = {};
+    m_attachmentPreviewTitle.clear();
+    emit attachmentPreviewChanged();
 }
 
 void FeedbackViewModel::openAttachment(const QString &url)

@@ -12,6 +12,10 @@ Rectangle {
     property url thumbnailUrl: ""
     property string title: ""
     property bool isVideo: false
+    property bool compactMode: false
+    property bool autoPrimePreviewFrame: false
+    property bool inlineMuted: false
+    property string clickAction: ""
     readonly property bool hasSource: isVideo && sourceUrl.toString().length > 0
     readonly property bool hasThumbnail: isVideo && thumbnailUrl.toString().length > 0
     readonly property bool isPlaying: previewPlaybackRequested || mediaPlayer.playbackState === MediaPlayer.PlayingState
@@ -232,19 +236,53 @@ Rectangle {
         fullscreenPrimePauseTimer.stop()
     }
 
+    function primePreviewFrame() {
+        if (!hasSource || hasPreviewFrame) {
+            return
+        }
+        previewPlaybackRequested = false
+        previewFrameRequested = true
+        mediaPlayer.play()
+        previewSeekPauseTimer.restart()
+    }
+
+    function triggerClickAction() {
+        if (!hasSource) {
+            return
+        }
+        if (clickAction === "fullscreen") {
+            openFullscreen()
+        } else if (clickAction === "togglePlayback") {
+            togglePlayback()
+        }
+    }
+
     radius: 16
     color: Theme.mediaSurface
     border.width: 1
     border.color: Theme.line
     clip: true
 
-    onHasSourceChanged: resetPlayback()
-    onSourceUrlChanged: resetPlayback()
+    onHasSourceChanged: {
+        resetPlayback()
+        if (hasSource && autoPrimePreviewFrame && !hasThumbnail) {
+            Qt.callLater(primePreviewFrame)
+        }
+    }
+    onSourceUrlChanged: {
+        resetPlayback()
+        if (hasSource && autoPrimePreviewFrame && !hasThumbnail) {
+            Qt.callLater(primePreviewFrame)
+        }
+    }
 
     MediaPlayer {
         id: mediaPlayer
         source: videoPreview.hasSource ? videoPreview.sourceUrl : ""
-        audioOutput: AudioOutput {}
+        audioOutput: AudioOutput {
+            id: previewAudioOutput
+            muted: videoPreview.inlineMuted
+        }
         videoOutput: previewOutput
 
         onMediaStatusChanged: {
@@ -297,6 +335,14 @@ Rectangle {
         color: Qt.rgba(0, 0, 0, 0.18)
     }
 
+    MouseArea {
+        anchors.fill: parent
+        anchors.bottomMargin: controlBar.visible ? controlBar.height : 0
+        enabled: videoPreview.hasSource && (videoPreview.clickAction === "fullscreen" || videoPreview.clickAction === "togglePlayback")
+        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+        onClicked: videoPreview.triggerClickAction()
+    }
+
     Rectangle {
         anchors.fill: parent
         color: "transparent"
@@ -338,7 +384,7 @@ Rectangle {
         color: Qt.rgba(0.03, 0.04, 0.06, 0.72)
         border.width: 1
         border.color: Qt.rgba(1, 1, 1, 0.12)
-        visible: videoPreview.hasThumbnail
+        visible: videoPreview.hasThumbnail && !videoPreview.compactMode
 
         Text {
             anchors.fill: parent
@@ -354,21 +400,22 @@ Rectangle {
     }
 
     Rectangle {
+        id: controlBar
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: 70
+        height: videoPreview.compactMode ? 54 : 70
         color: Qt.rgba(0.04, 0.05, 0.08, 0.82)
         visible: videoPreview.hasSource
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 8
-            spacing: 4
+            anchors.margins: videoPreview.compactMode ? 6 : 8
+            spacing: videoPreview.compactMode ? 2 : 4
 
             ThemedSlider {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 24
+                Layout.preferredHeight: videoPreview.compactMode ? 18 : 24
                 from: 0
                 to: Math.max(mediaPlayer.duration, 1)
                 value: mediaPlayer.position
@@ -378,12 +425,12 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 30
+                Layout.preferredHeight: videoPreview.compactMode ? 24 : 30
                 spacing: 8
 
                 ActionButton {
-                    Layout.preferredWidth: 58
-                    Layout.preferredHeight: 30
+                    Layout.preferredWidth: videoPreview.compactMode ? 54 : 58
+                    Layout.preferredHeight: videoPreview.compactMode ? 24 : 30
                     text: videoPreview.isPlaying ? "暂停" : "播放"
                     enabled: videoPreview.hasSource
                     primary: videoPreview.isPlaying
@@ -391,7 +438,8 @@ Rectangle {
                 }
 
                 Text {
-                    Layout.fillWidth: true
+                    Layout.fillWidth: !videoPreview.compactMode
+                    visible: !videoPreview.compactMode
                     text: videoPreview.title.length > 0 ? videoPreview.title : "视频预览"
                     color: Theme.text
                     font.pixelSize: 12
@@ -400,6 +448,7 @@ Rectangle {
                 }
 
                 Text {
+                    visible: !videoPreview.compactMode
                     Layout.preferredWidth: 92
                     text: videoPreview.formatTime(mediaPlayer.position) + " / " + videoPreview.formatTime(mediaPlayer.duration)
                     color: Theme.muted

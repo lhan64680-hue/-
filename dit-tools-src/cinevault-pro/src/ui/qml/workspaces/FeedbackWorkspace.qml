@@ -8,8 +8,38 @@ Rectangle {
     id: root
 
     property var viewModel
+    property var documentPreviewVm
+    property bool pendingDocumentPreview: false
 
     color: Theme.bg
+
+    function attachmentSuffix(name) {
+        if (!name || name.length === 0) {
+            return ""
+        }
+        var index = name.lastIndexOf(".")
+        if (index < 0 || index >= name.length - 1) {
+            return ""
+        }
+        return name.substring(index + 1).toUpperCase()
+    }
+
+    function attachmentTypeLabel(attachment) {
+        var suffix = attachmentSuffix(attachment.name || "")
+        if (suffix.length > 0) {
+            return suffix
+        }
+        if (attachment.previewKind === "document") {
+            return "文档"
+        }
+        if (attachment.previewKind === "video") {
+            return "视频"
+        }
+        if (attachment.previewKind === "image") {
+            return "图片"
+        }
+        return "文件"
+    }
 
     function submitDraftMessage(text) {
         if (viewModel) {
@@ -28,11 +58,43 @@ Rectangle {
         }
     }
 
+    function openImageAttachment(attachment) {
+        attachmentPreviewOverlay.openImage(attachment.url, attachment.name)
+    }
+
+    function previewDocumentAttachment(attachment) {
+        if (!viewModel || !documentPreviewVm) {
+            return
+        }
+        pendingDocumentPreview = true
+        viewModel.previewDocumentAttachment(attachment.id, attachment.url, attachment.name)
+    }
+
     Component.onCompleted: if (viewModel) {
         viewModel.activate()
         viewModel.setWorkspaceActive(visible)
     }
     onVisibleChanged: if (viewModel) viewModel.setWorkspaceActive(visible)
+
+    Connections {
+        target: viewModel
+
+        function onAttachmentPreviewChanged() {
+            if (!root.pendingDocumentPreview || !viewModel || viewModel.attachmentPreviewBusy) {
+                return
+            }
+            if (viewModel.attachmentPreviewLocalUrl.toString().length > 0) {
+                root.pendingDocumentPreview = false
+                attachmentPreviewOverlay.openDocument(viewModel.attachmentPreviewLocalUrl, viewModel.attachmentPreviewTitle)
+                return
+            }
+            if (viewModel.attachmentPreviewError.length > 0) {
+                root.pendingDocumentPreview = false
+                attachmentPreviewDialog.text = viewModel.attachmentPreviewError
+                attachmentPreviewDialog.open()
+            }
+        }
+    }
 
     FileDialog {
         id: attachmentDialog
@@ -47,11 +109,56 @@ Rectangle {
     }
 
     MessageDialog {
+        id: attachmentPreviewDialog
+        title: "附件预览失败"
+    }
+
+    MessageDialog {
         id: clearConversationDialog
         title: "清空会话窗口"
         text: "这会删除你自己发送的全部消息，开发者回复会保留。是否继续？"
         buttons: MessageDialog.Ok | MessageDialog.Cancel
         onAccepted: if (viewModel) viewModel.clearOwnMessages()
+    }
+
+    AssetPreviewOverlay {
+        id: attachmentPreviewOverlay
+        previewVm: root.documentPreviewVm
+        onVisibleChanged: if (!visible && viewModel) viewModel.clearAttachmentPreview()
+    }
+
+    Rectangle {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: 26
+        anchors.rightMargin: 26
+        visible: viewModel && viewModel.attachmentPreviewBusy
+        radius: 16
+        color: Qt.rgba(0.07, 0.10, 0.16, 0.92)
+        border.width: 1
+        border.color: Qt.rgba(1, 1, 1, 0.10)
+        implicitWidth: previewBusyRow.implicitWidth + 22
+        implicitHeight: 42
+        z: 120
+
+        Row {
+            id: previewBusyRow
+            anchors.centerIn: parent
+            spacing: 10
+
+            BusyIndicator {
+                running: true
+                width: 18
+                height: 18
+            }
+
+            Text {
+                text: "正在准备文档预览..."
+                color: "white"
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+            }
+        }
     }
 
     ColumnLayout {
@@ -314,8 +421,9 @@ Rectangle {
                         delegate: Item {
                             width: ListView.view ? ListView.view.width : 0
                             property real maxBubbleWidth: Math.max(120, Math.min(width * 0.78, 720))
+                            property real attachmentCardWidth: 220
                             property real attachmentPreferredWidth: hasAttachments
-                                ? Math.min(maxBubbleWidth - 24, attachments.length > 1 ? 460 : (attachments[0].isImage ? 180 : 220))
+                                ? Math.min(maxBubbleWidth - 24, attachments.length > 1 ? attachmentCardWidth * 2 + 10 : attachmentCardWidth)
                                 : 0
                             property real textPreferredWidth: hasText ? Math.min(textMeasure.implicitWidth, maxBubbleWidth - 24) : 0
                             property real headerPreferredWidth: Math.min(maxBubbleWidth - 24, senderText.implicitWidth + timestampText.implicitWidth + 24)
@@ -403,50 +511,117 @@ Rectangle {
                                             model: attachments
 
                                             delegate: Rectangle {
-                                                width: modelData.isImage ? 180 : 220
-                                                height: modelData.isImage ? 176 : 74
+                                                width: 220
+                                                height: modelData.previewKind === "image" || modelData.previewKind === "video" ? 170 : 118
                                                 radius: 16
                                                 color: outgoing ? Theme.feedbackOutgoingAttachmentBg : Theme.panel
                                                 border.width: 1
                                                 border.color: outgoing ? Theme.feedbackOutgoingBorder : Theme.line
                                                 clip: true
 
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: if (viewModel) viewModel.openAttachment(modelData.url)
-                                                }
-
-                                                Column {
+                                                Rectangle {
                                                     anchors.fill: parent
                                                     anchors.margins: 10
-                                                    spacing: 8
+                                                    visible: modelData.previewKind === "image"
+                                                    radius: 12
+                                                    color: Theme.mediaSurface
+                                                    border.width: 1
+                                                    border.color: Qt.rgba(1, 1, 1, 0.06)
 
                                                     Image {
-                                                        visible: modelData.isImage
-                                                        width: parent.width
-                                                        height: 96
-                                                        fillMode: Image.PreserveAspectCrop
+                                                        anchors.fill: parent
+                                                        anchors.margins: 8
                                                         asynchronous: true
+                                                        cache: false
+                                                        fillMode: Image.PreserveAspectFit
                                                         source: modelData.url
                                                     }
 
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: root.openImageAttachment(modelData)
+                                                    }
+                                                }
+
+                                                VideoPreviewPlayer {
+                                                    anchors.fill: parent
+                                                    visible: modelData.previewKind === "video"
+                                                    sourceUrl: modelData.url
+                                                    thumbnailUrl: ""
+                                                    title: modelData.name
+                                                    isVideo: true
+                                                    compactMode: true
+                                                    autoPrimePreviewFrame: true
+                                                    inlineMuted: true
+                                                    clickAction: "fullscreen"
+                                                }
+
+                                                ColumnLayout {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 12
+                                                    spacing: 8
+                                                    visible: modelData.previewKind === "document" || modelData.previewKind === ""
+
+                                                    Rectangle {
+                                                        radius: 999
+                                                        color: outgoing ? Qt.rgba(1, 1, 1, 0.14) : Theme.selectedBg
+                                                        border.width: 1
+                                                        border.color: outgoing ? Qt.rgba(1, 1, 1, 0.12) : Theme.selectedLine
+                                                        implicitHeight: 24
+                                                        implicitWidth: typeBadgeLabel.implicitWidth + 16
+
+                                                        Text {
+                                                            id: typeBadgeLabel
+                                                            anchors.centerIn: parent
+                                                            text: root.attachmentTypeLabel(modelData)
+                                                            color: outgoing ? Theme.feedbackOutgoingText : Theme.text
+                                                            font.pixelSize: 11
+                                                            font.weight: Font.DemiBold
+                                                        }
+                                                    }
+
                                                     Text {
-                                                        width: parent.width
+                                                        Layout.fillWidth: true
                                                         text: modelData.name
                                                         color: outgoing ? Theme.feedbackOutgoingText : Theme.text
-                                                        font.pixelSize: 12
+                                                        font.pixelSize: 13
                                                         font.weight: Font.DemiBold
+                                                        wrapMode: Text.Wrap
+                                                        maximumLineCount: 2
                                                         elide: Text.ElideRight
                                                     }
 
                                                     Text {
-                                                        width: parent.width
+                                                        Layout.fillWidth: true
                                                         text: modelData.sizeLabel
                                                         color: outgoing ? Theme.feedbackOutgoingText : Theme.weak
                                                         opacity: outgoing ? 0.78 : 1
                                                         font.pixelSize: 11
                                                         elide: Text.ElideRight
+                                                    }
+
+                                                    Item { Layout.fillHeight: true }
+
+                                                    RowLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 8
+
+                                                        ActionButton {
+                                                            visible: modelData.previewKind === "document"
+                                                            Layout.preferredWidth: visible ? 72 : 0
+                                                            Layout.preferredHeight: 30
+                                                            text: "预览"
+                                                            onClicked: root.previewDocumentAttachment(modelData)
+                                                        }
+
+                                                        ActionButton {
+                                                            visible: modelData.canDownload
+                                                            Layout.preferredWidth: visible ? 72 : 0
+                                                            Layout.preferredHeight: 30
+                                                            text: "下载"
+                                                            onClicked: if (viewModel) viewModel.saveAttachment(modelData.url, modelData.name)
+                                                        }
                                                     }
                                                 }
                                             }

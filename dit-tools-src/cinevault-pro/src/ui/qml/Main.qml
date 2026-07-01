@@ -333,6 +333,7 @@ ApplicationWindow {
         id: feedbackWorkspaceComponent
         FeedbackWorkspace {
             viewModel: root.feedbackViewModel
+            documentPreviewVm: root.documentPreviewViewModel
         }
     }
 }

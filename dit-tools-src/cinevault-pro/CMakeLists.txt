@@ -376,6 +376,32 @@ if(BUILD_TESTING)
     target_link_libraries(LocalImageUrlHelperTest PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME LocalImageUrlHelperTest COMMAND LocalImageUrlHelperTest)
 
+    if(NOT CINEVAULT_BUILD_MINIMAL_GUI)
+        qt_add_executable(FeedbackMessageListModelTest
+            tests/unit/FeedbackMessageListModelTest.cpp
+            src/ui/models/FeedbackMessageListModel.cpp
+            src/shared/Formatters.cpp
+        )
+        target_include_directories(FeedbackMessageListModelTest PRIVATE src)
+        target_link_libraries(FeedbackMessageListModelTest PRIVATE Qt6::Core Qt6::Test)
+        add_test(NAME FeedbackMessageListModelTest COMMAND FeedbackMessageListModelTest)
+
+        qt_add_executable(FeedbackAttachmentCacheTest
+            tests/unit/FeedbackAttachmentCacheTest.cpp
+            src/application/FeedbackService.cpp
+            src/infrastructure/config/AppSettings.cpp
+            src/shared/Paths.cpp
+        )
+        target_include_directories(FeedbackAttachmentCacheTest PRIVATE src)
+        target_link_libraries(FeedbackAttachmentCacheTest PRIVATE
+            Qt6::Core
+            Qt6::Network
+            Qt6::Test
+            Qt6::WebSockets
+        )
+        add_test(NAME FeedbackAttachmentCacheTest COMMAND FeedbackAttachmentCacheTest)
+    endif()
+
     if(CINEVAULT_HAS_BUNDLED_WEBP)
         qt_add_executable(LocalImageProviderTest
             tests/unit/LocalImageProviderTest.cpp
@@ -411,6 +437,12 @@ if(BUILD_TESTING)
             UpdateServiceTest
             LocalImageUrlHelperTest
         )
+        if(TARGET FeedbackMessageListModelTest)
+            list(APPEND CINEVAULT_PATH_AWARE_TESTS FeedbackMessageListModelTest)
+        endif()
+        if(TARGET FeedbackAttachmentCacheTest)
+            list(APPEND CINEVAULT_PATH_AWARE_TESTS FeedbackAttachmentCacheTest)
+        endif()
         if(TARGET LocalImageProviderTest)
             list(APPEND CINEVAULT_PATH_AWARE_TESTS LocalImageProviderTest)
         endif()
