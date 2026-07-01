@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QVariant>
 #include <QVariantList>
 
 class FeedbackMessageListModel;
@@ -23,6 +24,7 @@ class FeedbackViewModel : public QObject {
     Q_PROPERTY(QString appVersionLabel READ appVersionLabel NOTIFY stateChanged)
     Q_PROPERTY(QString latestUpdatedAt READ latestUpdatedAt NOTIFY stateChanged)
     Q_PROPERTY(QVariantList pendingAttachments READ pendingAttachments NOTIFY stateChanged)
+    Q_PROPERTY(QString attachmentSelectionError READ attachmentSelectionError NOTIFY stateChanged)
     Q_PROPERTY(int unreadCount READ unreadCount NOTIFY stateChanged)
 
 public:
@@ -43,6 +45,7 @@ public:
     QString appVersionLabel() const;
     QString latestUpdatedAt() const;
     QVariantList pendingAttachments() const;
+    QString attachmentSelectionError() const;
     int unreadCount() const;
 
     Q_INVOKABLE void activate();
@@ -50,7 +53,7 @@ public:
     Q_INVOKABLE void submitProfile(const QString &nickname, const QString &contact);
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void sendMessage(const QString &text);
-    Q_INVOKABLE void addAttachmentUrls(const QVariantList &urls);
+    Q_INVOKABLE void addAttachmentUrls(const QVariant &urls);
     Q_INVOKABLE void removePendingAttachment(int index);
     Q_INVOKABLE void copyMessageText(qint64 messageId);
     Q_INVOKABLE void deleteOwnMessage(qint64 messageId);
@@ -74,4 +77,5 @@ private:
     FeedbackService *m_service = nullptr;
     FeedbackMessageListModel *m_messageModel = nullptr;
     QVector<PendingAttachment> m_pendingAttachments;
+    QString m_attachmentSelectionError;
 };

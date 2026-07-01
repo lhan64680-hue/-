@@ -17,6 +17,17 @@ Rectangle {
         }
     }
 
+    function acceptSelectedAttachments() {
+        if (!viewModel) {
+            return
+        }
+        viewModel.addAttachmentUrls(attachmentDialog.selectedFiles)
+        if (viewModel.attachmentSelectionError.length > 0) {
+            attachmentSelectionDialog.text = viewModel.attachmentSelectionError
+            attachmentSelectionDialog.open()
+        }
+    }
+
     Component.onCompleted: if (viewModel) {
         viewModel.activate()
         viewModel.setWorkspaceActive(visible)
@@ -27,7 +38,12 @@ Rectangle {
         id: attachmentDialog
         title: "选择要发送给开发者的附件"
         fileMode: FileDialog.OpenFiles
-        onAccepted: if (viewModel) viewModel.addAttachmentUrls(selectedFiles)
+        onAccepted: root.acceptSelectedAttachments()
+    }
+
+    MessageDialog {
+        id: attachmentSelectionDialog
+        title: "附件未加入待发送列表"
     }
 
     MessageDialog {
@@ -296,8 +312,8 @@ Rectangle {
                         })
 
                         delegate: Item {
-                            width: ListView.view.width
-                            property real maxBubbleWidth: Math.min(parent.width * 0.78, 720)
+                            width: ListView.view ? ListView.view.width : 0
+                            property real maxBubbleWidth: Math.max(120, Math.min(width * 0.78, 720))
                             property real attachmentPreferredWidth: hasAttachments
                                 ? Math.min(maxBubbleWidth - 24, attachments.length > 1 ? 460 : (attachments[0].isImage ? 180 : 220))
                                 : 0

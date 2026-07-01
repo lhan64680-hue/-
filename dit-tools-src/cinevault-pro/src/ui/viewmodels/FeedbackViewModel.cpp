@@ -6,6 +6,7 @@
 
 #include <QClipboard>
 #include <QDateTime>
+#include <QDir>
 #include <QDesktopServices>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -22,6 +23,43 @@ QString displayTime(const QString &value)
         return QStringLiteral("暂无");
     }
     return dateTime.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+}
+
+QVariantList attachmentCandidates(const QVariant &urls)
+{
+    if (!urls.isValid() || urls.isNull()) {
+        return {};
+    }
+    if (urls.canConvert<QVariantList>()) {
+        return urls.toList();
+    }
+    return {urls};
+}
+
+QString attachmentLocalPath(const QVariant &value)
+{
+    if (!value.isValid() || value.isNull()) {
+        return {};
+    }
+
+    if (value.canConvert<QUrl>()) {
+        const auto url = value.toUrl();
+        if (url.isValid() && url.isLocalFile()) {
+            return QDir::cleanPath(url.toLocalFile());
+        }
+    }
+
+    const auto text = value.toString().trimmed();
+    if (text.isEmpty()) {
+        return {};
+    }
+
+    const auto url = QUrl(text);
+    if (url.isValid() && url.isLocalFile()) {
+        return QDir::cleanPath(url.toLocalFile());
+    }
+
+    return QDir::cleanPath(text);
 }
 }
 
@@ -188,6 +226,11 @@ QVariantList FeedbackViewModel::pendingAttachments() const
     return items;
 }
 
+QString FeedbackViewModel::attachmentSelectionError() const
+{
+    return m_attachmentSelectionError;
+}
+
 int FeedbackViewModel::unreadCount() const
 {
     return m_service ? m_service->unreadCount() : 0;
@@ -236,13 +279,25 @@ void FeedbackViewModel::sendMessage(const QString &text)
     m_service->sendMessage(text, paths);
 }
 
-void FeedbackViewModel::addAttachmentUrls(const QVariantList &urls)
+void FeedbackViewModel::addAttachmentUrls(const QVariant &urls)
 {
-    for (const auto &value : urls) {
-        const auto url = value.toUrl();
-        const auto localPath = url.isLocalFile() ? url.toLocalFile() : value.toString();
+    m_attachmentSelectionError.clear();
+
+    const auto candidates = attachmentCandidates(urls);
+    int invalidCount = 0;
+    int duplicateCount = 0;
+    int addedCount = 0;
+
+    for (const auto &value : candidates) {
+        const auto localPath = attachmentLocalPath(value);
+        if (localPath.isEmpty()) {
+            ++invalidCount;
+            continue;
+        }
+
         const QFileInfo info(localPath);
         if (!info.exists() || !info.isFile()) {
+            ++invalidCount;
             continue;
         }
 
@@ -254,6 +309,7 @@ void FeedbackViewModel::addAttachmentUrls(const QVariantList &urls)
             }
         }
         if (exists) {
+            ++duplicateCount;
             continue;
         }
 
@@ -262,7 +318,21 @@ void FeedbackViewModel::addAttachmentUrls(const QVariantList &urls)
             info.fileName(),
             info.size()
         });
+        ++addedCount;
     }
+
+    if (addedCount == 0) {
+        if (candidates.isEmpty()) {
+            m_attachmentSelectionError = QStringLiteral("没有收到可用的附件选择结果，请重新选择文件。");
+        } else if (invalidCount == candidates.size()) {
+            m_attachmentSelectionError = QStringLiteral("所选项目未能识别为本地文件，请重新选择本机文件。");
+        } else if (duplicateCount == candidates.size()) {
+            m_attachmentSelectionError = QStringLiteral("所选附件已经在待发送列表中，无需重复添加。");
+        } else {
+            m_attachmentSelectionError = QStringLiteral("没有新增可发送的本地附件，请重新选择。");
+        }
+    }
+
     emit stateChanged();
 }
 
