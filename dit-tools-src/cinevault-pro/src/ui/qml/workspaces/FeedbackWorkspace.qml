@@ -11,9 +11,9 @@ Rectangle {
 
     color: Theme.bg
 
-    function submitDraftMessage() {
+    function submitDraftMessage(text) {
         if (viewModel) {
-            viewModel.sendMessage(draftMessageArea.text)
+            viewModel.sendMessage(text)
         }
     }
 
@@ -28,15 +28,6 @@ Rectangle {
         title: "选择要发送给开发者的附件"
         fileMode: FileDialog.OpenFiles
         onAccepted: if (viewModel) viewModel.addAttachmentUrls(selectedFiles)
-    }
-
-    Connections {
-        target: viewModel
-        function onMessageSubmitted(success) {
-            if (success) {
-                draftMessageArea.text = ""
-            }
-        }
     }
 
     ColumnLayout {
@@ -256,6 +247,15 @@ Rectangle {
         RowLayout {
             spacing: 14
 
+            Connections {
+                target: viewModel
+                function onMessageSubmitted(success) {
+                    if (success) {
+                        draftMessageArea.text = ""
+                    }
+                }
+            }
+
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -463,7 +463,7 @@ Rectangle {
                                             && !(event.modifiers & Qt.AltModifier)
                                             && !(event.modifiers & Qt.MetaModifier)) {
                                         event.accepted = true
-                                        root.submitDraftMessage()
+                                        root.submitDraftMessage(draftMessageArea.text)
                                     }
                                 }
                                 background: Rectangle {
@@ -542,7 +542,7 @@ Rectangle {
                                     text: viewModel && viewModel.sending ? "发送中..." : "发送反馈"
                                     enabled: viewModel && !viewModel.sending
                                     primary: true
-                                    onClicked: root.submitDraftMessage()
+                                    onClicked: root.submitDraftMessage(draftMessageArea.text)
                                 }
                             }
                         }
