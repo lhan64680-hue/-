@@ -10,6 +10,9 @@ Rectangle {
     property var viewModel
     property var documentPreviewVm
     property bool pendingDocumentPreview: false
+    property bool profileEditMode: false
+    property string draftProfileNickname: ""
+    property string draftProfileContact: ""
 
     color: Theme.bg
 
@@ -47,6 +50,17 @@ Rectangle {
         }
     }
 
+    function syncProfileDrafts() {
+        draftProfileNickname = viewModel ? viewModel.profileNickname : ""
+        draftProfileContact = viewModel ? viewModel.profileContact : ""
+    }
+
+    function submitProfileEdits() {
+        if (viewModel) {
+            viewModel.submitProfile(draftProfileNickname, draftProfileContact)
+        }
+    }
+
     function acceptSelectedAttachments() {
         if (!viewModel) {
             return
@@ -70,11 +84,15 @@ Rectangle {
         viewModel.previewDocumentAttachment(attachment.id, attachment.url, attachment.name)
     }
 
-    Component.onCompleted: if (viewModel) {
-        viewModel.activate()
-        viewModel.setWorkspaceActive(visible)
+    Component.onCompleted: {
+        root.syncProfileDrafts()
+        if (viewModel) {
+            viewModel.activate()
+            viewModel.setWorkspaceActive(visible)
+        }
     }
     onVisibleChanged: if (viewModel) viewModel.setWorkspaceActive(visible)
+    onViewModelChanged: root.syncProfileDrafts()
 
     Connections {
         target: viewModel
@@ -93,6 +111,22 @@ Rectangle {
                 attachmentPreviewDialog.text = viewModel.attachmentPreviewError
                 attachmentPreviewDialog.open()
             }
+        }
+
+        function onStateChanged() {
+            if (!viewModel) {
+                return
+            }
+            if (root.profileEditMode) {
+                if (!viewModel.busy
+                        && viewModel.ready
+                        && root.draftProfileNickname === viewModel.profileNickname
+                        && root.draftProfileContact === viewModel.profileContact) {
+                    root.profileEditMode = false
+                }
+                return
+            }
+            root.syncProfileDrafts()
         }
     }
 
@@ -820,25 +854,93 @@ Rectangle {
                         color: Theme.card
                         border.width: 1
                         border.color: Theme.line
-                        implicitHeight: 110
+                        implicitHeight: profileCardColumn.implicitHeight + 28
 
                         ColumnLayout {
+                            id: profileCardColumn
                             anchors.fill: parent
                             anchors.margins: 14
                             spacing: 8
 
-                            Text {
-                                text: "资料"
-                                color: Theme.muted
-                                font.pixelSize: 12
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                Text {
+                                    text: "资料"
+                                    color: Theme.muted
+                                    font.pixelSize: 12
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                ActionButton {
+                                    Layout.preferredWidth: 96
+                                    Layout.preferredHeight: 30
+                                    text: root.profileEditMode ? "取消" : "修改资料"
+                                    enabled: viewModel && !viewModel.busy
+                                    onClicked: {
+                                        if (root.profileEditMode) {
+                                            root.profileEditMode = false
+                                            root.syncProfileDrafts()
+                                            return
+                                        }
+                                        root.syncProfileDrafts()
+                                        root.profileEditMode = true
+                                    }
+                                }
                             }
 
                             Text {
                                 Layout.fillWidth: true
+                                visible: !root.profileEditMode
                                 text: viewModel ? viewModel.profileSummary : ""
                                 color: Theme.text
                                 font.pixelSize: 14
                                 wrapMode: Text.Wrap
+                            }
+
+                            ThemedTextField {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 38
+                                visible: root.profileEditMode
+                                enabled: viewModel && !viewModel.busy
+                                text: root.draftProfileNickname
+                                placeholderText: "昵称，例如：李明 / 摄影组A机"
+                                onTextEdited: root.draftProfileNickname = text
+                            }
+
+                            ThemedTextField {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 38
+                                visible: root.profileEditMode
+                                enabled: viewModel && !viewModel.busy
+                                text: root.draftProfileContact
+                                placeholderText: "联系方式，例如：微信 / 手机 / 邮箱"
+                                onTextEdited: root.draftProfileContact = text
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                visible: root.profileEditMode
+                                text: "保存后会继续沿用当前反馈会话，后续发消息时会带上新的资料信息。"
+                                color: Theme.muted
+                                font.pixelSize: 12
+                                wrapMode: Text.Wrap
+                            }
+
+                            ActionButton {
+                                Layout.alignment: Qt.AlignRight
+                                Layout.preferredWidth: 104
+                                Layout.preferredHeight: 34
+                                visible: root.profileEditMode
+                                text: viewModel && viewModel.busy ? "保存中..." : "保存资料"
+                                enabled: viewModel
+                                    && !viewModel.busy
+                                    && root.draftProfileNickname.trim().length > 0
+                                    && root.draftProfileContact.trim().length > 0
+                                primary: true
+                                onClicked: root.submitProfileEdits()
                             }
                         }
                     }

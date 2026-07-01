@@ -20,6 +20,8 @@ class FeedbackViewModel : public QObject {
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY stateChanged)
     Q_PROPERTY(QString connectionStatus READ connectionStatus NOTIFY stateChanged)
     Q_PROPERTY(QString profileSummary READ profileSummary NOTIFY stateChanged)
+    Q_PROPERTY(QString profileNickname READ profileNickname NOTIFY stateChanged)
+    Q_PROPERTY(QString profileContact READ profileContact NOTIFY stateChanged)
     Q_PROPERTY(QString projectSummary READ projectSummary NOTIFY stateChanged)
     Q_PROPERTY(QString conversationStatusLabel READ conversationStatusLabel NOTIFY stateChanged)
     Q_PROPERTY(QString appVersionLabel READ appVersionLabel NOTIFY stateChanged)
@@ -45,6 +47,8 @@ public:
     QString statusMessage() const;
     QString connectionStatus() const;
     QString profileSummary() const;
+    QString profileNickname() const;
+    QString profileContact() const;
     QString projectSummary() const;
     QString conversationStatusLabel() const;
     QString appVersionLabel() const;

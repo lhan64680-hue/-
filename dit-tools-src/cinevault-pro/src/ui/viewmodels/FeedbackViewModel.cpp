@@ -177,6 +177,22 @@ QString FeedbackViewModel::profileSummary() const
              conversation.contact.isEmpty() ? QStringLiteral("未填写联系方式") : conversation.contact);
 }
 
+QString FeedbackViewModel::profileNickname() const
+{
+    if (!m_service) {
+        return {};
+    }
+    return m_service->conversation().nickname;
+}
+
+QString FeedbackViewModel::profileContact() const
+{
+    if (!m_service) {
+        return {};
+    }
+    return m_service->conversation().contact;
+}
+
 QString FeedbackViewModel::projectSummary() const
 {
     if (!m_service) {

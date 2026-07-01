@@ -202,9 +202,16 @@ class Database:
             "created_at": row["created_at"],
         }
 
-    def get_or_create_client_conversation(self, request: Request, payload: ClientSessionPayload) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def get_or_create_client_conversation(self, request: Request, payload: ClientSessionPayload) -> tuple[dict[str, Any], list[dict[str, Any]], bool]:
         with self._connect() as conn:
             row = None
+            metadata_changed = False
+            normalized_nickname = payload.nickname.strip()
+            normalized_contact = payload.contact.strip()
+            normalized_app_version = payload.app_version.strip()
+            normalized_system_summary = payload.system_summary.strip()
+            normalized_project_name = payload.project_name.strip()
+            normalized_project_path = payload.project_path.strip()
             if payload.client_id and payload.client_token:
                 row = conn.execute(
                     "SELECT * FROM conversations WHERE client_id = ? AND client_token = ? LIMIT 1",
@@ -228,12 +235,12 @@ class Database:
                         conversation_id,
                         client_id,
                         client_token,
-                        payload.nickname.strip(),
-                        payload.contact.strip(),
-                        payload.app_version.strip(),
-                        payload.system_summary.strip(),
-                        payload.project_name.strip(),
-                        payload.project_path.strip(),
+                        normalized_nickname,
+                        normalized_contact,
+                        normalized_app_version,
+                        normalized_system_summary,
+                        normalized_project_name,
+                        normalized_project_path,
                         now,
                         now,
                     ),
@@ -241,32 +248,43 @@ class Database:
                 conn.commit()
                 row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
             else:
-                conn.execute(
-                    """
-                    UPDATE conversations
-                    SET nickname = ?, contact = ?, app_version = ?, system_summary = ?,
-                        project_name = ?, project_path = ?, updated_at = ?
-                    WHERE id = ?
-                    """,
+                metadata_changed = any(
                     (
-                        payload.nickname.strip(),
-                        payload.contact.strip(),
-                        payload.app_version.strip(),
-                        payload.system_summary.strip(),
-                        payload.project_name.strip(),
-                        payload.project_path.strip(),
-                        utc_now(),
-                        row["id"],
-                    ),
+                        row["nickname"] != normalized_nickname,
+                        row["contact"] != normalized_contact,
+                        row["app_version"] != normalized_app_version,
+                        row["system_summary"] != normalized_system_summary,
+                        row["project_name"] != normalized_project_name,
+                        row["project_path"] != normalized_project_path,
+                    )
                 )
-                conn.commit()
-                row = conn.execute("SELECT * FROM conversations WHERE id = ?", (row["id"],)).fetchone()
+                if metadata_changed:
+                    conn.execute(
+                        """
+                        UPDATE conversations
+                        SET nickname = ?, contact = ?, app_version = ?, system_summary = ?,
+                            project_name = ?, project_path = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            normalized_nickname,
+                            normalized_contact,
+                            normalized_app_version,
+                            normalized_system_summary,
+                            normalized_project_name,
+                            normalized_project_path,
+                            utc_now(),
+                            row["id"],
+                        ),
+                    )
+                    conn.commit()
+                    row = conn.execute("SELECT * FROM conversations WHERE id = ?", (row["id"],)).fetchone()
 
             messages = self._list_messages(conn, request, row["id"])
             self._mark_seen(conn, row["id"], "client")
             summary_row = self._conversation_row_with_unread(conn, row["id"])
             summary = self._conversation_summary(request, summary_row)
-            return self._attach_client_realtime(request, summary, row), messages
+            return self._attach_client_realtime(request, summary, row), messages, metadata_changed
 
     def authenticate_client(self, conversation_id: str, client_id: str, client_token: str) -> sqlite3.Row:
         with self._connect() as conn:
@@ -761,7 +779,9 @@ async def admin_script() -> FileResponse:
 
 @app.post("/api/client/session")
 async def create_or_restore_client_session(request: Request, payload: ClientSessionPayload) -> JSONResponse:
-    conversation, messages = database.get_or_create_client_conversation(request, payload)
+    conversation, messages, metadata_changed = database.get_or_create_client_conversation(request, payload)
+    if metadata_changed:
+        await hub.broadcast_conversation(conversation)
     return JSONResponse({"conversation": conversation, "messages": messages})
 
 
