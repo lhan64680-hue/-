@@ -44,12 +44,6 @@ Rectangle {
         return "文件"
     }
 
-    function submitDraftMessage(text) {
-        if (viewModel) {
-            viewModel.sendMessage(text)
-        }
-    }
-
     function syncProfileDrafts() {
         draftProfileNickname = viewModel ? viewModel.profileNickname : ""
         draftProfileContact = viewModel ? viewModel.profileContact : ""
@@ -411,6 +405,19 @@ Rectangle {
 
         RowLayout {
             spacing: 14
+
+            function submitDraftMessage() {
+                if (!root.viewModel) {
+                    return
+                }
+
+                var draftText = draftMessageArea.text
+                Qt.callLater(function() {
+                    if (root.viewModel) {
+                        root.viewModel.sendMessage(draftText)
+                    }
+                })
+            }
 
             Connections {
                 target: viewModel
@@ -778,12 +785,13 @@ Rectangle {
                                         return
                                     }
                                     if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                            && !event.isAutoRepeat
                                             && !(event.modifiers & Qt.ControlModifier)
                                             && !(event.modifiers & Qt.ShiftModifier)
                                             && !(event.modifiers & Qt.AltModifier)
                                             && !(event.modifiers & Qt.MetaModifier)) {
                                         event.accepted = true
-                                        root.submitDraftMessage(draftMessageArea.text)
+                                        submitDraftMessage()
                                     }
                                 }
                                 background: Rectangle {
@@ -820,7 +828,7 @@ Rectangle {
                                     text: viewModel && viewModel.sending ? "发送中..." : "发送反馈"
                                     enabled: viewModel && viewModel.ready && !viewModel.sending
                                     primary: true
-                                    onClicked: root.submitDraftMessage(draftMessageArea.text)
+                                    onClicked: submitDraftMessage()
                                 }
                             }
                         }
