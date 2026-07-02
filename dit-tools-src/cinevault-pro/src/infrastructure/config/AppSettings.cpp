@@ -19,10 +19,17 @@ constexpr auto kThemeModeKey = "ui/themeMode";
 constexpr auto kPendingUpdateVersionKey = "updates/pendingVersion";
 constexpr auto kPendingUpdateInstallerPathKey = "updates/pendingInstallerPath";
 constexpr auto kDownloadedUpdateVersionKey = "updates/downloadedVersion";
+constexpr auto kUpdateDownloadModeKey = "updates/downloadMode";
+constexpr auto kUpdateManualProxyUrlKey = "updates/manualProxyUrl";
 constexpr auto kMaterialBackupQueuePrefix = "materialBackup/queues/";
 constexpr auto kFeedbackSessionKey = "feedback/sessionJson";
 
 int normalizedThemeMode(int value)
+{
+    return value >= 0 && value <= 2 ? value : 0;
+}
+
+int normalizedUpdateDownloadMode(int value)
 {
     return value >= 0 && value <= 2 ? value : 0;
 }
@@ -273,6 +280,26 @@ void AppSettings::clearPendingUpdate()
     m_settings->remove(QLatin1String(kPendingUpdateInstallerPathKey));
     m_settings->remove(QLatin1String(kDownloadedUpdateVersionKey));
     m_settings->sync();
+}
+
+int AppSettings::updateDownloadMode() const
+{
+    return normalizedUpdateDownloadMode(m_settings->value(QLatin1String(kUpdateDownloadModeKey), 0).toInt());
+}
+
+void AppSettings::setUpdateDownloadMode(int value)
+{
+    m_settings->setValue(QLatin1String(kUpdateDownloadModeKey), normalizedUpdateDownloadMode(value));
+}
+
+QString AppSettings::updateManualProxyUrl() const
+{
+    return m_settings->value(QLatin1String(kUpdateManualProxyUrlKey)).toString().trimmed();
+}
+
+void AppSettings::setUpdateManualProxyUrl(const QString &value)
+{
+    m_settings->setValue(QLatin1String(kUpdateManualProxyUrlKey), value.trimmed());
 }
 
 QString AppSettings::materialBackupQueueJson(const QString &projectDatabasePath) const

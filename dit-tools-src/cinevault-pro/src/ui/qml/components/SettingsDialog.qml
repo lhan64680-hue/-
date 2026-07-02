@@ -16,6 +16,8 @@ Dialog {
     property int draftContactSheetFrameCount: 24
     property int draftAnalysisTimeoutSec: 60
     property int draftThemeMode: Theme.modeSystem
+    property int draftUpdateDownloadMode: 0
+    property string draftUpdateManualProxyUrl: ""
     property int bodyFontSize: 15
     property int sectionTitleSize: 20
     property int controlHeight: 42
@@ -43,6 +45,8 @@ Dialog {
             draftContactSheetFrameCount = viewModel.contactSheetFrameCount
             draftAnalysisTimeoutSec = viewModel.analysisTimeoutSec
             draftThemeMode = viewModel.themeMode
+            draftUpdateDownloadMode = viewModel.updateDownloadMode
+            draftUpdateManualProxyUrl = viewModel.updateManualProxyUrl
         }
     }
 
@@ -59,7 +63,7 @@ Dialog {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 78
+            Layout.preferredHeight: 96
             color: Theme.panel2
             border.width: 1
             border.color: Theme.line
@@ -80,6 +84,12 @@ Dialog {
                     }
 
                     Text {
+                        text: viewModel ? viewModel.currentVersionLabel : "当前版本：v0.0.0"
+                        color: Theme.weak
+                        font.pixelSize: 13
+                    }
+
+                    Text {
                         text: "软件更新、视觉解析、缩略图和解析图片配置"
                         color: Theme.muted
                         font.pixelSize: root.bodyFontSize
@@ -95,6 +105,9 @@ Dialog {
                     enabled: viewModel && !viewModel.updateBusy
                     textPixelSize: root.bodyFontSize
                     onClicked: if (viewModel) {
+                        viewModel.saveUpdateDownloadSettings(
+                            root.draftUpdateDownloadMode,
+                            root.draftUpdateManualProxyUrl)
                         viewModel.checkForUpdates()
                     }
                 }
@@ -114,7 +127,9 @@ Dialog {
                             root.draftFrameInterval,
                             root.draftThumbnailFrameIndex,
                             root.draftContactSheetFrameCount,
-                            root.draftAnalysisTimeoutSec)
+                            root.draftAnalysisTimeoutSec,
+                            root.draftUpdateDownloadMode,
+                            root.draftUpdateManualProxyUrl)
                     }
                 }
 
@@ -139,6 +154,77 @@ Dialog {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.margins: 20
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    radius: 18
+                    color: Theme.panel2
+                    border.width: 1
+                    border.color: Theme.line
+                    implicitHeight: updateContent.implicitHeight + root.sectionPadding * 2
+
+                    ColumnLayout {
+                        id: updateContent
+                        anchors.fill: parent
+                        anchors.margins: root.sectionPadding
+                        spacing: 14
+
+                        Text {
+                            text: "软件更新"
+                            color: Theme.text
+                            font.pixelSize: root.sectionTitleSize
+                            font.weight: Font.DemiBold
+                        }
+
+                        GridLayout {
+                            columns: 2
+                            columnSpacing: 14
+                            rowSpacing: 14
+                            Layout.fillWidth: true
+
+                            Text {
+                                Layout.preferredWidth: root.formLabelWidth
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "下载更新渠道"
+                                color: Theme.muted
+                                font.pixelSize: root.bodyFontSize
+                            }
+
+                            ThemedComboBox {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: root.controlHeight
+                                font.pixelSize: root.bodyFontSize
+                                model: [
+                                    { label: "自动检测代理", value: 0 },
+                                    { label: "手动代理", value: 1 },
+                                    { label: "直连下载", value: 2 }
+                                ]
+                                textRole: "label"
+                                currentIndex: root.draftUpdateDownloadMode === 1 ? 1 : (root.draftUpdateDownloadMode === 2 ? 2 : 0)
+                                onActivated: root.draftUpdateDownloadMode = model[index].value
+                            }
+
+                            Text {
+                                visible: root.draftUpdateDownloadMode === 1
+                                Layout.preferredWidth: root.formLabelWidth
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "代理地址"
+                                color: Theme.muted
+                                font.pixelSize: root.bodyFontSize
+                            }
+
+                            ThemedTextField {
+                                visible: root.draftUpdateDownloadMode === 1
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: root.controlHeight
+                                font.pixelSize: root.bodyFontSize
+                                text: root.draftUpdateManualProxyUrl
+                                placeholderText: "http://127.0.0.1:7890"
+                                onTextEdited: root.draftUpdateManualProxyUrl = text
+                            }
+                        }
+                    }
+                }
 
                 Rectangle {
                     Layout.fillWidth: true

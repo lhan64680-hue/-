@@ -1,6 +1,7 @@
 #include "application/UpdateService.h"
 
 #include <QNetworkProxy>
+#include <QProcessEnvironment>
 #include <QtTest>
 
 class UpdateServiceTest : public QObject {
@@ -17,9 +18,13 @@ private slots:
     void parseLatestRelease_rejectsMissingInstaller();
     void parseLatestRelease_rejectsInvalidPayload();
     void latestReleaseStatusMessage_handlesNoRelease();
+    void normalizedProxyUrl_addsHttpSchemeForHostPort();
+    void normalizedProxyUrl_rejectsInvalidValues();
     void proxyUrlForNetworkProxy_handlesHttpProxy();
     void proxyUrlForNetworkProxy_handlesSocksProxy();
     void preferredProxyUrl_skipsUnsupportedEntries();
+    void proxyUrlsForEnvironment_readsCommonVariables();
+    void localProxyCandidates_containsCommonPorts();
 };
 
 void UpdateServiceTest::compareVersionTags_ordersSemanticVersions()
@@ -178,6 +183,21 @@ void UpdateServiceTest::latestReleaseStatusMessage_handlesNoRelease()
              QStringLiteral("检查更新失败：Server Error"));
 }
 
+void UpdateServiceTest::normalizedProxyUrl_addsHttpSchemeForHostPort()
+{
+    QCOMPARE(UpdateService::normalizedProxyUrl(QStringLiteral("127.0.0.1:7890")),
+             QStringLiteral("http://127.0.0.1:7890"));
+    QCOMPARE(UpdateService::normalizedProxyUrl(QStringLiteral("socks5://localhost:1080")),
+             QStringLiteral("socks5://localhost:1080"));
+}
+
+void UpdateServiceTest::normalizedProxyUrl_rejectsInvalidValues()
+{
+    QVERIFY(UpdateService::normalizedProxyUrl(QString()).isEmpty());
+    QVERIFY(UpdateService::normalizedProxyUrl(QStringLiteral("127.0.0.1")).isEmpty());
+    QVERIFY(UpdateService::normalizedProxyUrl(QStringLiteral("ftp://127.0.0.1:21")).isEmpty());
+}
+
 void UpdateServiceTest::proxyUrlForNetworkProxy_handlesHttpProxy()
 {
     const QNetworkProxy proxy(QNetworkProxy::HttpProxy, QStringLiteral("127.0.0.1"), 7890);
@@ -201,6 +221,25 @@ void UpdateServiceTest::preferredProxyUrl_skipsUnsupportedEntries()
         QNetworkProxy(QNetworkProxy::HttpProxy, QStringLiteral("127.0.0.1"), 7890)
     };
     QCOMPARE(UpdateService::preferredProxyUrl(proxies), QStringLiteral("http://127.0.0.1:7890"));
+}
+
+void UpdateServiceTest::proxyUrlsForEnvironment_readsCommonVariables()
+{
+    QProcessEnvironment environment;
+    environment.insert(QStringLiteral("HTTPS_PROXY"), QStringLiteral("127.0.0.1:7890"));
+    environment.insert(QStringLiteral("ALL_PROXY"), QStringLiteral("socks5://localhost:1080"));
+
+    const auto proxyUrls = UpdateService::proxyUrlsForEnvironment(environment);
+    QVERIFY(proxyUrls.contains(QStringLiteral("http://127.0.0.1:7890")));
+    QVERIFY(proxyUrls.contains(QStringLiteral("socks5://localhost:1080")));
+}
+
+void UpdateServiceTest::localProxyCandidates_containsCommonPorts()
+{
+    const auto proxyUrls = UpdateService::localProxyCandidates({QStringLiteral("127.0.0.1")});
+    QVERIFY(proxyUrls.contains(QStringLiteral("http://127.0.0.1:7890")));
+    QVERIFY(proxyUrls.contains(QStringLiteral("http://127.0.0.1:10809")));
+    QVERIFY(proxyUrls.contains(QStringLiteral("socks5://127.0.0.1:1080")));
 }
 
 QTEST_APPLESS_MAIN(UpdateServiceTest)

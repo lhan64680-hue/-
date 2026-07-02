@@ -7,18 +7,24 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
+#include <QNetworkInterface>
 #include <QNetworkProxyFactory>
 #include <QNetworkProxyQuery>
 #include <QProcess>
+#include <QTcpSocket>
 #include <QUrl>
 #include <QVersionNumber>
 
 namespace {
 constexpr auto kLatestReleaseUrl = "https://api.github.com/repos/luojiang419/dit-tools/releases/latest";
+constexpr int kUpdateDownloadModeAuto = 0;
+constexpr int kUpdateDownloadModeManual = 1;
+constexpr int kUpdateDownloadModeDirect = 2;
 
 QString normalizedPlatformKey(QString platformKey)
 {
@@ -76,6 +82,36 @@ QStringList curlNetworkArguments(const QString &proxyUrl)
     }
 
     return {QStringLiteral("--proxy"), proxyUrl};
+}
+
+void appendUnique(QStringList *items, const QString &value)
+{
+    const auto normalized = value.trimmed();
+    if (!normalized.isEmpty() && !items->contains(normalized, Qt::CaseInsensitive)) {
+        items->append(normalized);
+    }
+}
+
+QString proxyUrlForHostPort(const QString &scheme, const QString &host, int port)
+{
+    QUrl url;
+    url.setScheme(scheme);
+    url.setHost(host);
+    url.setPort(port);
+    return url.toString(QUrl::FullyEncoded);
+}
+
+QStringList localProxyHosts()
+{
+    QStringList hosts{QStringLiteral("127.0.0.1"), QStringLiteral("localhost")};
+    const auto addresses = QNetworkInterface::allAddresses();
+    for (const auto &address : addresses) {
+        if (address.protocol() != QAbstractSocket::IPv4Protocol || address.isLoopback()) {
+            continue;
+        }
+        appendUnique(&hosts, address.toString());
+    }
+    return hosts;
 }
 }
 
@@ -237,6 +273,34 @@ QString UpdateService::latestReleaseStatusMessage(int statusCode, const QString 
         networkErrorString.trimmed().isEmpty() ? QStringLiteral("网络请求没有返回结果。") : networkErrorString);
 }
 
+QString UpdateService::normalizedProxyUrl(const QString &proxyUrl)
+{
+    auto candidate = proxyUrl.trimmed();
+    if (candidate.isEmpty()) {
+        return {};
+    }
+    if (!candidate.contains(QStringLiteral("://"))) {
+        candidate.prepend(QStringLiteral("http://"));
+    }
+
+    QUrl url(candidate);
+    const auto scheme = url.scheme().trimmed().toLower();
+    if (!url.isValid()
+        || url.host().trimmed().isEmpty()
+        || url.port() <= 0
+        || (scheme != QStringLiteral("http")
+            && scheme != QStringLiteral("https")
+            && scheme != QStringLiteral("socks4")
+            && scheme != QStringLiteral("socks4a")
+            && scheme != QStringLiteral("socks5")
+            && scheme != QStringLiteral("socks5h"))) {
+        return {};
+    }
+
+    url.setScheme(scheme);
+    return url.toString(QUrl::FullyEncoded);
+}
+
 QString UpdateService::proxyUrlForNetworkProxy(const QNetworkProxy &proxy)
 {
     QString scheme;
@@ -267,7 +331,7 @@ QString UpdateService::proxyUrlForNetworkProxy(const QNetworkProxy &proxy)
     if (!proxy.password().isEmpty()) {
         url.setPassword(proxy.password());
     }
-    return url.toString(QUrl::FullyEncoded);
+    return normalizedProxyUrl(url.toString(QUrl::FullyEncoded));
 }
 
 QString UpdateService::preferredProxyUrl(const QList<QNetworkProxy> &proxies)
@@ -275,6 +339,65 @@ QString UpdateService::preferredProxyUrl(const QList<QNetworkProxy> &proxies)
     for (const auto &proxy : proxies) {
         const auto proxyUrl = proxyUrlForNetworkProxy(proxy);
         if (!proxyUrl.isEmpty()) {
+            return proxyUrl;
+        }
+    }
+
+    return {};
+}
+
+QStringList UpdateService::proxyUrlsForEnvironment(const QProcessEnvironment &environment)
+{
+    QStringList proxyUrls;
+    const QStringList keys{
+        QStringLiteral("HTTPS_PROXY"),
+        QStringLiteral("https_proxy"),
+        QStringLiteral("HTTP_PROXY"),
+        QStringLiteral("http_proxy"),
+        QStringLiteral("ALL_PROXY"),
+        QStringLiteral("all_proxy")
+    };
+
+    for (const auto &key : keys) {
+        appendUnique(&proxyUrls, normalizedProxyUrl(environment.value(key)));
+    }
+
+    return proxyUrls;
+}
+
+QStringList UpdateService::localProxyCandidates(const QStringList &hosts)
+{
+    const auto resolvedHosts = hosts.isEmpty() ? localProxyHosts() : hosts;
+    QStringList candidates;
+    for (const auto &host : resolvedHosts) {
+        const auto normalizedHost = host.trimmed();
+        if (normalizedHost.isEmpty()) {
+            continue;
+        }
+
+        for (const auto port : {7890, 7897, 7899, 8080, 10809, 20171}) {
+            appendUnique(&candidates, proxyUrlForHostPort(QStringLiteral("http"), normalizedHost, port));
+        }
+        for (const auto port : {1080, 10808}) {
+            appendUnique(&candidates, proxyUrlForHostPort(QStringLiteral("socks5"), normalizedHost, port));
+        }
+    }
+    return candidates;
+}
+
+QString UpdateService::firstReachableProxyUrl(const QStringList &proxyUrls, int timeoutMs)
+{
+    QStringList normalizedUrls;
+    for (const auto &proxyUrl : proxyUrls) {
+        appendUnique(&normalizedUrls, normalizedProxyUrl(proxyUrl));
+    }
+
+    for (const auto &proxyUrl : normalizedUrls) {
+        const QUrl url(proxyUrl);
+        QTcpSocket socket;
+        socket.connectToHost(url.host(), url.port());
+        if (socket.waitForConnected(qMax(20, timeoutMs))) {
+            socket.disconnectFromHost();
             return proxyUrl;
         }
     }
@@ -340,12 +463,24 @@ void UpdateService::checkForUpdates(bool manual)
 
     m_manualCheck = manual;
     setBusy(true);
-    const auto proxyUrl = systemProxyUrl();
+    QString proxyErrorMessage;
+    const auto proxyUrl = configuredProxyUrl(&proxyErrorMessage);
+    if (!proxyErrorMessage.isEmpty()) {
+        setBusy(false);
+        setStatusMessage(proxyErrorMessage);
+        return;
+    }
+
+    const auto proxyLabel = proxyStatusLabel(proxyUrl);
+    const auto directMode = m_settings && m_settings->updateDownloadMode() == kUpdateDownloadModeDirect;
     setStatusMessage(proxyUrl.isEmpty()
-        ? (manual ? QStringLiteral("正在检查最新发布版本...")
-                  : QStringLiteral("启动后正在检查最新发布版本..."))
-        : (manual ? QStringLiteral("正在通过系统代理检查最新发布版本...")
-                  : QStringLiteral("启动后正在通过系统代理检查最新发布版本...")));
+        ? (directMode
+            ? (manual ? QStringLiteral("正在直连检查最新发布版本...")
+                      : QStringLiteral("启动后正在直连检查最新发布版本..."))
+            : (manual ? QStringLiteral("未检测到可用代理，正在直连检查最新发布版本...")
+                      : QStringLiteral("未检测到可用代理，启动后正在直连检查最新发布版本...")))
+        : (manual ? QStringLiteral("正在通过%1检查最新发布版本...").arg(proxyLabel)
+                  : QStringLiteral("启动后正在通过%1检查最新发布版本...").arg(proxyLabel)));
     launchCheckProcess(proxyUrl, !proxyUrl.isEmpty());
 }
 
@@ -353,6 +488,53 @@ QString UpdateService::systemProxyUrl() const
 {
     return preferredProxyUrl(
         QNetworkProxyFactory::systemProxyForQuery(QNetworkProxyQuery(QUrl(QString::fromLatin1(kLatestReleaseUrl)))));
+}
+
+QString UpdateService::autoDetectedProxyUrl() const
+{
+    QStringList candidates;
+    appendUnique(&candidates, systemProxyUrl());
+    for (const auto &proxyUrl : proxyUrlsForEnvironment(QProcessEnvironment::systemEnvironment())) {
+        appendUnique(&candidates, proxyUrl);
+    }
+    for (const auto &proxyUrl : localProxyCandidates()) {
+        appendUnique(&candidates, proxyUrl);
+    }
+
+    return firstReachableProxyUrl(candidates);
+}
+
+QString UpdateService::configuredProxyUrl(QString *errorMessage) const
+{
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+
+    const auto mode = m_settings ? m_settings->updateDownloadMode() : kUpdateDownloadModeAuto;
+    if (mode == kUpdateDownloadModeDirect) {
+        return {};
+    }
+
+    if (mode == kUpdateDownloadModeManual) {
+        const auto proxyUrl = normalizedProxyUrl(m_settings ? m_settings->updateManualProxyUrl() : QString());
+        if (proxyUrl.isEmpty() && errorMessage) {
+            *errorMessage = QStringLiteral("手动代理地址无效，请填写类似 http://127.0.0.1:7890 的地址。");
+        }
+        return proxyUrl;
+    }
+
+    return autoDetectedProxyUrl();
+}
+
+QString UpdateService::proxyStatusLabel(const QString &proxyUrl) const
+{
+    if (proxyUrl.trimmed().isEmpty()) {
+        return {};
+    }
+
+    return m_settings && m_settings->updateDownloadMode() == kUpdateDownloadModeManual
+        ? QStringLiteral("手动代理")
+        : QStringLiteral("自动检测代理");
 }
 
 void UpdateService::launchCheckProcess(const QString &proxyUrl, bool allowDirectFallback)
@@ -409,7 +591,7 @@ bool UpdateService::retryCheckWithoutProxy()
         return false;
     }
 
-    setStatusMessage(QStringLiteral("系统代理检查失败，正在尝试直连 GitHub..."));
+    setStatusMessage(QStringLiteral("代理检查失败，正在尝试直连 GitHub..."));
     launchCheckProcess(QString(), false);
     return true;
 }
@@ -652,10 +834,21 @@ void UpdateService::startInstallerDownload(const UpdateReleaseInfo &release, boo
     m_downloadTargetPath = QDir(platformUpdatesRoot).filePath(release.installerName);
     m_downloadPartPath = m_downloadTargetPath + QStringLiteral(".part");
     m_downloadExpectedSize = release.installerSize;
-    const auto proxyUrl = systemProxyUrl();
+    QString proxyErrorMessage;
+    const auto proxyUrl = configuredProxyUrl(&proxyErrorMessage);
+    if (!proxyErrorMessage.isEmpty()) {
+        setBusy(false);
+        setStatusMessage(proxyErrorMessage);
+        return;
+    }
+
+    const auto proxyLabel = proxyStatusLabel(proxyUrl);
+    const auto directMode = m_settings && m_settings->updateDownloadMode() == kUpdateDownloadModeDirect;
     setStatusMessage(proxyUrl.isEmpty()
-        ? QStringLiteral("发现新版本 %1，正在下载更新包...").arg(release.versionTag)
-        : QStringLiteral("发现新版本 %1，正在通过系统代理下载更新包...").arg(release.versionTag));
+        ? (directMode
+            ? QStringLiteral("发现新版本 %1，正在直连下载更新包...").arg(release.versionTag)
+            : QStringLiteral("发现新版本 %1，未检测到可用代理，正在直连下载更新包...").arg(release.versionTag))
+        : QStringLiteral("发现新版本 %1，正在通过%2下载更新包...").arg(release.versionTag, proxyLabel));
     launchDownloadProcess(proxyUrl, !proxyUrl.isEmpty());
 }
 
@@ -711,7 +904,7 @@ bool UpdateService::retryDownloadWithoutProxy()
         return false;
     }
 
-    setStatusMessage(QStringLiteral("系统代理下载失败，正在尝试直连 GitHub..."));
+    setStatusMessage(QStringLiteral("代理下载失败，正在尝试直连 GitHub..."));
     launchDownloadProcess(QString(), false);
     return true;
 }

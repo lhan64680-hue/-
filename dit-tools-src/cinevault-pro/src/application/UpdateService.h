@@ -4,6 +4,7 @@
 #include <QNetworkProxy>
 #include <QObject>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QString>
 
 class AppSettings;
@@ -29,8 +30,12 @@ public:
     static QStringList expectedInstallerNames(const QString &versionTag, const QString &platformKey = QString());
     static bool parseLatestRelease(const QByteArray &payload, UpdateReleaseInfo *info, QString *errorMessage, const QString &platformKey = QString());
     static QString latestReleaseStatusMessage(int statusCode, const QString &networkErrorString);
+    static QString normalizedProxyUrl(const QString &proxyUrl);
     static QString proxyUrlForNetworkProxy(const QNetworkProxy &proxy);
     static QString preferredProxyUrl(const QList<QNetworkProxy> &proxies);
+    static QStringList proxyUrlsForEnvironment(const QProcessEnvironment &environment);
+    static QStringList localProxyCandidates(const QStringList &hosts = QStringList());
+    static QString firstReachableProxyUrl(const QStringList &proxyUrls, int timeoutMs = 120);
 
     QString currentVersionTag() const;
     bool isBusy() const;
@@ -52,6 +57,9 @@ private:
     bool readPendingUpdate(QString *versionTag, QString *installerPath) const;
     bool useExistingInstaller(const UpdateReleaseInfo &release, bool manual);
     QString systemProxyUrl() const;
+    QString autoDetectedProxyUrl() const;
+    QString configuredProxyUrl(QString *errorMessage) const;
+    QString proxyStatusLabel(const QString &proxyUrl) const;
     void launchCheckProcess(const QString &proxyUrl, bool allowDirectFallback);
     bool retryCheckWithoutProxy();
     void startInstallerDownload(const UpdateReleaseInfo &release, bool manual);

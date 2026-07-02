@@ -193,6 +193,42 @@ bool SettingsViewModel::updateBusy() const
     return m_updateService && m_updateService->isBusy();
 }
 
+QString SettingsViewModel::currentVersionLabel() const
+{
+    return QStringLiteral("当前版本：%1").arg(
+        m_updateService ? m_updateService->currentVersionTag() : QStringLiteral("v0.0.0"));
+}
+
+int SettingsViewModel::updateDownloadMode() const
+{
+    return m_settings ? m_settings->updateDownloadMode() : 0;
+}
+
+void SettingsViewModel::setUpdateDownloadMode(int value)
+{
+    if (!m_settings || updateDownloadMode() == qBound(0, value, 2)) {
+        return;
+    }
+    m_settings->setUpdateDownloadMode(value);
+    m_settings->sync();
+    emit settingsChanged();
+}
+
+QString SettingsViewModel::updateManualProxyUrl() const
+{
+    return m_settings ? m_settings->updateManualProxyUrl() : QString();
+}
+
+void SettingsViewModel::setUpdateManualProxyUrl(const QString &value)
+{
+    if (!m_settings || updateManualProxyUrl() == value.trimmed()) {
+        return;
+    }
+    m_settings->setUpdateManualProxyUrl(value);
+    m_settings->sync();
+    emit settingsChanged();
+}
+
 QString SettingsViewModel::dataRootPath() const
 {
     return Paths::resolvedDataRoot();
@@ -224,6 +260,18 @@ void SettingsViewModel::checkForUpdates()
     }
 
     m_updateService->checkForUpdates(true);
+}
+
+void SettingsViewModel::saveUpdateDownloadSettings(int updateDownloadMode, const QString &updateManualProxyUrl)
+{
+    if (!m_settings) {
+        return;
+    }
+
+    m_settings->setUpdateDownloadMode(updateDownloadMode);
+    m_settings->setUpdateManualProxyUrl(updateManualProxyUrl);
+    m_settings->sync();
+    emit settingsChanged();
 }
 
 void SettingsViewModel::refresh()
@@ -282,7 +330,9 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
                                      int frameInterval,
                                      int thumbnailFrameIndex,
                                      int contactSheetFrameCount,
-                                     int analysisTimeoutSec)
+                                     int analysisTimeoutSec,
+                                     int updateDownloadMode,
+                                     const QString &updateManualProxyUrl)
 {
     if (!m_settings) {
         return;
@@ -302,6 +352,8 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
     m_settings->setThumbnailFrameIndex(thumbnailFrameIndex);
     m_settings->setContactSheetFrameCount(contactSheetFrameCount);
     m_settings->setAnalysisTimeoutSec(analysisTimeoutSec);
+    m_settings->setUpdateDownloadMode(updateDownloadMode);
+    m_settings->setUpdateManualProxyUrl(updateManualProxyUrl);
     m_settings->sync();
 
     setLastMessage(QStringLiteral("设置已保存并应用，下一次解析将使用新参数。"));

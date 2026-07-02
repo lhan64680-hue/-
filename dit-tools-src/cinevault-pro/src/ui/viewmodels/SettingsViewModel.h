@@ -19,6 +19,9 @@ class SettingsViewModel : public QObject {
     Q_PROPERTY(int analysisTimeoutSec READ analysisTimeoutSec WRITE setAnalysisTimeoutSec NOTIFY settingsChanged)
     Q_PROPERTY(int themeMode READ themeMode WRITE setThemeMode NOTIFY settingsChanged)
     Q_PROPERTY(bool updateBusy READ updateBusy NOTIFY settingsChanged)
+    Q_PROPERTY(QString currentVersionLabel READ currentVersionLabel NOTIFY settingsChanged)
+    Q_PROPERTY(int updateDownloadMode READ updateDownloadMode WRITE setUpdateDownloadMode NOTIFY settingsChanged)
+    Q_PROPERTY(QString updateManualProxyUrl READ updateManualProxyUrl WRITE setUpdateManualProxyUrl NOTIFY settingsChanged)
     Q_PROPERTY(QString dataRootPath READ dataRootPath NOTIFY settingsChanged)
     Q_PROPERTY(QString frameCacheSizeLabel READ frameCacheSizeLabel NOTIFY settingsChanged)
     Q_PROPERTY(QString lastMessage READ lastMessage NOTIFY settingsChanged)
@@ -49,12 +52,18 @@ public:
     int themeMode() const;
     void setThemeMode(int value);
     bool updateBusy() const;
+    QString currentVersionLabel() const;
+    int updateDownloadMode() const;
+    void setUpdateDownloadMode(int value);
+    QString updateManualProxyUrl() const;
+    void setUpdateManualProxyUrl(const QString &value);
     QString dataRootPath() const;
     QString frameCacheSizeLabel() const;
     QString lastMessage() const;
 
     Q_INVOKABLE void beginStartupUpdateFlow();
     Q_INVOKABLE void checkForUpdates();
+    Q_INVOKABLE void saveUpdateDownloadSettings(int updateDownloadMode, const QString &updateManualProxyUrl);
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void refreshCacheInfo();
     Q_INVOKABLE void testConnection();
@@ -69,7 +78,9 @@ public:
                                   int frameInterval,
                                   int thumbnailFrameIndex,
                                   int contactSheetFrameCount,
-                                  int analysisTimeoutSec);
+                                  int analysisTimeoutSec,
+                                  int updateDownloadMode,
+                                  const QString &updateManualProxyUrl);
 
 signals:
     void settingsChanged();

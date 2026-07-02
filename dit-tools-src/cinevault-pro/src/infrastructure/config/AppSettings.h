@@ -55,6 +55,12 @@ public:
     void setDownloadedUpdateVersion(const QString &value);
     void clearPendingUpdate();
 
+    int updateDownloadMode() const;
+    void setUpdateDownloadMode(int value);
+
+    QString updateManualProxyUrl() const;
+    void setUpdateManualProxyUrl(const QString &value);
+
     QString materialBackupQueueJson(const QString &projectDatabasePath) const;
     void setMaterialBackupQueueJson(const QString &projectDatabasePath, const QString &json);
 
