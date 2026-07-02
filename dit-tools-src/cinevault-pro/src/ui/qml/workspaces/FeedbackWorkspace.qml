@@ -432,6 +432,22 @@ Rectangle {
 
         RowLayout {
             spacing: 14
+            property bool scrollToLatestAfterSubmit: false
+            property int scrollToLatestRetries: 0
+
+            function scheduleScrollToLatest(reason) {
+                if (!messageListView || messageListView.count <= 0) {
+                    root.logFeedbackDebug("messageListScrollSkipped", {
+                        reason: reason,
+                        count: messageListView ? messageListView.count : -1
+                    })
+                    return
+                }
+
+                scrollToLatestRetries = 4
+                messageScrollToLatestTimer.lastReason = reason
+                messageScrollToLatestTimer.restart()
+            }
 
             function submitDraftMessage() {
                 if (!root.viewModel || root.viewModel.sending) {
@@ -458,6 +474,7 @@ Rectangle {
                         textLength: draftText.length
                     })
                 }
+                scrollToLatestAfterSubmit = true
                 root.viewModel.sendMessage(draftText)
             }
 
@@ -467,6 +484,41 @@ Rectangle {
                     root.logFeedbackDebug("messageSubmitted", {
                         success: success
                     })
+                    if (success) {
+                        scheduleScrollToLatest("submitSuccess")
+                    } else {
+                        scrollToLatestAfterSubmit = false
+                    }
+                }
+            }
+
+            Timer {
+                id: messageScrollToLatestTimer
+                interval: 40
+                repeat: false
+                property string lastReason: ""
+
+                onTriggered: {
+                    if (!messageListView || messageListView.count <= 0) {
+                        scrollToLatestRetries = 0
+                        return
+                    }
+
+                    messageListView.forceLayout()
+                    messageListView.positionViewAtEnd()
+                    scrollToLatestAfterSubmit = false
+                    root.logFeedbackDebug("messageListScrolledToLatest", {
+                        reason: lastReason,
+                        retriesLeft: scrollToLatestRetries,
+                        count: messageListView.count,
+                        contentHeight: messageListView.contentHeight,
+                        contentY: messageListView.contentY
+                    })
+
+                    scrollToLatestRetries -= 1
+                    if (scrollToLatestRetries > 0) {
+                        restart()
+                    }
                 }
             }
 
@@ -500,6 +552,9 @@ Rectangle {
                                 count: messageListView ? messageListView.count : -1,
                                 contentHeight: messageListView ? messageListView.contentHeight : -1
                             })
+                            if (scrollToLatestAfterSubmit) {
+                                scheduleScrollToLatest("submitMessageCountChanged")
+                            }
                         }
 
                         delegate: Item {
