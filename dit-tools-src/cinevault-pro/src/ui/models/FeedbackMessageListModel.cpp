@@ -146,6 +146,54 @@ QVariantList attachmentList(const QVector<FeedbackAttachment> &attachments)
     }
     return items;
 }
+
+bool sameAttachmentData(const FeedbackAttachment &left, const FeedbackAttachment &right)
+{
+    return left.id == right.id
+        && left.name == right.name
+        && left.mimeType == right.mimeType
+        && left.url == right.url
+        && left.sizeBytes == right.sizeBytes;
+}
+
+bool sameAttachmentsData(const QVector<FeedbackAttachment> &left, const QVector<FeedbackAttachment> &right)
+{
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (int i = 0; i < left.size(); ++i) {
+        if (!sameAttachmentData(left.at(i), right.at(i))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool sameVisibleMessageData(const FeedbackMessage &left, const FeedbackMessage &right)
+{
+    return left.id == right.id
+        && left.senderRole == right.senderRole
+        && left.text == right.text
+        && left.createdAt == right.createdAt
+        && sameAttachmentsData(left.attachments, right.attachments);
+}
+
+const QList<int> &allMessageRoles()
+{
+    static const QList<int> roles = {
+        FeedbackMessageListModel::IdRole,
+        FeedbackMessageListModel::SenderRole,
+        FeedbackMessageListModel::SenderLabelRole,
+        FeedbackMessageListModel::OutgoingRole,
+        FeedbackMessageListModel::TextRole,
+        FeedbackMessageListModel::CreatedAtRole,
+        FeedbackMessageListModel::CreatedAtLabelRole,
+        FeedbackMessageListModel::AttachmentsRole,
+        FeedbackMessageListModel::HasTextRole,
+        FeedbackMessageListModel::HasAttachmentsRole
+    };
+    return roles;
+}
 }
 
 FeedbackMessageListModel::FeedbackMessageListModel(QObject *parent)
@@ -198,6 +246,51 @@ QHash<int, QByteArray> FeedbackMessageListModel::roleNames() const
 
 void FeedbackMessageListModel::setItems(const QVector<FeedbackMessage> &items)
 {
+    const auto oldSize = m_items.size();
+    const auto newSize = items.size();
+
+    if (oldSize == 0) {
+        if (newSize == 0) {
+            return;
+        }
+        beginInsertRows(QModelIndex(), 0, newSize - 1);
+        m_items = items;
+        endInsertRows();
+        return;
+    }
+
+    if (newSize == 0) {
+        beginRemoveRows(QModelIndex(), 0, oldSize - 1);
+        m_items.clear();
+        endRemoveRows();
+        return;
+    }
+
+    bool oldItemsAreLeadingRows = newSize >= oldSize;
+    for (int row = 0; oldItemsAreLeadingRows && row < oldSize; ++row) {
+        oldItemsAreLeadingRows = m_items.at(row).id == items.at(row).id;
+    }
+
+    if (oldItemsAreLeadingRows) {
+        for (int row = 0; row < oldSize; ++row) {
+            if (sameVisibleMessageData(m_items.at(row), items.at(row))) {
+                continue;
+            }
+            m_items[row] = items.at(row);
+            const auto changedIndex = index(row, 0);
+            emit dataChanged(changedIndex, changedIndex, allMessageRoles());
+        }
+
+        if (newSize > oldSize) {
+            beginInsertRows(QModelIndex(), oldSize, newSize - 1);
+            for (int row = oldSize; row < newSize; ++row) {
+                m_items.append(items.at(row));
+            }
+            endInsertRows();
+        }
+        return;
+    }
+
     beginResetModel();
     m_items = items;
     endResetModel();

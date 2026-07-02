@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -39,6 +40,16 @@ def sanitize_filename(filename: str) -> str:
     cleaned = Path(filename or "file").name
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", cleaned).strip("._")
     return cleaned or "file"
+
+
+def normalize_attachment_mime_type(content_type: str | None, filename: str) -> str:
+    normalized = str(content_type or "").split(";", 1)[0].strip().lower()
+    if normalized and normalized != "application/octet-stream":
+        return normalized
+    guessed, _ = mimetypes.guess_type(filename or "")
+    if guessed:
+        return guessed.lower()
+    return normalized or "application/octet-stream"
 
 
 def attachment_public_path(conversation_id: str, attachment_id: str, filename: str) -> str:
@@ -191,6 +202,10 @@ class Database:
         for attachment in attachments:
             attachment = dict(attachment)
             relative_url = attachment.get("url", "")
+            attachment["mime_type"] = normalize_attachment_mime_type(
+                attachment.get("mime_type"),
+                str(attachment.get("name") or relative_url),
+            )
             attachment["url"] = relative_url if relative_url.startswith("http") else base_url + relative_url
             normalized_attachments.append(attachment)
         return {
@@ -738,7 +753,7 @@ async def save_uploads(request: Request, conversation_id: str, files: list[Uploa
             {
                 "id": attachment_id,
                 "name": safe_name,
-                "mime_type": upload.content_type or "application/octet-stream",
+                "mime_type": normalize_attachment_mime_type(upload.content_type, safe_name),
                 "size_bytes": len(content),
                 "stored_name": stored_name,
                 "url": attachment_public_path(conversation_id, attachment_id, safe_name),

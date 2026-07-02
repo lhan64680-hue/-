@@ -44,6 +44,26 @@ Rectangle {
         return "文件"
     }
 
+    function safeWidth(item) {
+        return item ? item.width : 0
+    }
+
+    function boundedWidth(item, horizontalPadding, maxWidth) {
+        return Math.min(Math.max(0, safeWidth(item) - horizontalPadding), maxWidth)
+    }
+
+    function logFeedbackDebug(eventName, details) {
+        var suffix = ""
+        if (details !== undefined && details !== null) {
+            try {
+                suffix = " " + JSON.stringify(details)
+            } catch (error) {
+                suffix = " [details-unserializable]"
+            }
+        }
+        console.warn("[FeedbackWorkspace] " + eventName + suffix)
+    }
+
     function syncProfileDrafts() {
         draftProfileNickname = viewModel ? viewModel.profileNickname : ""
         draftProfileContact = viewModel ? viewModel.profileContact : ""
@@ -111,6 +131,13 @@ Rectangle {
             if (!viewModel) {
                 return
             }
+            root.logFeedbackDebug("viewModelStateChanged", {
+                busy: viewModel.busy,
+                ready: viewModel.ready,
+                sending: viewModel.sending,
+                needsProfile: viewModel.needsProfile,
+                unreadCount: viewModel.unreadCount
+            })
             if (root.profileEditMode) {
                 if (!viewModel.busy
                         && viewModel.ready
@@ -280,7 +307,7 @@ Rectangle {
         Item {
             ColumnLayout {
                 anchors.centerIn: parent
-                width: Math.min(parent.width - 40, 420)
+                width: root.boundedWidth(parent, 40, 420)
                 spacing: 12
 
                 Text {
@@ -310,7 +337,7 @@ Rectangle {
         Item {
             ColumnLayout {
                 anchors.centerIn: parent
-                width: Math.min(parent.width - 40, 520)
+                width: root.boundedWidth(parent, 40, 520)
                 spacing: 14
 
                 Rectangle {
@@ -407,24 +434,39 @@ Rectangle {
             spacing: 14
 
             function submitDraftMessage() {
-                if (!root.viewModel) {
+                if (!root.viewModel || root.viewModel.sending) {
+                    root.logFeedbackDebug("submitDraftMessageSkipped", {
+                        hasViewModel: !!root.viewModel,
+                        sending: root.viewModel ? root.viewModel.sending : false
+                    })
                     return
                 }
 
-                var draftText = draftMessageArea.text
-                Qt.callLater(function() {
-                    if (root.viewModel) {
-                        root.viewModel.sendMessage(draftText)
-                    }
+                var draftText = draftMessageArea ? draftMessageArea.text : ""
+                root.logFeedbackDebug("submitDraftMessageScheduled", {
+                    textLength: draftText ? draftText.length : 0,
+                    hasDraftArea: !!draftMessageArea
                 })
+                root.logFeedbackDebug("submitDraftMessageExecuting", {
+                    textLength: draftText ? draftText.length : 0,
+                    ready: root.viewModel.ready,
+                    sending: root.viewModel.sending
+                })
+                if (draftMessageArea && draftText.trim().length > 0) {
+                    draftMessageArea.text = ""
+                    root.logFeedbackDebug("draftClearedBeforeSubmit", {
+                        textLength: draftText.length
+                    })
+                }
+                root.viewModel.sendMessage(draftText)
             }
 
             Connections {
                 target: viewModel
                 function onMessageSubmitted(success) {
-                    if (success) {
-                        draftMessageArea.text = ""
-                    }
+                    root.logFeedbackDebug("messageSubmitted", {
+                        success: success
+                    })
                 }
             }
 
@@ -453,11 +495,12 @@ Rectangle {
                             policy: ScrollBar.AsNeeded
                         }
 
-                        onCountChanged: Qt.callLater(function() {
-                            if (count > 0) {
-                                positionViewAtIndex(count - 1, ListView.End)
-                            }
-                        })
+                        onCountChanged: {
+                            root.logFeedbackDebug("messageListCountChanged", {
+                                count: messageListView ? messageListView.count : -1,
+                                contentHeight: messageListView ? messageListView.contentHeight : -1
+                            })
+                        }
 
                         delegate: Item {
                             width: ListView.view ? ListView.view.width : 0
@@ -512,7 +555,7 @@ Rectangle {
                                     spacing: 10
 
                                     RowLayout {
-                                        width: parent.width
+                                        width: root.safeWidth(parent)
                                         spacing: 8
 
                                         Text {
@@ -685,7 +728,7 @@ Rectangle {
                         Rectangle {
                             anchors.centerIn: parent
                             visible: !messageListView.count
-                            width: Math.min(parent.width - 24, 340)
+                            width: root.boundedWidth(parent, 24, 340)
                             height: 120
                             radius: 18
                             color: Theme.card
@@ -781,7 +824,7 @@ Rectangle {
                                 selectionColor: Theme.blue
                                 selectedTextColor: Theme.primaryText
                                 Keys.onPressed: function(event) {
-                                    if (draftMessageArea.inputMethodComposing) {
+                                    if (inputMethodComposing) {
                                         return
                                     }
                                     if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
@@ -1016,7 +1059,7 @@ Rectangle {
                                     }
 
                                     Text {
-                                        width: parent.width
+                                        width: root.safeWidth(parent)
                                         text: modelData.value
                                         color: Theme.text
                                         font.pixelSize: 13
@@ -1059,7 +1102,7 @@ Rectangle {
                             }
 
                             Text {
-                                width: parent.width
+                                width: root.safeWidth(parent)
                                 text: "若开发者在你离线时回复，本页在下次打开软件或重新联网后会自动补收历史消息。"
                                 color: Theme.muted
                                 font.pixelSize: 12

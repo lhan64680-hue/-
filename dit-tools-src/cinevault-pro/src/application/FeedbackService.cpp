@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMimeDatabase>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -52,6 +53,16 @@ QList<qint64> jsonInt64List(const QJsonArray &array)
         values.append(static_cast<qint64>(value.toDouble()));
     }
     return values;
+}
+
+QString uploadAttachmentMimeType(const QString &path)
+{
+    QMimeDatabase database;
+    const auto mime = database.mimeTypeForFile(path, QMimeDatabase::MatchDefault);
+    const auto normalized = mime.name().trimmed().toLower();
+    return normalized.isEmpty()
+        ? QStringLiteral("application/octet-stream")
+        : normalized;
 }
 
 QString errorDetailFromPayload(const QByteArray &payload)
@@ -436,6 +447,7 @@ void FeedbackService::sendMessage(const QString &text, const QStringList &filePa
         const auto fileName = QFileInfo(path).fileName();
         filePart.setHeader(QNetworkRequest::ContentDispositionHeader,
                            QStringLiteral("form-data; name=\"files\"; filename=\"%1\"").arg(fileName));
+        filePart.setHeader(QNetworkRequest::ContentTypeHeader, uploadAttachmentMimeType(path));
         filePart.setBodyDevice(file);
         file->setParent(multiPart);
         multiPart->append(filePart);

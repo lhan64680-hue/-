@@ -128,8 +128,39 @@ function formatBytes(value) {
   return `${next.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
+const imageAttachmentExtensions = new Set([
+  "jpg",
+  "jpeg",
+  "png",
+  "gif",
+  "bmp",
+  "webp",
+  "svg",
+  "tif",
+  "tiff",
+  "avif",
+  "heic",
+  "heif",
+]);
+
+function attachmentExtension(attachment) {
+  const candidates = [
+    attachment && attachment.name,
+    attachment && attachment.url,
+  ];
+  for (const candidate of candidates) {
+    const normalized = String(candidate || "").trim().toLowerCase();
+    const match = normalized.match(/\.([a-z0-9]+)(?:$|[?#])/);
+    if (match) {
+      return match[1];
+    }
+  }
+  return "";
+}
+
 function isImageAttachment(attachment) {
-  return (attachment.mime_type || "").startsWith("image/");
+  const mimeType = String((attachment && attachment.mime_type) || "").trim().toLowerCase();
+  return mimeType.startsWith("image/") || imageAttachmentExtensions.has(attachmentExtension(attachment));
 }
 
 function authHeaders(extra = {}) {

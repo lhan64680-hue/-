@@ -15,6 +15,16 @@ FeedbackAttachment makeAttachment(const QString &name,
     attachment.sizeBytes = 2048;
     return attachment;
 }
+
+FeedbackMessage makeMessage(qint64 id, const QString &text)
+{
+    FeedbackMessage message;
+    message.id = id;
+    message.senderRole = QStringLiteral("client");
+    message.text = text;
+    message.createdAt = QStringLiteral("2026-07-01T10:00:00Z");
+    return message;
+}
 }
 
 class FeedbackMessageListModelTest : public QObject {
@@ -23,6 +33,8 @@ class FeedbackMessageListModelTest : public QObject {
 private slots:
     void attachmentPreviewFlags_data();
     void attachmentPreviewFlags();
+    void appendsRowsWithoutReset();
+    void updatesRowsWithoutReset();
 };
 
 void FeedbackMessageListModelTest::attachmentPreviewFlags_data()
@@ -184,6 +196,48 @@ void FeedbackMessageListModelTest::attachmentPreviewFlags()
     QCOMPARE(attachmentRow.value(QStringLiteral("canDownload")).toBool(), expectedDownloadable);
     QCOMPARE(attachmentRow.value(QStringLiteral("isImage")).toBool(), expectedPreviewKind == QStringLiteral("image"));
     QCOMPARE(attachmentRow.value(QStringLiteral("isVideo")).toBool(), expectedPreviewKind == QStringLiteral("video"));
+}
+
+void FeedbackMessageListModelTest::appendsRowsWithoutReset()
+{
+    FeedbackMessageListModel model;
+    model.setItems({makeMessage(1, QStringLiteral("first"))});
+
+    QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy rowsInsertedSpy(&model, &QAbstractItemModel::rowsInserted);
+
+    model.setItems({
+        makeMessage(1, QStringLiteral("first")),
+        makeMessage(2, QStringLiteral("second"))
+    });
+
+    QCOMPARE(resetSpy.count(), 0);
+    QCOMPARE(rowsInsertedSpy.count(), 1);
+    const auto arguments = rowsInsertedSpy.takeFirst();
+    QCOMPARE(arguments.at(1).toInt(), 1);
+    QCOMPARE(arguments.at(2).toInt(), 1);
+    QCOMPARE(model.rowCount({}), 2);
+    QCOMPARE(model.data(model.index(1, 0), FeedbackMessageListModel::TextRole).toString(),
+             QStringLiteral("second"));
+}
+
+void FeedbackMessageListModelTest::updatesRowsWithoutReset()
+{
+    FeedbackMessageListModel model;
+    model.setItems({makeMessage(1, QStringLiteral("draft"))});
+
+    QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy rowsInsertedSpy(&model, &QAbstractItemModel::rowsInserted);
+    QSignalSpy dataChangedSpy(&model, &QAbstractItemModel::dataChanged);
+
+    model.setItems({makeMessage(1, QStringLiteral("confirmed"))});
+
+    QCOMPARE(resetSpy.count(), 0);
+    QCOMPARE(rowsInsertedSpy.count(), 0);
+    QCOMPARE(dataChangedSpy.count(), 1);
+    QCOMPARE(model.rowCount({}), 1);
+    QCOMPARE(model.data(model.index(0, 0), FeedbackMessageListModel::TextRole).toString(),
+             QStringLiteral("confirmed"));
 }
 
 QTEST_APPLESS_MAIN(FeedbackMessageListModelTest)
