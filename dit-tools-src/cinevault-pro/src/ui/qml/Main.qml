@@ -334,6 +334,7 @@ ApplicationWindow {
         FeedbackWorkspace {
             viewModel: root.feedbackViewModel
             documentPreviewVm: root.documentPreviewViewModel
+            workspaceActive: root.isFeedbackWorkspace
         }
     }
 }

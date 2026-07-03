@@ -9,6 +9,7 @@ Rectangle {
 
     property var viewModel
     property var documentPreviewVm
+    property bool workspaceActive: false
     property bool pendingDocumentPreview: false
     property bool profileEditMode: false
     property string draftProfileNickname: ""
@@ -102,11 +103,16 @@ Rectangle {
         root.syncProfileDrafts()
         if (viewModel) {
             viewModel.activate()
-            viewModel.setWorkspaceActive(visible)
+            viewModel.setWorkspaceActive(workspaceActive)
         }
     }
-    onVisibleChanged: if (viewModel) viewModel.setWorkspaceActive(visible)
-    onViewModelChanged: root.syncProfileDrafts()
+    onWorkspaceActiveChanged: if (viewModel) viewModel.setWorkspaceActive(workspaceActive)
+    onViewModelChanged: {
+        root.syncProfileDrafts()
+        if (viewModel) {
+            viewModel.setWorkspaceActive(workspaceActive)
+        }
+    }
 
     Connections {
         target: viewModel
@@ -433,10 +439,13 @@ Rectangle {
         RowLayout {
             spacing: 14
             property bool scrollToLatestAfterSubmit: false
+            property bool scrollToLatestWhenAvailable: false
             property int scrollToLatestRetries: 0
 
             function scheduleScrollToLatest(reason) {
                 if (!messageListView || messageListView.count <= 0) {
+                    scrollToLatestWhenAvailable = true
+                    messageScrollToLatestTimer.lastReason = reason
                     root.logFeedbackDebug("messageListScrollSkipped", {
                         reason: reason,
                         count: messageListView ? messageListView.count : -1
@@ -444,6 +453,7 @@ Rectangle {
                     return
                 }
 
+                scrollToLatestWhenAvailable = false
                 scrollToLatestRetries = 4
                 messageScrollToLatestTimer.lastReason = reason
                 messageScrollToLatestTimer.restart()
@@ -478,6 +488,8 @@ Rectangle {
                 root.viewModel.sendMessage(draftText)
             }
 
+            Component.onCompleted: if (root.workspaceActive) scheduleScrollToLatest("chatCompleted")
+
             Connections {
                 target: viewModel
                 function onMessageSubmitted(success) {
@@ -488,6 +500,15 @@ Rectangle {
                         scheduleScrollToLatest("submitSuccess")
                     } else {
                         scrollToLatestAfterSubmit = false
+                    }
+                }
+            }
+
+            Connections {
+                target: root
+                function onWorkspaceActiveChanged() {
+                    if (root.workspaceActive) {
+                        scheduleScrollToLatest("workspaceActivated")
                     }
                 }
             }
@@ -554,6 +575,8 @@ Rectangle {
                             })
                             if (scrollToLatestAfterSubmit) {
                                 scheduleScrollToLatest("submitMessageCountChanged")
+                            } else if (scrollToLatestWhenAvailable || root.workspaceActive) {
+                                scheduleScrollToLatest("messageCountChanged")
                             }
                         }
 
