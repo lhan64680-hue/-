@@ -19,6 +19,9 @@ class JobTimelineViewModel : public QObject {
     Q_PROPERTY(int batchProgress READ batchProgress NOTIFY stateChanged)
     Q_PROPERTY(QString batchStatusText READ batchStatusText NOTIFY stateChanged)
     Q_PROPERTY(QString batchCurrentLabel READ batchCurrentLabel NOTIFY stateChanged)
+    Q_PROPERTY(QString batchCurrentDetail READ batchCurrentDetail NOTIFY stateChanged)
+    Q_PROPERTY(int batchCurrentProgress READ batchCurrentProgress NOTIFY stateChanged)
+    Q_PROPERTY(bool hasActiveBatchItem READ hasActiveBatchItem NOTIFY stateChanged)
     Q_PROPERTY(int batchFinishedCount READ batchFinishedCount NOTIFY stateChanged)
     Q_PROPERTY(int batchSuccessfulCount READ batchSuccessfulCount NOTIFY stateChanged)
     Q_PROPERTY(int batchFailedCount READ batchFailedCount NOTIFY stateChanged)
@@ -44,6 +47,9 @@ public:
     int batchProgress() const;
     QString batchStatusText() const;
     QString batchCurrentLabel() const;
+    QString batchCurrentDetail() const;
+    int batchCurrentProgress() const;
+    bool hasActiveBatchItem() const;
     int batchFinishedCount() const;
     int batchSuccessfulCount() const;
     int batchFailedCount() const;

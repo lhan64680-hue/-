@@ -34,7 +34,9 @@ public:
     int batchSuccessfulCount() const;
     int batchQueuedCount() const;
     qint64 batchProgressPercent() const;
+    qint64 batchCurrentProgressPercent() const;
     QString batchCurrentLabel() const;
+    QString batchCurrentDetail() const;
     QString batchStatusText() const;
 
 public slots:

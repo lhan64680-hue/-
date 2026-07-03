@@ -22,7 +22,7 @@ Rectangle {
             elide: Text.ElideRight
         }
 
-        RowLayout {
+        ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 14
@@ -30,7 +30,6 @@ Rectangle {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.preferredWidth: 780
                 spacing: 14
 
                 Rectangle {
@@ -318,176 +317,6 @@ Rectangle {
                             text: "当前还没有任务。"
                             color: Theme.muted
                             font.pixelSize: 14
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                Layout.preferredWidth: 420
-                Layout.fillHeight: true
-                radius: 20
-                color: Theme.panel2
-                border.width: 1
-                border.color: Theme.line
-
-                ScrollView {
-                    anchors.fill: parent
-                    anchors.margins: 14
-                    clip: true
-
-                    ColumnLayout {
-                        width: parent.width
-                        spacing: 12
-
-                        Text {
-                            Layout.fillWidth: true
-                            text: viewModel && viewModel.hasSelection ? viewModel.selectedJobTitle : "选择左侧任务查看详情"
-                            color: Theme.text
-                            font.pixelSize: 21
-                            font.weight: Font.Black
-                            wrapMode: Text.Wrap
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            radius: 16
-                            color: Theme.bg
-                            border.width: 1
-                            border.color: Theme.line
-                            implicitHeight: 132
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 14
-                                spacing: 10
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 10
-
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: viewModel ? viewModel.selectedJobStateLabel : ""
-                                        color: Theme.text
-                                        font.pixelSize: 14
-                                        font.weight: Font.DemiBold
-                                    }
-
-                                    Text {
-                                        text: (viewModel ? viewModel.selectedJobProgress : 0) + "%"
-                                        color: Theme.muted
-                                        font.pixelSize: 12
-                                    }
-                                }
-
-                                ThemedProgressBar {
-                                    Layout.fillWidth: true
-                                    from: 0
-                                    to: 100
-                                    value: viewModel ? viewModel.selectedJobProgress : 0
-                                }
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: viewModel ? viewModel.selectedJobUpdatedAt : ""
-                                    color: Theme.muted
-                                    font.pixelSize: 12
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            radius: 16
-                            color: Theme.bg
-                            border.width: 1
-                            border.color: Theme.line
-                            implicitHeight: 172
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 14
-                                spacing: 8
-
-                                Text {
-                                    text: "当前状态反馈"
-                                    color: Theme.text
-                                    font.pixelSize: 15
-                                    font.weight: Font.Black
-                                }
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: viewModel ? viewModel.selectedJobDetail : ""
-                                    color: Theme.text
-                                    font.pixelSize: 13
-                                    wrapMode: Text.Wrap
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            visible: viewModel && viewModel.selectedJobError.length > 0
-                            radius: 16
-                            color: Qt.rgba(0.35, 0.08, 0.08, 0.14)
-                            border.width: 1
-                            border.color: Qt.rgba(0.86, 0.32, 0.32, 0.45)
-                            implicitHeight: 120
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 14
-                                spacing: 8
-
-                                Text {
-                                    text: "错误信息"
-                                    color: Theme.orange
-                                    font.pixelSize: 15
-                                    font.weight: Font.Black
-                                }
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: viewModel ? viewModel.selectedJobError : ""
-                                    color: Theme.text
-                                    font.pixelSize: 13
-                                    wrapMode: Text.Wrap
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            radius: 16
-                            color: Theme.bg
-                            border.width: 1
-                            border.color: Theme.line
-                            implicitHeight: 112
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 14
-                                spacing: 8
-
-                                Text {
-                                    text: "解析批次补充信息"
-                                    color: Theme.text
-                                    font.pixelSize: 15
-                                    font.weight: Font.Black
-                                }
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: viewModel && viewModel.batchCurrentLabel.length > 0
-                                        ? "当前素材：" + viewModel.batchCurrentLabel
-                                        : "当前没有正在处理的素材。"
-                                    color: Theme.muted
-                                    font.pixelSize: 13
-                                    wrapMode: Text.Wrap
-                                }
-                            }
                         }
                     }
                 }

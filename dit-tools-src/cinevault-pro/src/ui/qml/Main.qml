@@ -23,6 +23,7 @@ ApplicationWindow {
     readonly property bool hasOpenProject: root.shellViewModel && root.shellViewModel.projectEntered
     readonly property bool isProjectLibraryWorkspace: root.shellViewModel && root.shellViewModel.currentWorkspace === root.shellViewModel.projectLibraryWorkspaceId
     readonly property bool isFeedbackWorkspace: root.shellViewModel && root.shellViewModel.currentWorkspace === root.shellViewModel.feedbackWorkspaceId
+    readonly property bool isJobsWorkspace: root.shellViewModel && root.shellViewModel.currentWorkspace === root.shellViewModel.jobsWorkspaceId
     property bool projectLibraryWorkspaceLoaded: true
     property bool materialBackupWorkspaceLoaded: false
     property bool libraryWorkspaceLoaded: false
@@ -145,6 +146,7 @@ ApplicationWindow {
                 SourceRail {
                     Layout.preferredWidth: root.shellViewModel.currentWorkspace === root.shellViewModel.materialCenterWorkspaceId
                         || root.shellViewModel.currentWorkspace === root.shellViewModel.materialBackupWorkspaceId
+                        || root.isJobsWorkspace
                         || root.isFeedbackWorkspace
                         || root.isProjectLibraryWorkspace
                         || !root.hasOpenProject
@@ -153,6 +155,7 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     visible: root.shellViewModel.currentWorkspace !== root.shellViewModel.materialCenterWorkspaceId
                         && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialBackupWorkspaceId
+                        && !root.isJobsWorkspace
                         && !root.isFeedbackWorkspace
                         && !root.isProjectLibraryWorkspace
                         && root.hasOpenProject
@@ -234,6 +237,7 @@ ApplicationWindow {
                     Layout.preferredWidth: root.shellViewModel.currentWorkspace === root.shellViewModel.reportWorkspaceId
                         || root.shellViewModel.currentWorkspace === root.shellViewModel.materialCenterWorkspaceId
                         || root.shellViewModel.currentWorkspace === root.shellViewModel.materialBackupWorkspaceId
+                        || root.isJobsWorkspace
                         || root.isFeedbackWorkspace
                         || root.isProjectLibraryWorkspace
                         || !root.hasOpenProject
@@ -243,11 +247,19 @@ ApplicationWindow {
                     visible: root.shellViewModel.currentWorkspace !== root.shellViewModel.reportWorkspaceId
                         && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialCenterWorkspaceId
                         && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialBackupWorkspaceId
+                        && !root.isJobsWorkspace
                         && !root.isFeedbackWorkspace
                         && !root.isProjectLibraryWorkspace
                         && root.hasOpenProject
                     viewModel: root.inspectorViewModel
                     mediaViewModel: root.libraryViewModel
+                }
+
+                JobProgressInspectorPane {
+                    Layout.preferredWidth: root.isJobsWorkspace && root.hasOpenProject ? 330 : 0
+                    Layout.fillHeight: true
+                    visible: root.isJobsWorkspace && root.hasOpenProject
+                    viewModel: root.jobTimelineViewModel
                 }
             }
 

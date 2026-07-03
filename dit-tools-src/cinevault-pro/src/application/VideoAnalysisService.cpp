@@ -634,6 +634,14 @@ qint64 VideoAnalysisService::batchProgressPercent() const
                           100LL);
 }
 
+qint64 VideoAnalysisService::batchCurrentProgressPercent() const
+{
+    if (m_currentVideoKey.trimmed().isEmpty()) {
+        return 0;
+    }
+    return qBound<qint64>(0LL, m_batchCurrentProgress, 100LL);
+}
+
 QString VideoAnalysisService::batchCurrentLabel() const
 {
     const auto key = m_currentVideoKey.trimmed();
@@ -641,6 +649,16 @@ QString VideoAnalysisService::batchCurrentLabel() const
         return QString();
     }
     return m_batchLabels.value(key, key);
+}
+
+QString VideoAnalysisService::batchCurrentDetail() const
+{
+    if (m_currentVideoKey.trimmed().isEmpty()) {
+        return QStringLiteral("当前没有正在处理的素材。");
+    }
+
+    const auto detail = m_batchCurrentDetail.trimmed();
+    return detail.isEmpty() ? QStringLiteral("正在处理当前素材。") : detail;
 }
 
 QString VideoAnalysisService::batchStatusText() const

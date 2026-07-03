@@ -64,6 +64,23 @@ QString JobTimelineViewModel::batchCurrentLabel() const
     return m_videoAnalysisService ? m_videoAnalysisService->batchCurrentLabel() : QString();
 }
 
+QString JobTimelineViewModel::batchCurrentDetail() const
+{
+    return m_videoAnalysisService
+        ? m_videoAnalysisService->batchCurrentDetail()
+        : QStringLiteral("当前没有正在处理的素材。");
+}
+
+int JobTimelineViewModel::batchCurrentProgress() const
+{
+    return m_videoAnalysisService ? static_cast<int>(m_videoAnalysisService->batchCurrentProgressPercent()) : 0;
+}
+
+bool JobTimelineViewModel::hasActiveBatchItem() const
+{
+    return m_videoAnalysisService && !m_videoAnalysisService->batchCurrentLabel().trimmed().isEmpty();
+}
+
 int JobTimelineViewModel::batchFinishedCount() const
 {
     return m_videoAnalysisService ? m_videoAnalysisService->batchFinishedCount() : 0;
