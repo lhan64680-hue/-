@@ -2,6 +2,31 @@
 
 #include "shared/Formatters.h"
 
+#include <QSet>
+
+namespace {
+bool isSupportedTextAsset(AssetType assetType, const QString &extension)
+{
+    static const QSet<QString> textExtensions = {
+        QStringLiteral("txt"), QStringLiteral("log"), QStringLiteral("md"),
+        QStringLiteral("json"), QStringLiteral("csv"), QStringLiteral("tsv"),
+        QStringLiteral("xml"), QStringLiteral("yaml"), QStringLiteral("yml"),
+        QStringLiteral("docx"), QStringLiteral("xlsx"), QStringLiteral("pptx"),
+        QStringLiteral("srt"), QStringLiteral("ass"), QStringLiteral("vtt")
+    };
+    const auto normalizedExtension = extension.trimmed().toLower();
+    return assetType == AssetType::Subtitle
+        || (assetType == AssetType::Document && textExtensions.contains(normalizedExtension));
+}
+
+bool canAnalyzeAsset(const GlobalVideoAsset &asset)
+{
+    return asset.assetType == AssetType::Video
+        || asset.assetType == AssetType::Image
+        || isSupportedTextAsset(asset.assetType, asset.extension);
+}
+}
+
 MaterialCenterListModel::MaterialCenterListModel(QObject *parent)
     : QAbstractListModel(parent)
 {
@@ -21,7 +46,11 @@ QVariant MaterialCenterListModel::data(const QModelIndex &index, int role) const
     const auto &item = m_items.at(index.row());
     switch (role) {
     case VideoKeyRole: return item.videoKey;
+    case AssetKeyRole: return item.assetKey.trimmed().isEmpty() ? item.videoKey : item.assetKey;
     case FileNameRole: return item.fileName;
+    case AssetTypeRole: return static_cast<int>(item.assetType);
+    case AssetTypeLabelRole: return Formatters::assetTypeLabel(item.assetType);
+    case ExtensionRole: return item.extension;
     case ProjectNameRole: return item.projectName;
     case SourceNameRole: return item.sourceRootName;
     case RelativePathRole: return item.relativePath;
@@ -37,6 +66,9 @@ QVariant MaterialCenterListModel::data(const QModelIndex &index, int role) const
     case UpdatedAtRole: return item.updatedAt;
     case DurationMsRole: return item.durationMs;
     case ErrorMessageRole: return item.errorMessage;
+    case CanAnalyzeRole: return canAnalyzeAsset(item);
+    case CanConfirmRole: return item.analysisStatus == VideoAnalysisStatus::Ready
+            && item.confirmationStatus != ConfirmationStatus::Confirmed;
     default: return {};
     }
 }
@@ -45,7 +77,11 @@ QHash<int, QByteArray> MaterialCenterListModel::roleNames() const
 {
     return {
         {VideoKeyRole, "videoKey"},
+        {AssetKeyRole, "assetKey"},
         {FileNameRole, "fileName"},
+        {AssetTypeRole, "assetType"},
+        {AssetTypeLabelRole, "assetTypeLabel"},
+        {ExtensionRole, "extension"},
         {ProjectNameRole, "projectName"},
         {SourceNameRole, "sourceName"},
         {RelativePathRole, "relativePath"},
@@ -60,7 +96,9 @@ QHash<int, QByteArray> MaterialCenterListModel::roleNames() const
         {ThumbnailLoadingRole, "thumbnailLoading"},
         {UpdatedAtRole, "updatedAt"},
         {DurationMsRole, "durationMs"},
-        {ErrorMessageRole, "errorMessage"}
+        {ErrorMessageRole, "errorMessage"},
+        {CanAnalyzeRole, "canAnalyze"},
+        {CanConfirmRole, "canConfirm"}
     };
 }
 

@@ -1,18 +1,19 @@
 #include "application/VideoAnalysisService.h"
 
+#include "application/DocumentPreviewService.h"
 #include "core/thumbnail/ContactSheetBuilder.h"
 #include "core/jobs/JobEngine.h"
 #include "infrastructure/config/AppSettings.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
 #include "infrastructure/ffmpeg/FFmpegAdapter.h"
 #include "infrastructure/network/VisionApiClient.h"
+#include "shared/Formatters.h"
 #include "shared/Paths.h"
 
 #include <QtConcurrent>
 
 #include <QDateTime>
 #include <QDir>
-#include <QFile>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QMetaObject>
@@ -107,23 +108,46 @@ QStringList uniqueNormalizedKeys(const QStringList &videoKeys)
     return normalizedKeys;
 }
 
+bool isSupportedTextAsset(AssetType assetType, const QString &extension)
+{
+    static const QSet<QString> textExtensions = {
+        QStringLiteral("txt"), QStringLiteral("log"), QStringLiteral("md"),
+        QStringLiteral("json"), QStringLiteral("csv"), QStringLiteral("tsv"),
+        QStringLiteral("xml"), QStringLiteral("yaml"), QStringLiteral("yml"),
+        QStringLiteral("docx"), QStringLiteral("xlsx"), QStringLiteral("pptx"),
+        QStringLiteral("srt"), QStringLiteral("ass"), QStringLiteral("vtt")
+    };
+    const auto normalizedExtension = extension.trimmed().toLower();
+    return assetType == AssetType::Subtitle
+        || (assetType == AssetType::Document && textExtensions.contains(normalizedExtension));
+}
+
+bool canAnalyzeAsset(AssetType assetType, const QString &extension)
+{
+    return assetType == AssetType::Video
+        || assetType == AssetType::Image
+        || isSupportedTextAsset(assetType, extension);
+}
+
 bool loadVideoAsset(QSqlDatabase &db, const QString &videoKey, GlobalVideoAsset *asset, QString *errorMessage)
 {
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
         "SELECT video_key, project_uuid, project_name, project_database_path, source_root_id, source_root_name, asset_id, "
-        "file_name, absolute_path, relative_path, size_bytes, modified_at, duration_ms, COALESCE(thumbnail_path, ''), "
-        "analysis_status, confirmation_status, COALESCE(error_message, ''), updated_at "
+        "file_name, COALESCE(extension, ''), absolute_path, relative_path, COALESCE(asset_type, 1), size_bytes, modified_at, "
+        "duration_ms, COALESCE(thumbnail_path, ''), COALESCE(thumbnail_status, 0), analysis_status, confirmation_status, "
+        "COALESCE(technical_summary, ''), COALESCE(source_text, ''), COALESCE(error_message, ''), updated_at "
         "FROM global_video_asset WHERE video_key = ?"));
     query.addBindValue(videoKey);
     if (!execQuery(query, errorMessage) || !query.next()) {
         if (errorMessage && errorMessage->isEmpty()) {
-            *errorMessage = QStringLiteral("素材管理中心找不到该视频");
+            *errorMessage = QStringLiteral("素材管理中心找不到该素材");
         }
         return false;
     }
 
     asset->videoKey = query.value(0).toString();
+    asset->assetKey = asset->videoKey;
     asset->projectUuid = query.value(1).toString();
     asset->projectName = query.value(2).toString();
     asset->projectDatabasePath = query.value(3).toString();
@@ -131,16 +155,21 @@ bool loadVideoAsset(QSqlDatabase &db, const QString &videoKey, GlobalVideoAsset 
     asset->sourceRootName = query.value(5).toString();
     asset->assetId = query.value(6).toLongLong();
     asset->fileName = query.value(7).toString();
-    asset->absolutePath = query.value(8).toString();
-    asset->relativePath = query.value(9).toString();
-    asset->sizeBytes = query.value(10).toLongLong();
-    asset->modifiedAt = query.value(11).toString();
-    asset->durationMs = query.value(12).toLongLong();
-    asset->thumbnailPath = query.value(13).toString();
-    asset->analysisStatus = static_cast<VideoAnalysisStatus>(query.value(14).toInt());
-    asset->confirmationStatus = static_cast<ConfirmationStatus>(query.value(15).toInt());
-    asset->errorMessage = query.value(16).toString();
-    asset->updatedAt = query.value(17).toString();
+    asset->extension = query.value(8).toString();
+    asset->absolutePath = query.value(9).toString();
+    asset->relativePath = query.value(10).toString();
+    asset->assetType = static_cast<AssetType>(query.value(11).toInt());
+    asset->sizeBytes = query.value(12).toLongLong();
+    asset->modifiedAt = query.value(13).toString();
+    asset->durationMs = query.value(14).toLongLong();
+    asset->thumbnailPath = query.value(15).toString();
+    asset->thumbnailStatus = static_cast<ThumbnailStatus>(query.value(16).toInt());
+    asset->analysisStatus = static_cast<VideoAnalysisStatus>(query.value(17).toInt());
+    asset->confirmationStatus = static_cast<ConfirmationStatus>(query.value(18).toInt());
+    asset->technicalSummary = query.value(19).toString();
+    asset->sourceText = query.value(20).toString();
+    asset->errorMessage = query.value(21).toString();
+    asset->updatedAt = query.value(22).toString();
     return true;
 }
 
@@ -409,7 +438,7 @@ bool updateFrameAnalysis(QSqlDatabase &db,
     return execQuery(query, errorMessage);
 }
 
-QString buildSearchText(const VisionVideoSummary &summary, const QVector<FrameAnalysisRecord> &frames)
+QString buildSearchText(const VisionVideoSummary &summary, const QVector<FrameAnalysisRecord> &frames, const QString &sourceText)
 {
     QStringList parts;
     if (!summary.summary.trimmed().isEmpty()) {
@@ -438,18 +467,107 @@ QString buildSearchText(const VisionVideoSummary &summary, const QVector<FrameAn
             parts.append(frame.setting.trimmed());
         }
     }
+    if (!sourceText.trimmed().isEmpty()) {
+        parts.append(sourceText.trimmed());
+    }
     return parts.join(QStringLiteral(" "));
+}
+
+bool upsertSearchFts(QSqlDatabase &db,
+                     const GlobalVideoAsset &asset,
+                     const VisionVideoSummary &summary,
+                     const QVector<FrameAnalysisRecord> &frames,
+                     const QString &sourceText,
+                     bool hasFts5,
+                     QString *errorMessage)
+{
+    if (!hasFts5) {
+        return true;
+    }
+
+    QSqlQuery deleteFts(db);
+    deleteFts.prepare(QStringLiteral("DELETE FROM video_search_fts WHERE video_key = ?"));
+    deleteFts.addBindValue(asset.videoKey);
+    if (!execQuery(deleteFts, errorMessage)) {
+        return false;
+    }
+
+    QStringList frameTexts;
+    for (const auto &frame : frames) {
+        QStringList frameParts;
+        if (!frame.caption.trimmed().isEmpty()) {
+            frameParts.append(frame.caption.trimmed());
+        }
+        if (!frame.tags.isEmpty()) {
+            frameParts.append(frame.tags.join(QStringLiteral(" ")));
+        }
+        if (!frame.objects.isEmpty()) {
+            frameParts.append(frame.objects.join(QStringLiteral(" ")));
+        }
+        if (!frame.actions.trimmed().isEmpty()) {
+            frameParts.append(frame.actions.trimmed());
+        }
+        if (!frame.setting.trimmed().isEmpty()) {
+            frameParts.append(frame.setting.trimmed());
+        }
+        if (!frameParts.isEmpty()) {
+            frameTexts.append(frameParts.join(QStringLiteral(" ")));
+        }
+    }
+
+    QSqlQuery insertFts(db);
+    insertFts.prepare(QStringLiteral(
+        "INSERT INTO video_search_fts "
+        "(video_key, project_name, source_root_name, file_name, relative_path, absolute_path, "
+        "asset_type_label, extension, technical_summary, summary, keywords, captions, source_text) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+    insertFts.addBindValue(asset.videoKey);
+    insertFts.addBindValue(asset.projectName);
+    insertFts.addBindValue(asset.sourceRootName);
+    insertFts.addBindValue(asset.fileName);
+    insertFts.addBindValue(asset.relativePath);
+    insertFts.addBindValue(asset.absolutePath);
+    insertFts.addBindValue(Formatters::assetTypeLabel(asset.assetType));
+    insertFts.addBindValue(asset.extension);
+    insertFts.addBindValue(asset.technicalSummary);
+    insertFts.addBindValue(summary.summary);
+    insertFts.addBindValue(summary.keywords.join(QStringLiteral(" ")));
+    insertFts.addBindValue(frameTexts.join(QStringLiteral(" ")));
+    insertFts.addBindValue(sourceText);
+    return execQuery(insertFts, errorMessage);
+}
+
+bool persistSourceTextForSearch(QSqlDatabase &db,
+                                const GlobalVideoAsset &asset,
+                                const QString &sourceText,
+                                bool hasFts5,
+                                QString *errorMessage)
+{
+    const auto updatedAt = nowIso();
+    QSqlQuery updateAsset(db);
+    updateAsset.prepare(QStringLiteral(
+        "UPDATE global_video_asset SET source_text = ?, updated_at = ? WHERE video_key = ?"));
+    updateAsset.addBindValue(sourceText);
+    updateAsset.addBindValue(updatedAt);
+    updateAsset.addBindValue(asset.videoKey);
+    if (!execQuery(updateAsset, errorMessage)) {
+        return false;
+    }
+
+    VisionVideoSummary emptySummary;
+    return upsertSearchFts(db, asset, emptySummary, {}, sourceText, hasFts5, errorMessage);
 }
 
 bool persistSummary(QSqlDatabase &db,
                     const GlobalVideoAsset &asset,
                     const VisionVideoSummary &summary,
                     const QVector<FrameAnalysisRecord> &frames,
+                    const QString &sourceText,
                     bool hasFts5,
                     QString *errorMessage)
 {
     const auto analyzedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
-    const auto searchText = buildSearchText(summary, frames);
+    const auto searchText = buildSearchText(summary, frames, sourceText);
 
     QSqlQuery result(db);
     result.prepare(QStringLiteral(
@@ -479,65 +597,18 @@ bool persistSummary(QSqlDatabase &db,
 
     QSqlQuery updateAsset(db);
     updateAsset.prepare(QStringLiteral(
-        "UPDATE global_video_asset SET analysis_status = ?, confirmation_status = ?, error_message = '', updated_at = ? "
+        "UPDATE global_video_asset SET analysis_status = ?, confirmation_status = ?, source_text = ?, error_message = '', updated_at = ? "
         "WHERE video_key = ?"));
     updateAsset.addBindValue(static_cast<int>(VideoAnalysisStatus::Ready));
     updateAsset.addBindValue(static_cast<int>(ConfirmationStatus::Pending));
+    updateAsset.addBindValue(sourceText);
     updateAsset.addBindValue(analyzedAt);
     updateAsset.addBindValue(asset.videoKey);
     if (!execQuery(updateAsset, errorMessage)) {
         return false;
     }
 
-    if (hasFts5) {
-        QSqlQuery deleteFts(db);
-        deleteFts.prepare(QStringLiteral("DELETE FROM video_search_fts WHERE video_key = ?"));
-        deleteFts.addBindValue(asset.videoKey);
-        if (!execQuery(deleteFts, errorMessage)) {
-            return false;
-        }
-
-        QStringList frameTexts;
-        for (const auto &frame : frames) {
-            QStringList frameParts;
-            if (!frame.caption.trimmed().isEmpty()) {
-                frameParts.append(frame.caption.trimmed());
-            }
-            if (!frame.tags.isEmpty()) {
-                frameParts.append(frame.tags.join(QStringLiteral(" ")));
-            }
-            if (!frame.objects.isEmpty()) {
-                frameParts.append(frame.objects.join(QStringLiteral(" ")));
-            }
-            if (!frame.actions.trimmed().isEmpty()) {
-                frameParts.append(frame.actions.trimmed());
-            }
-            if (!frame.setting.trimmed().isEmpty()) {
-                frameParts.append(frame.setting.trimmed());
-            }
-            if (!frameParts.isEmpty()) {
-                frameTexts.append(frameParts.join(QStringLiteral(" ")));
-            }
-        }
-
-        QSqlQuery insertFts(db);
-        insertFts.prepare(QStringLiteral(
-            "INSERT INTO video_search_fts "
-            "(video_key, project_name, source_root_name, file_name, relative_path, summary, keywords, captions) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"));
-        insertFts.addBindValue(asset.videoKey);
-        insertFts.addBindValue(asset.projectName);
-        insertFts.addBindValue(asset.sourceRootName);
-        insertFts.addBindValue(asset.fileName);
-        insertFts.addBindValue(asset.relativePath);
-        insertFts.addBindValue(summary.summary);
-        insertFts.addBindValue(summary.keywords.join(QStringLiteral(" ")));
-        insertFts.addBindValue(frameTexts.join(QStringLiteral(" ")));
-        if (!execQuery(insertFts, errorMessage)) {
-            return false;
-        }
-    }
-    return true;
+    return upsertSearchFts(db, asset, summary, frames, sourceText, hasFts5, errorMessage);
 }
 
 AnalysisConfig loadConfig(const AppSettings *settings)
@@ -664,7 +735,7 @@ QString VideoAnalysisService::batchCurrentDetail() const
 QString VideoAnalysisService::batchStatusText() const
 {
     if (!hasBatchSummary()) {
-        return QStringLiteral("暂无视频解析批次。");
+        return QStringLiteral("暂无素材解析批次。");
     }
 
     const auto total = batchTotalCount();
@@ -695,21 +766,13 @@ bool VideoAnalysisService::validateReadyForEnqueue(const QString &videoKey, QStr
     const auto normalizedKey = videoKey.trimmed();
     if (normalizedKey.isEmpty()) {
         if (errorMessage) {
-            *errorMessage = QStringLiteral("请先选择一个视频素材。");
+            *errorMessage = QStringLiteral("请先选择一个素材。");
         }
         return false;
     }
     if (!m_globalDatabaseManager || !m_globalDatabaseManager->isOpen()) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("素材管理中心数据库未打开，请先同步当前项目。");
-        }
-        return false;
-    }
-    if (!m_ffmpegAdapter || !m_ffmpegAdapter->isAvailable()) {
-        if (errorMessage) {
-            *errorMessage = m_ffmpegAdapter
-                ? m_ffmpegAdapter->unavailableReason()
-                : QStringLiteral("FFmpeg 服务不可用。");
         }
         return false;
     }
@@ -727,9 +790,28 @@ bool VideoAnalysisService::validateReadyForEnqueue(const QString &videoKey, QStr
         }
         return false;
     }
+    auto db = m_globalDatabaseManager->database();
+    GlobalVideoAsset asset;
+    if (!loadVideoAsset(db, normalizedKey, &asset, errorMessage)) {
+        return false;
+    }
+    if (!canAnalyzeAsset(asset.assetType, asset.extension)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("该素材类型当前仅参与索引，不支持内容解析。");
+        }
+        return false;
+    }
+    if (asset.assetType == AssetType::Video && (!m_ffmpegAdapter || !m_ffmpegAdapter->isAvailable())) {
+        if (errorMessage) {
+            *errorMessage = m_ffmpegAdapter
+                ? m_ffmpegAdapter->unavailableReason()
+                : QStringLiteral("FFmpeg 服务不可用。");
+        }
+        return false;
+    }
     if (m_currentVideoKey == normalizedKey || m_queuedVideoKeys.contains(normalizedKey)) {
         if (errorMessage) {
-            *errorMessage = QStringLiteral("该视频已在解析队列中。");
+            *errorMessage = QStringLiteral("该素材已在解析队列中。");
         }
         return false;
     }
@@ -758,7 +840,7 @@ bool VideoAnalysisService::enqueueJob(const AnalysisJob &job, QString *errorMess
     m_queuedVideoKeys.insert(normalizedKey);
     const auto detail = normalizedJob.mode == AnalysisRunMode::SingleFrame
         ? QStringLiteral("等待重解析第 %1 帧").arg(normalizedJob.frameNumber)
-        : QStringLiteral("等待解析队列");
+        : QStringLiteral("等待素材解析队列");
     reportAnalysisProgress(normalizedKey, 0, detail, JobState::Pending);
     emit analysisQueueChanged(m_currentVideoKey, m_analysisQueue.size());
     notifyBatchChanged();
@@ -813,11 +895,11 @@ int VideoAnalysisService::enqueueVideos(const QStringList &videoKeys, QString *e
 
     if (errorMessage) {
         if (accepted > 0) {
-            *errorMessage = QStringLiteral("已加入 %1 条视频到解析队列。").arg(accepted);
+            *errorMessage = QStringLiteral("已加入 %1 条素材到解析队列。").arg(accepted);
         } else if (!rejectedMessages.isEmpty()) {
             *errorMessage = rejectedMessages.first();
         } else {
-            *errorMessage = QStringLiteral("当前结果中没有可解析的视频。");
+            *errorMessage = QStringLiteral("当前结果中没有可解析的素材。");
         }
     }
     return accepted;
@@ -827,6 +909,18 @@ bool VideoAnalysisService::retryFrame(const QString &videoKey, int frameNumber, 
 {
     const auto normalizedKey = videoKey.trimmed();
     if (!validateReadyForEnqueue(normalizedKey, errorMessage)) {
+        return false;
+    }
+
+    GlobalVideoAsset asset;
+    auto db = m_globalDatabaseManager->database();
+    if (!loadVideoAsset(db, normalizedKey, &asset, errorMessage)) {
+        return false;
+    }
+    if (asset.assetType != AssetType::Video) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("只有视频素材支持重解析单帧。");
+        }
         return false;
     }
 
@@ -871,7 +965,7 @@ void VideoAnalysisService::startNextAnalysis()
     m_batchCurrentProgress = 0;
     m_batchCurrentDetail = job.mode == AnalysisRunMode::SingleFrame
         ? QStringLiteral("准备重解析失败视频帧")
-        : QStringLiteral("准备解析视频素材内容");
+        : QStringLiteral("准备解析素材内容");
     emit analysisQueueChanged(m_currentVideoKey, m_analysisQueue.size());
     notifyBatchChanged();
 
@@ -885,12 +979,12 @@ void VideoAnalysisService::startNextAnalysis()
 
     const auto jobId = m_jobEngine
         ? m_jobEngine->createJob(JobType::ContentAnalysis,
-                                 job.mode == AnalysisRunMode::SingleFrame ? QStringLiteral("视频帧补解析") : QStringLiteral("视频内容解析"),
-                                 job.mode == AnalysisRunMode::SingleFrame ? QStringLiteral("准备重解析失败视频帧") : QStringLiteral("准备解析视频素材内容"))
+                                 job.mode == AnalysisRunMode::SingleFrame ? QStringLiteral("视频帧补解析") : QStringLiteral("素材内容解析"),
+                                 job.mode == AnalysisRunMode::SingleFrame ? QStringLiteral("准备重解析失败视频帧") : QStringLiteral("准备解析素材内容"))
         : 0;
     reportAnalysisProgress(job.videoKey,
                            0,
-                           job.mode == AnalysisRunMode::SingleFrame ? QStringLiteral("准备重解析失败视频帧") : QStringLiteral("准备解析视频素材内容"),
+                           job.mode == AnalysisRunMode::SingleFrame ? QStringLiteral("准备重解析失败视频帧") : QStringLiteral("准备解析素材内容"),
                            JobState::Running);
 
     auto future = QtConcurrent::run([this, job, config, jobId]() {
@@ -925,6 +1019,16 @@ void VideoAnalysisService::startNextAnalysis()
             reportAnalysisProgress(job.videoKey, progress, detail, JobState::Running);
         };
 
+        auto finishSuccess = [&](const QString &successMessage) {
+            completeJob(jobId, successMessage);
+            reportAnalysisProgress(job.videoKey, 100, successMessage, JobState::Completed);
+            notifyCatalogChanged();
+            m_globalDatabaseManager->closeThreadConnection(connectionName);
+            QMetaObject::invokeMethod(this, [this, videoKey = job.videoKey]() {
+                finishCurrentAnalysis(videoKey);
+            }, Qt::QueuedConnection);
+        };
+
         auto db = m_globalDatabaseManager->openThreadConnection(connectionName, &errorMessage);
         if (!db.isOpen()) {
             finishFailure(errorMessage, nullptr, false);
@@ -934,6 +1038,121 @@ void VideoAnalysisService::startNextAnalysis()
         GlobalVideoAsset asset;
         if (!loadVideoAsset(db, job.videoKey, &asset, &errorMessage)) {
             finishFailure(errorMessage, &db, false);
+            return;
+        }
+
+        if (!canAnalyzeAsset(asset.assetType, asset.extension)) {
+            const auto message = QStringLiteral("该素材类型当前仅参与索引，不支持内容解析。");
+            updateAssetState(db, job.videoKey, VideoAnalysisStatus::IndexedOnly, ConfirmationStatus::Pending, message, nullptr);
+            finishFailure(message, &db, false);
+            return;
+        }
+
+        if (asset.assetType == AssetType::Image) {
+            if (!updateAssetState(db, job.videoKey, VideoAnalysisStatus::Running, ConfirmationStatus::Pending, QString(), &errorMessage)) {
+                finishFailure(errorMessage, &db, false);
+                return;
+            }
+
+            updateRunning(20, QStringLiteral("正在转换图片为 JPG 并提交视觉解析"));
+            int httpStatusCode = 0;
+            QString imageError;
+            const auto summary = m_visionApiClient->analyzeImage(asset.absolutePath,
+                                                                 config.baseUrl,
+                                                                 config.apiKey,
+                                                                 config.model,
+                                                                 config.timeoutSec,
+                                                                 &imageError,
+                                                                 &httpStatusCode);
+            if (!summary.has_value()) {
+                updateAssetState(db, job.videoKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, imageError, nullptr);
+                finishFailure(imageError, &db, false);
+                return;
+            }
+
+            if (!db.transaction()) {
+                finishFailure(db.lastError().text(), &db);
+                return;
+            }
+            if (!persistSummary(db, asset, *summary, {}, QString(), m_globalDatabaseManager->hasFts5(), &errorMessage)) {
+                db.rollback();
+                finishFailure(errorMessage, &db, false);
+                return;
+            }
+            if (!db.commit()) {
+                finishFailure(db.lastError().text(), &db);
+                return;
+            }
+
+            finishSuccess(QStringLiteral("图片解析完成，等待确认"));
+            return;
+        }
+
+        if (isSupportedTextAsset(asset.assetType, asset.extension)) {
+            if (!updateAssetState(db, job.videoKey, VideoAnalysisStatus::Running, ConfirmationStatus::Pending, QString(), &errorMessage)) {
+                finishFailure(errorMessage, &db, false);
+                return;
+            }
+
+            updateRunning(15, QStringLiteral("正在提取文本/文档内容"));
+            bool textTruncated = false;
+            QString extractionError;
+            const auto sourceText = DocumentPreviewService::extractTextForSummary(asset.absolutePath, &textTruncated, &extractionError);
+            if (sourceText.trimmed().isEmpty()) {
+                const auto message = extractionError.trimmed().isEmpty()
+                    ? QStringLiteral("当前文本/文档没有可解析内容。")
+                    : extractionError;
+                updateAssetState(db, job.videoKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, message, nullptr);
+                finishFailure(message, &db, false);
+                return;
+            }
+
+            if (!db.transaction()) {
+                finishFailure(db.lastError().text(), &db);
+                return;
+            }
+            if (!persistSourceTextForSearch(db, asset, sourceText, m_globalDatabaseManager->hasFts5(), &errorMessage)) {
+                db.rollback();
+                finishFailure(errorMessage, &db, false);
+                return;
+            }
+            if (!db.commit()) {
+                finishFailure(db.lastError().text(), &db);
+                return;
+            }
+
+            updateRunning(45, textTruncated ? QStringLiteral("正在归纳文本内容（已截取前段内容）") : QStringLiteral("正在归纳文本内容"));
+            int httpStatusCode = 0;
+            QString summaryError;
+            const auto summary = m_visionApiClient->summarizeText(asset.fileName,
+                                                                  sourceText,
+                                                                  config.baseUrl,
+                                                                  config.apiKey,
+                                                                  config.model,
+                                                                  config.timeoutSec,
+                                                                  &summaryError,
+                                                                  &httpStatusCode);
+            if (!summary.has_value()) {
+                updateAssetState(db, job.videoKey, VideoAnalysisStatus::Failed, ConfirmationStatus::Pending, summaryError, nullptr);
+                finishFailure(summaryError, &db, false);
+                return;
+            }
+
+            if (!db.transaction()) {
+                finishFailure(db.lastError().text(), &db);
+                return;
+            }
+            if (!persistSummary(db, asset, *summary, {}, sourceText, m_globalDatabaseManager->hasFts5(), &errorMessage)) {
+                db.rollback();
+                finishFailure(errorMessage, &db, false);
+                return;
+            }
+            if (!db.commit()) {
+                finishFailure(db.lastError().text(), &db);
+                return;
+            }
+
+            finishSuccess(QStringLiteral("文本/文档解析完成，等待确认"));
             return;
         }
 
@@ -1005,7 +1224,7 @@ void VideoAnalysisService::startNextAnalysis()
                 finishFailure(db.lastError().text(), &db);
                 return false;
             }
-            if (!persistSummary(db, asset, *summary, frames, m_globalDatabaseManager->hasFts5(), &errorMessage)) {
+            if (!persistSummary(db, asset, *summary, frames, asset.sourceText, m_globalDatabaseManager->hasFts5(), &errorMessage)) {
                 db.rollback();
                 finishFailure(errorMessage, &db, false);
                 return false;

@@ -20,6 +20,23 @@ public:
                                                     QString *errorMessage,
                                                     int *httpStatusCode = nullptr) const;
 
+    std::optional<VisionVideoSummary> analyzeImage(const QString &imagePath,
+                                                   const QString &baseUrl,
+                                                   const QString &apiKey,
+                                                   const QString &model,
+                                                   int timeoutSec,
+                                                   QString *errorMessage,
+                                                   int *httpStatusCode = nullptr) const;
+
+    std::optional<VisionVideoSummary> summarizeText(const QString &fileName,
+                                                    const QString &text,
+                                                    const QString &baseUrl,
+                                                    const QString &apiKey,
+                                                    const QString &model,
+                                                    int timeoutSec,
+                                                    QString *errorMessage,
+                                                    int *httpStatusCode = nullptr) const;
+
     std::optional<VisionVideoSummary> summarizeVideo(const QString &fileName,
                                                      const QVector<FrameAnalysisRecord> &frames,
                                                      const QString &baseUrl,

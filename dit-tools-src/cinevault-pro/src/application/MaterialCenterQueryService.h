@@ -18,11 +18,13 @@ public:
 
     QVariantList fetchProjectOptions() const;
     QVariantList fetchSourceOptions(const QString &projectUuid) const;
+    QVariantList fetchAssetTypeOptions() const;
     QVector<GlobalVideoAsset> fetchAssets(const QString &keyword,
                                           const QString &projectUuid,
                                           const QString &sourceName,
                                           int analysisStatusFilter,
-                                          int confirmationStatusFilter) const;
+                                          int confirmationStatusFilter,
+                                          int assetTypeFilter = -1) const;
     VideoAnalysisDetail fetchDetail(const QString &videoKey) const;
 
 private:

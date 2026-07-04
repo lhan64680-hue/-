@@ -76,6 +76,76 @@ bool ensureColumns(QSqlDatabase &db,
     }
     return true;
 }
+
+QString createSearchFtsStatement()
+{
+    return QStringLiteral(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS video_search_fts USING fts5("
+        "video_key UNINDEXED,"
+        "project_name,"
+        "source_root_name,"
+        "file_name,"
+        "relative_path,"
+        "absolute_path,"
+        "asset_type_label,"
+        "extension,"
+        "technical_summary,"
+        "summary,"
+        "keywords,"
+        "captions,"
+        "source_text,"
+        "tokenize='unicode61'"
+        ");");
+}
+
+bool ensureSearchFtsSchema(QSqlDatabase &db, bool *hasFts5, QString *errorMessage)
+{
+    QSqlQuery query(db);
+    if (!query.exec(createSearchFtsStatement())) {
+        query.exec(QStringLiteral("DROP TABLE IF EXISTS video_search_fts"));
+        if (hasFts5) {
+            *hasFts5 = false;
+        }
+        return true;
+    }
+
+    const auto columns = tableColumns(db, QStringLiteral("video_search_fts"), errorMessage);
+    const QStringList requiredColumns = {
+        QStringLiteral("video_key"),
+        QStringLiteral("project_name"),
+        QStringLiteral("source_root_name"),
+        QStringLiteral("file_name"),
+        QStringLiteral("relative_path"),
+        QStringLiteral("absolute_path"),
+        QStringLiteral("asset_type_label"),
+        QStringLiteral("extension"),
+        QStringLiteral("technical_summary"),
+        QStringLiteral("summary"),
+        QStringLiteral("keywords"),
+        QStringLiteral("captions"),
+        QStringLiteral("source_text")
+    };
+    for (const auto &column : requiredColumns) {
+        if (!columns.contains(column, Qt::CaseInsensitive)) {
+            if (!query.exec(QStringLiteral("DROP TABLE IF EXISTS video_search_fts"))
+                || !query.exec(createSearchFtsStatement())) {
+                if (errorMessage) {
+                    *errorMessage = query.lastError().text();
+                }
+                if (hasFts5) {
+                    *hasFts5 = false;
+                }
+                return false;
+            }
+            break;
+        }
+    }
+
+    if (hasFts5) {
+        *hasFts5 = true;
+    }
+    return true;
+}
 }
 
 GlobalDatabaseManager::GlobalDatabaseManager(QObject *parent)
@@ -334,8 +404,8 @@ bool GlobalDatabaseManager::initializeSchema(QSqlDatabase &db, QString *errorMes
     }
 
     auto version = currentSchemaVersion(db);
-    if (version < 3) {
-        if (!setSchemaVersion(db, 3, errorMessage)) {
+    if (version < 4) {
+        if (!setSchemaVersion(db, 4, errorMessage)) {
             return false;
         }
     }
@@ -367,8 +437,10 @@ bool GlobalDatabaseManager::createSchema(QSqlDatabase &db, QString *errorMessage
                        "source_root_name TEXT NOT NULL DEFAULT '',"
                        "asset_id INTEGER NOT NULL,"
                        "file_name TEXT NOT NULL,"
+                       "extension TEXT NOT NULL DEFAULT '',"
                        "absolute_path TEXT NOT NULL,"
                        "relative_path TEXT NOT NULL,"
+                       "asset_type INTEGER NOT NULL DEFAULT 1,"
                        "size_bytes INTEGER NOT NULL DEFAULT 0,"
                        "modified_at TEXT NOT NULL DEFAULT '',"
                        "duration_ms INTEGER NOT NULL DEFAULT 0,"
@@ -376,6 +448,8 @@ bool GlobalDatabaseManager::createSchema(QSqlDatabase &db, QString *errorMessage
                        "thumbnail_status INTEGER NOT NULL DEFAULT 0,"
                        "analysis_status INTEGER NOT NULL DEFAULT 0,"
                        "confirmation_status INTEGER NOT NULL DEFAULT 0,"
+                       "technical_summary TEXT NOT NULL DEFAULT '',"
+                       "source_text TEXT NOT NULL DEFAULT '',"
                        "error_message TEXT,"
                        "last_synced_at TEXT NOT NULL DEFAULT '',"
                        "updated_at TEXT NOT NULL DEFAULT '',"
@@ -433,23 +507,7 @@ bool GlobalDatabaseManager::createSchema(QSqlDatabase &db, QString *errorMessage
         return false;
     }
 
-    QSqlQuery query(db);
-    m_hasFts5 = query.exec(QStringLiteral(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS video_search_fts USING fts5("
-        "video_key UNINDEXED,"
-        "project_name,"
-        "source_root_name,"
-        "file_name,"
-        "relative_path,"
-        "summary,"
-        "keywords,"
-        "captions,"
-        "tokenize='unicode61'"
-        ");"));
-    if (!m_hasFts5) {
-        query.exec(QStringLiteral("DROP TABLE IF EXISTS video_search_fts"));
-    }
-    return true;
+    return ensureSearchFtsSchema(db, &m_hasFts5, errorMessage);
 }
 
 bool GlobalDatabaseManager::ensureSchemaCompatibility(QSqlDatabase &db, QString *errorMessage)
@@ -475,7 +533,11 @@ bool GlobalDatabaseManager::ensureSchemaCompatibility(QSqlDatabase &db, QString 
     if (!ensureColumns(db,
                        QStringLiteral("global_video_asset"),
                        {
-                           {QStringLiteral("thumbnail_status"), QStringLiteral("thumbnail_status INTEGER NOT NULL DEFAULT 0")}
+                           {QStringLiteral("extension"), QStringLiteral("extension TEXT NOT NULL DEFAULT ''")},
+                           {QStringLiteral("asset_type"), QStringLiteral("asset_type INTEGER NOT NULL DEFAULT 1")},
+                           {QStringLiteral("thumbnail_status"), QStringLiteral("thumbnail_status INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("technical_summary"), QStringLiteral("technical_summary TEXT NOT NULL DEFAULT ''")},
+                           {QStringLiteral("source_text"), QStringLiteral("source_text TEXT NOT NULL DEFAULT ''")}
                        },
                        errorMessage)) {
         return false;
@@ -514,6 +576,16 @@ bool GlobalDatabaseManager::ensureSchemaCompatibility(QSqlDatabase &db, QString 
         if (errorMessage) {
             *errorMessage = query.lastError().text();
         }
+        return false;
+    }
+    if (!query.exec(QStringLiteral("CREATE INDEX IF NOT EXISTS idx_global_video_asset_type ON global_video_asset(asset_type);"))) {
+        if (errorMessage) {
+            *errorMessage = query.lastError().text();
+        }
+        return false;
+    }
+
+    if (!ensureSearchFtsSchema(db, &m_hasFts5, errorMessage)) {
         return false;
     }
 

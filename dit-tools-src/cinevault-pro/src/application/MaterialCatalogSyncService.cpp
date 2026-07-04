@@ -3,6 +3,7 @@
 #include "application/ProjectService.h"
 #include "core/jobs/JobEngine.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
+#include "shared/Formatters.h"
 
 #include <QtConcurrent>
 
@@ -21,8 +22,52 @@ struct ExistingVideoState {
     QString modifiedAt;
     VideoAnalysisStatus analysisStatus = VideoAnalysisStatus::Pending;
     ConfirmationStatus confirmationStatus = ConfirmationStatus::Pending;
+    QString sourceText;
     QString errorMessage;
 };
+
+bool isSupportedTextAsset(AssetType assetType, const QString &extension)
+{
+    static const QSet<QString> textExtensions = {
+        QStringLiteral("txt"), QStringLiteral("log"), QStringLiteral("md"),
+        QStringLiteral("json"), QStringLiteral("csv"), QStringLiteral("tsv"),
+        QStringLiteral("xml"), QStringLiteral("yaml"), QStringLiteral("yml"),
+        QStringLiteral("docx"), QStringLiteral("xlsx"), QStringLiteral("pptx"),
+        QStringLiteral("srt"), QStringLiteral("ass"), QStringLiteral("vtt")
+    };
+    const auto normalizedExtension = extension.trimmed().toLower();
+    return assetType == AssetType::Subtitle
+        || (assetType == AssetType::Document && textExtensions.contains(normalizedExtension));
+}
+
+bool canAnalyzeAsset(AssetType assetType, const QString &extension)
+{
+    return assetType == AssetType::Video
+        || assetType == AssetType::Image
+        || isSupportedTextAsset(assetType, extension);
+}
+
+VideoAnalysisStatus initialAnalysisStatusForAsset(AssetType assetType, const QString &extension)
+{
+    return canAnalyzeAsset(assetType, extension)
+        ? VideoAnalysisStatus::Pending
+        : VideoAnalysisStatus::IndexedOnly;
+}
+
+QString buildTechnicalSummary(const QString &container, qint64 durationMs, qint64 bitRate)
+{
+    QStringList parts;
+    if (!container.trimmed().isEmpty()) {
+        parts.append(container.trimmed());
+    }
+    if (durationMs > 0) {
+        parts.append(Formatters::formatDuration(durationMs));
+    }
+    if (bitRate > 0) {
+        parts.append(Formatters::formatBitRate(bitRate));
+    }
+    return parts.join(QStringLiteral(" · "));
+}
 
 bool execQuery(QSqlQuery &query, QString *errorMessage)
 {
@@ -57,23 +102,22 @@ void closeProjectConnection(const QString &connectionName)
     QSqlDatabase::removeDatabase(connectionName);
 }
 
-QVector<GlobalVideoAsset> fetchProjectVideos(QSqlDatabase &projectDb, const Project &project, QString *errorMessage)
+QVector<GlobalVideoAsset> fetchProjectAssets(QSqlDatabase &projectDb, const Project &project, QString *errorMessage)
 {
-    QVector<GlobalVideoAsset> videos;
+    QVector<GlobalVideoAsset> assets;
     QSqlQuery query(projectDb);
     query.prepare(QStringLiteral(
-        "SELECT af.id, af.source_root_id, COALESCE(sr.name, ''), af.name, af.absolute_path, af.relative_path, "
-        "af.size_bytes, af.modified_at, COALESCE(mm.duration_ms, 0), "
+        "SELECT af.id, af.source_root_id, COALESCE(sr.name, ''), af.name, COALESCE(af.extension, ''), "
+        "af.absolute_path, af.relative_path, af.asset_type, af.size_bytes, af.modified_at, "
+        "COALESCE(mm.duration_ms, 0), COALESCE(mm.container, ''), COALESCE(mm.bit_rate, 0), "
         "CASE WHEN COALESCE(th.status, 0) = 1 THEN COALESCE(th.image_path, '') ELSE '' END, COALESCE(th.status, 0) "
         "FROM asset_file af "
         "LEFT JOIN source_root sr ON sr.id = af.source_root_id "
         "LEFT JOIN media_metadata mm ON mm.asset_id = af.id "
         "LEFT JOIN thumbnail th ON th.asset_id = af.id "
-        "WHERE af.asset_type = ? "
         "ORDER BY af.id"));
-    query.addBindValue(static_cast<int>(AssetType::Video));
     if (!execQuery(query, errorMessage)) {
-        return videos;
+        return assets;
     }
 
     while (query.next()) {
@@ -85,17 +129,21 @@ QVector<GlobalVideoAsset> fetchProjectVideos(QSqlDatabase &projectDb, const Proj
         asset.sourceRootId = query.value(1).toLongLong();
         asset.sourceRootName = query.value(2).toString();
         asset.fileName = query.value(3).toString();
-        asset.absolutePath = query.value(4).toString();
-        asset.relativePath = query.value(5).toString();
-        asset.sizeBytes = query.value(6).toLongLong();
-        asset.modifiedAt = query.value(7).toString();
-        asset.durationMs = query.value(8).toLongLong();
-        asset.thumbnailPath = query.value(9).toString();
-        asset.thumbnailStatus = static_cast<ThumbnailStatus>(query.value(10).toInt());
+        asset.extension = query.value(4).toString();
+        asset.absolutePath = query.value(5).toString();
+        asset.relativePath = query.value(6).toString();
+        asset.assetType = static_cast<AssetType>(query.value(7).toInt());
+        asset.sizeBytes = query.value(8).toLongLong();
+        asset.modifiedAt = query.value(9).toString();
+        asset.durationMs = query.value(10).toLongLong();
+        asset.technicalSummary = buildTechnicalSummary(query.value(11).toString(), asset.durationMs, query.value(12).toLongLong());
+        asset.thumbnailPath = query.value(13).toString();
+        asset.thumbnailStatus = static_cast<ThumbnailStatus>(query.value(14).toInt());
         asset.videoKey = QStringLiteral("%1:%2").arg(project.id).arg(asset.assetId);
-        videos.append(asset);
+        asset.assetKey = asset.videoKey;
+        assets.append(asset);
     }
-    return videos;
+    return assets;
 }
 
 QHash<QString, ExistingVideoState> loadExistingStates(QSqlDatabase &globalDb, const QString &projectUuid, QString *errorMessage)
@@ -103,7 +151,8 @@ QHash<QString, ExistingVideoState> loadExistingStates(QSqlDatabase &globalDb, co
     QHash<QString, ExistingVideoState> states;
     QSqlQuery query(globalDb);
     query.prepare(QStringLiteral(
-        "SELECT video_key, size_bytes, modified_at, analysis_status, confirmation_status, COALESCE(error_message, '') "
+        "SELECT video_key, size_bytes, modified_at, analysis_status, confirmation_status, "
+        "COALESCE(source_text, ''), COALESCE(error_message, '') "
         "FROM global_video_asset WHERE project_uuid = ?"));
     query.addBindValue(projectUuid);
     if (!execQuery(query, errorMessage)) {
@@ -116,7 +165,8 @@ QHash<QString, ExistingVideoState> loadExistingStates(QSqlDatabase &globalDb, co
         state.modifiedAt = query.value(2).toString();
         state.analysisStatus = static_cast<VideoAnalysisStatus>(query.value(3).toInt());
         state.confirmationStatus = static_cast<ConfirmationStatus>(query.value(4).toInt());
-        state.errorMessage = query.value(5).toString();
+        state.sourceText = query.value(5).toString();
+        state.errorMessage = query.value(6).toString();
         states.insert(query.value(0).toString(), state);
     }
     return states;
@@ -158,6 +208,37 @@ bool deleteFtsRow(QSqlDatabase &globalDb, const QString &videoKey, bool hasFts5,
     return execQuery(query, errorMessage);
 }
 
+bool upsertSearchRow(QSqlDatabase &globalDb, const GlobalVideoAsset &asset, bool hasFts5, QString *errorMessage)
+{
+    if (!hasFts5) {
+        return true;
+    }
+    if (!deleteFtsRow(globalDb, asset.videoKey, hasFts5, errorMessage)) {
+        return false;
+    }
+
+    QSqlQuery query(globalDb);
+    query.prepare(QStringLiteral(
+        "INSERT INTO video_search_fts "
+        "(video_key, project_name, source_root_name, file_name, relative_path, absolute_path, "
+        "asset_type_label, extension, technical_summary, summary, keywords, captions, source_text) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+    query.addBindValue(asset.videoKey);
+    query.addBindValue(asset.projectName);
+    query.addBindValue(asset.sourceRootName);
+    query.addBindValue(asset.fileName);
+    query.addBindValue(asset.relativePath);
+    query.addBindValue(asset.absolutePath);
+    query.addBindValue(Formatters::assetTypeLabel(asset.assetType));
+    query.addBindValue(asset.extension);
+    query.addBindValue(asset.technicalSummary);
+    query.addBindValue(asset.summary);
+    query.addBindValue(asset.keywords.join(QStringLiteral(" ")));
+    query.addBindValue(QString());
+    query.addBindValue(asset.sourceText);
+    return execQuery(query, errorMessage);
+}
+
 bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
                            const Project &project,
                            bool hasFts5,
@@ -177,7 +258,7 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
     }
 
     QString fetchError;
-    const auto videos = fetchProjectVideos(projectDb, project, &fetchError);
+    const auto assets = fetchProjectAssets(projectDb, project, &fetchError);
     closeProjectConnection(projectConnectionName);
     if (!fetchError.isEmpty()) {
         if (errorMessage) {
@@ -213,9 +294,10 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
     upsert.prepare(QStringLiteral(
         "INSERT INTO global_video_asset "
         "(video_key, project_uuid, project_name, project_database_path, source_root_id, source_root_name, asset_id, "
-        "file_name, absolute_path, relative_path, size_bytes, modified_at, duration_ms, thumbnail_path, thumbnail_status, "
-        "analysis_status, confirmation_status, error_message, last_synced_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "file_name, extension, absolute_path, relative_path, asset_type, size_bytes, modified_at, duration_ms, "
+        "thumbnail_path, thumbnail_status, analysis_status, confirmation_status, technical_summary, source_text, "
+        "error_message, last_synced_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(video_key) DO UPDATE SET "
         "project_uuid = excluded.project_uuid, "
         "project_name = excluded.project_name, "
@@ -224,8 +306,10 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         "source_root_name = excluded.source_root_name, "
         "asset_id = excluded.asset_id, "
         "file_name = excluded.file_name, "
+        "extension = excluded.extension, "
         "absolute_path = excluded.absolute_path, "
         "relative_path = excluded.relative_path, "
+        "asset_type = excluded.asset_type, "
         "size_bytes = excluded.size_bytes, "
         "modified_at = excluded.modified_at, "
         "duration_ms = excluded.duration_ms, "
@@ -233,55 +317,65 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         "thumbnail_status = excluded.thumbnail_status, "
         "analysis_status = excluded.analysis_status, "
         "confirmation_status = excluded.confirmation_status, "
+        "technical_summary = excluded.technical_summary, "
+        "source_text = CASE WHEN global_video_asset.size_bytes != excluded.size_bytes "
+        "OR global_video_asset.modified_at != excluded.modified_at THEN excluded.source_text ELSE global_video_asset.source_text END, "
         "error_message = excluded.error_message, "
         "last_synced_at = excluded.last_synced_at, "
         "updated_at = excluded.updated_at"));
 
-    for (const auto &video : videos) {
-        currentKeys.insert(video.videoKey);
-        const auto existing = existingStates.value(video.videoKey);
-        const bool changed = !existingStates.contains(video.videoKey)
-            || existing.sizeBytes != video.sizeBytes
-            || existing.modifiedAt != video.modifiedAt;
+    for (auto asset : assets) {
+        currentKeys.insert(asset.videoKey);
+        const auto existing = existingStates.value(asset.videoKey);
+        const bool changed = !existingStates.contains(asset.videoKey)
+            || existing.sizeBytes != asset.sizeBytes
+            || existing.modifiedAt != asset.modifiedAt;
+        if (!changed) {
+            asset.sourceText = existing.sourceText;
+        }
 
         if (changed) {
-            clearFrames.addBindValue(video.videoKey);
+            clearFrames.addBindValue(asset.videoKey);
             if (!execQuery(clearFrames, errorMessage)) {
                 globalDb.rollback();
                 return false;
             }
             clearFrames.finish();
 
-            clearResult.addBindValue(video.videoKey);
+            clearResult.addBindValue(asset.videoKey);
             if (!execQuery(clearResult, errorMessage)) {
                 globalDb.rollback();
                 return false;
             }
             clearResult.finish();
 
-            if (!deleteFtsRow(globalDb, video.videoKey, hasFts5, errorMessage)) {
+            if (!deleteFtsRow(globalDb, asset.videoKey, hasFts5, errorMessage)) {
                 globalDb.rollback();
                 return false;
             }
         }
 
-        upsert.addBindValue(video.videoKey);
+        upsert.addBindValue(asset.videoKey);
         upsert.addBindValue(project.id);
         upsert.addBindValue(project.name);
         upsert.addBindValue(project.databasePath);
-        upsert.addBindValue(video.sourceRootId);
-        upsert.addBindValue(video.sourceRootName);
-        upsert.addBindValue(video.assetId);
-        upsert.addBindValue(video.fileName);
-        upsert.addBindValue(video.absolutePath);
-        upsert.addBindValue(video.relativePath);
-        upsert.addBindValue(video.sizeBytes);
-        upsert.addBindValue(video.modifiedAt);
-        upsert.addBindValue(video.durationMs);
-        upsert.addBindValue(video.thumbnailPath);
-        upsert.addBindValue(static_cast<int>(video.thumbnailStatus));
-        upsert.addBindValue(static_cast<int>(changed ? VideoAnalysisStatus::Pending : existing.analysisStatus));
+        upsert.addBindValue(asset.sourceRootId);
+        upsert.addBindValue(asset.sourceRootName);
+        upsert.addBindValue(asset.assetId);
+        upsert.addBindValue(asset.fileName);
+        upsert.addBindValue(asset.extension);
+        upsert.addBindValue(asset.absolutePath);
+        upsert.addBindValue(asset.relativePath);
+        upsert.addBindValue(static_cast<int>(asset.assetType));
+        upsert.addBindValue(asset.sizeBytes);
+        upsert.addBindValue(asset.modifiedAt);
+        upsert.addBindValue(asset.durationMs);
+        upsert.addBindValue(asset.thumbnailPath);
+        upsert.addBindValue(static_cast<int>(asset.thumbnailStatus));
+        upsert.addBindValue(static_cast<int>(changed ? initialAnalysisStatusForAsset(asset.assetType, asset.extension) : existing.analysisStatus));
         upsert.addBindValue(static_cast<int>(changed ? ConfirmationStatus::Pending : existing.confirmationStatus));
+        upsert.addBindValue(asset.technicalSummary);
+        upsert.addBindValue(changed ? QString() : existing.sourceText);
         upsert.addBindValue(changed ? QString() : existing.errorMessage);
         upsert.addBindValue(now);
         upsert.addBindValue(now);
@@ -290,6 +384,11 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
             return false;
         }
         upsert.finish();
+
+        if (!upsertSearchRow(globalDb, asset, hasFts5, errorMessage)) {
+            globalDb.rollback();
+            return false;
+        }
     }
 
     for (auto it = existingStates.cbegin(); it != existingStates.cend(); ++it) {
@@ -367,7 +466,7 @@ void MaterialCatalogSyncService::syncCurrentProject()
     const auto jobId = m_jobEngine
         ? m_jobEngine->createJob(JobType::GlobalSync,
                                  QStringLiteral("同步全局索引 %1").arg(project.name),
-                                 QStringLiteral("准备同步当前项目视频到素材管理中心"))
+                                 QStringLiteral("准备同步当前项目素材到素材管理中心"))
         : 0;
 
     auto future = QtConcurrent::run([this, project, jobId]() {
@@ -383,11 +482,11 @@ void MaterialCatalogSyncService::syncCurrentProject()
             return;
         }
 
-        updateJob(jobId, 25, QStringLiteral("正在读取项目视频索引"));
+        updateJob(jobId, 25, QStringLiteral("正在读取项目素材索引"));
         if (!syncProjectIntoGlobal(db, project, m_globalDatabaseManager->hasFts5(), &errorMessage)) {
             failJob(jobId, errorMessage);
         } else {
-            completeJob(jobId, QStringLiteral("当前项目视频已同步到素材管理中心"));
+            completeJob(jobId, QStringLiteral("当前项目素材已同步到素材管理中心"));
             notifyCatalogChanged();
         }
         m_globalDatabaseManager->closeThreadConnection(connectionName);
@@ -405,7 +504,7 @@ void MaterialCatalogSyncService::rebuildAllProjects()
     const auto jobId = m_jobEngine
         ? m_jobEngine->createJob(JobType::GlobalSync,
                                  QStringLiteral("重建全局素材索引"),
-                                 QStringLiteral("准备重建所有已登记项目的视频索引"))
+                                 QStringLiteral("准备重建所有已登记项目的素材索引"))
         : 0;
 
     auto future = QtConcurrent::run([this, jobId]() {

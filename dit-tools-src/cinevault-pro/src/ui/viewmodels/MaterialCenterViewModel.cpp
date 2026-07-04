@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStringList>
 #include <QUrl>
 
@@ -98,7 +99,7 @@ QString failedAnalysisHint(const GlobalVideoAsset &asset)
 {
     const auto &task = asset.analysisTask;
     if (task.stage == VideoAnalysisTaskStage::Summarizing && task.totalFrames > 0) {
-        return QStringLiteral("视频帧已完成，汇总失败，可继续解析。");
+        return QStringLiteral("帧图已完成，汇总失败，可继续解析。");
     }
     if (task.totalFrames > 0) {
         return QStringLiteral("解析中断，已完成 %1/%2 帧，可继续解析。")
@@ -127,6 +128,42 @@ QString retryLabel(const FrameAnalysisRecord &frame)
         return {};
     }
     return QStringLiteral("已重试 %1/%2").arg(frame.retryCount).arg(kMaxFrameRetryCount);
+}
+
+bool isSupportedTextAsset(AssetType assetType, const QString &extension)
+{
+    static const QSet<QString> textExtensions = {
+        QStringLiteral("txt"), QStringLiteral("log"), QStringLiteral("md"),
+        QStringLiteral("json"), QStringLiteral("csv"), QStringLiteral("tsv"),
+        QStringLiteral("xml"), QStringLiteral("yaml"), QStringLiteral("yml"),
+        QStringLiteral("docx"), QStringLiteral("xlsx"), QStringLiteral("pptx"),
+        QStringLiteral("srt"), QStringLiteral("ass"), QStringLiteral("vtt")
+    };
+    const auto normalizedExtension = extension.trimmed().toLower();
+    return assetType == AssetType::Subtitle
+        || (assetType == AssetType::Document && textExtensions.contains(normalizedExtension));
+}
+
+bool canAnalyzeAsset(const GlobalVideoAsset &asset)
+{
+    return asset.assetType == AssetType::Video
+        || asset.assetType == AssetType::Image
+        || isSupportedTextAsset(asset.assetType, asset.extension);
+}
+
+bool canConfirmAsset(const GlobalVideoAsset &asset)
+{
+    return asset.analysisStatus == VideoAnalysisStatus::Ready
+        && asset.confirmationStatus != ConfirmationStatus::Confirmed;
+}
+
+QString previewText(QString text)
+{
+    text = text.simplified();
+    if (text.size() <= 500) {
+        return text;
+    }
+    return text.left(500).trimmed() + QStringLiteral("...");
 }
 }
 
@@ -238,6 +275,11 @@ QVariantList MaterialCenterViewModel::sourceOptions() const
     return m_sourceOptions;
 }
 
+QVariantList MaterialCenterViewModel::assetTypeOptions() const
+{
+    return m_assetTypeOptions;
+}
+
 QVariantList MaterialCenterViewModel::analysisStatusOptions() const
 {
     return {
@@ -245,7 +287,8 @@ QVariantList MaterialCenterViewModel::analysisStatusOptions() const
         QVariantMap{{QStringLiteral("value"), static_cast<int>(VideoAnalysisStatus::Pending)}, {QStringLiteral("label"), QStringLiteral("待解析")}},
         QVariantMap{{QStringLiteral("value"), static_cast<int>(VideoAnalysisStatus::Running)}, {QStringLiteral("label"), QStringLiteral("解析中")}},
         QVariantMap{{QStringLiteral("value"), static_cast<int>(VideoAnalysisStatus::Ready)}, {QStringLiteral("label"), QStringLiteral("已解析")}},
-        QVariantMap{{QStringLiteral("value"), static_cast<int>(VideoAnalysisStatus::Failed)}, {QStringLiteral("label"), QStringLiteral("解析失败")}}
+        QVariantMap{{QStringLiteral("value"), static_cast<int>(VideoAnalysisStatus::Failed)}, {QStringLiteral("label"), QStringLiteral("解析失败")}},
+        QVariantMap{{QStringLiteral("value"), static_cast<int>(VideoAnalysisStatus::IndexedOnly)}, {QStringLiteral("label"), QStringLiteral("仅索引")}}
     };
 }
 
@@ -261,6 +304,11 @@ QVariantList MaterialCenterViewModel::confirmationStatusOptions() const
 QString MaterialCenterViewModel::selectedVideoKey() const
 {
     return m_detail.asset.videoKey;
+}
+
+QString MaterialCenterViewModel::selectedAssetKey() const
+{
+    return m_detail.asset.assetKey.trimmed().isEmpty() ? m_detail.asset.videoKey : m_detail.asset.assetKey;
 }
 
 int MaterialCenterViewModel::selectedVideoIndex() const
@@ -295,6 +343,26 @@ QString MaterialCenterViewModel::selectedProjectName() const
 QString MaterialCenterViewModel::selectedSourceName() const
 {
     return m_detail.asset.sourceRootName;
+}
+
+QString MaterialCenterViewModel::selectedAssetTypeLabel() const
+{
+    return Formatters::assetTypeLabel(m_detail.asset.assetType);
+}
+
+QString MaterialCenterViewModel::selectedExtension() const
+{
+    return m_detail.asset.extension;
+}
+
+QString MaterialCenterViewModel::selectedTechnicalSummary() const
+{
+    return m_detail.asset.technicalSummary;
+}
+
+QString MaterialCenterViewModel::selectedSourceTextPreview() const
+{
+    return previewText(m_detail.asset.sourceText);
 }
 
 QString MaterialCenterViewModel::selectedSummary() const
@@ -419,6 +487,9 @@ QString MaterialCenterViewModel::selectedAnalysisProgressText() const
     if (m_detail.asset.analysisStatus == VideoAnalysisStatus::Ready) {
         return readyAnalysisHint(m_detail.asset);
     }
+    if (m_detail.asset.analysisStatus == VideoAnalysisStatus::IndexedOnly) {
+        return QStringLiteral("该素材类型仅进入索引，不需要内容解析。");
+    }
     return hasSelection() ? QStringLiteral("尚未开始解析。") : QString();
 }
 
@@ -446,6 +517,9 @@ QString MaterialCenterViewModel::analyzeButtonText() const
     if (state == JobState::Running) {
         return QStringLiteral("解析中");
     }
+    if (!canAnalyzeAsset(m_detail.asset)) {
+        return QStringLiteral("仅索引");
+    }
     if (m_detail.asset.analysisStatus == VideoAnalysisStatus::Failed
         || m_detail.asset.analysisStatus == VideoAnalysisStatus::Running) {
         return QStringLiteral("继续解析");
@@ -458,7 +532,17 @@ QString MaterialCenterViewModel::analyzeButtonText() const
 
 bool MaterialCenterViewModel::canAnalyzeSelected() const
 {
-    return hasSelection() && !selectedAnalysisBusy();
+    return hasSelection() && canAnalyzeAsset(m_detail.asset) && !selectedAnalysisBusy();
+}
+
+bool MaterialCenterViewModel::canConfirmSelected() const
+{
+    return hasSelection() && canConfirmAsset(m_detail.asset);
+}
+
+bool MaterialCenterViewModel::selectedIsVideo() const
+{
+    return hasSelection() && m_detail.asset.assetType == AssetType::Video;
 }
 
 int MaterialCenterViewModel::queuedAnalysisCount() const
@@ -469,7 +553,7 @@ int MaterialCenterViewModel::queuedAnalysisCount() const
 bool MaterialCenterViewModel::canConfirmVisible() const
 {
     for (const auto &asset : m_assets) {
-        if (asset.confirmationStatus != ConfirmationStatus::Confirmed) {
+        if (canConfirmAsset(asset)) {
             return true;
         }
     }
@@ -479,7 +563,7 @@ bool MaterialCenterViewModel::canConfirmVisible() const
 bool MaterialCenterViewModel::hasAnalyzedVisible() const
 {
     for (const auto &asset : m_assets) {
-        if (asset.analysisStatus == VideoAnalysisStatus::Ready) {
+        if (asset.analysisStatus == VideoAnalysisStatus::Ready && canAnalyzeAsset(asset)) {
             return true;
         }
     }
@@ -494,7 +578,14 @@ void MaterialCenterViewModel::reload()
 
     m_projectOptions = prependAllOption(m_queryService->fetchProjectOptions(), QStringLiteral("全部项目"));
     m_sourceOptions = prependAllOption(m_queryService->fetchSourceOptions(m_projectFilter), QStringLiteral("全部素材源"));
-    m_assets = m_queryService->fetchAssets(m_searchText, m_projectFilter, m_sourceFilter, m_analysisStatusFilter, m_confirmationStatusFilter);
+    m_assetTypeOptions = m_queryService->fetchAssetTypeOptions();
+    m_assetTypeOptions.prepend(QVariantMap{{QStringLiteral("value"), -1}, {QStringLiteral("label"), QStringLiteral("全部类型")}});
+    m_assets = m_queryService->fetchAssets(m_searchText,
+                                           m_projectFilter,
+                                           m_sourceFilter,
+                                           m_analysisStatusFilter,
+                                           m_confirmationStatusFilter,
+                                           m_assetTypeFilter);
     m_model->setItems(m_assets);
 
     QString selectedKey = m_detail.asset.videoKey.trimmed();
@@ -536,6 +627,15 @@ void MaterialCenterViewModel::setSourceFilter(const QString &sourceName)
         return;
     }
     m_sourceFilter = sourceName;
+    reload();
+}
+
+void MaterialCenterViewModel::setAssetTypeFilter(int assetType)
+{
+    if (m_assetTypeFilter == assetType) {
+        return;
+    }
+    m_assetTypeFilter = assetType;
     reload();
 }
 
@@ -646,9 +746,10 @@ void MaterialCenterViewModel::analyzeVisiblePending()
 
     QStringList videoKeys;
     for (const auto &asset : m_assets) {
-        if (asset.analysisStatus == VideoAnalysisStatus::Pending
+        if (canAnalyzeAsset(asset)
+            && (asset.analysisStatus == VideoAnalysisStatus::Pending
             || asset.analysisStatus == VideoAnalysisStatus::Failed
-            || asset.analysisStatus == VideoAnalysisStatus::Running) {
+            || asset.analysisStatus == VideoAnalysisStatus::Running)) {
             videoKeys.append(asset.videoKey);
         }
     }
@@ -660,7 +761,7 @@ void MaterialCenterViewModel::analyzeVisiblePending()
     QString message;
     const auto accepted = m_analysisService->enqueueVideos(videoKeys, &message);
     if (accepted > 0) {
-        setMessage(QStringLiteral("已加入 %1 条视频到解析队列。").arg(accepted));
+        setMessage(QStringLiteral("已加入 %1 条素材到解析队列。").arg(accepted));
     } else {
         setMessage(message);
     }
@@ -674,19 +775,21 @@ void MaterialCenterViewModel::analyzeVisibleAll()
 
     QStringList videoKeys;
     for (const auto &asset : m_assets) {
-        videoKeys.append(asset.videoKey);
+        if (canAnalyzeAsset(asset)) {
+            videoKeys.append(asset.videoKey);
+        }
     }
     if (videoKeys.isEmpty()) {
-        setMessage(QStringLiteral("当前结果没有可解析的视频。"));
+        setMessage(QStringLiteral("当前结果没有可解析的素材。"));
         return;
     }
 
     QString message;
     const auto accepted = m_analysisService->enqueueVideos(videoKeys, &message);
     if (accepted > 0) {
-        setMessage(QStringLiteral("已加入 %1 条视频到解析队列。").arg(accepted));
+        setMessage(QStringLiteral("已加入 %1 条素材到解析队列。").arg(accepted));
     } else {
-        setMessage(message.trimmed().isEmpty() ? QStringLiteral("当前结果没有可解析的视频。") : message);
+        setMessage(message.trimmed().isEmpty() ? QStringLiteral("当前结果没有可解析的素材。") : message);
     }
 }
 
@@ -698,7 +801,7 @@ void MaterialCenterViewModel::confirmVideo(const QString &videoKey)
 
     const auto normalizedKey = videoKey.trimmed();
     if (normalizedKey.isEmpty()) {
-        setMessage(QStringLiteral("请先选择一个视频素材。"));
+        setMessage(QStringLiteral("请先选择一个素材。"));
         return;
     }
 
@@ -718,7 +821,7 @@ void MaterialCenterViewModel::confirmVisible()
 
     QStringList videoKeys;
     for (const auto &asset : m_assets) {
-        if (asset.confirmationStatus != ConfirmationStatus::Confirmed) {
+        if (canConfirmAsset(asset)) {
             videoKeys.append(asset.videoKey);
         }
     }
@@ -948,7 +1051,7 @@ void MaterialCenterViewModel::refreshSelectedCaches()
     if (terms.isEmpty()) {
         m_selectedFrameSearchStatusCache = QStringLiteral("共 %1 帧解析结果").arg(m_detail.frames.size());
     } else if (matchCount == 0) {
-        m_selectedFrameSearchStatusCache = QStringLiteral("搜索“%1”未命中该视频的逐帧解析").arg(m_searchText.trimmed());
+        m_selectedFrameSearchStatusCache = QStringLiteral("搜索“%1”未命中该素材的逐帧解析").arg(m_searchText.trimmed());
     } else {
         m_selectedFrameSearchStatusCache = QStringLiteral("搜索“%1”命中 %2/%3 帧")
             .arg(m_searchText.trimmed())
@@ -983,6 +1086,12 @@ void MaterialCenterViewModel::refreshSelectedThumbnailUrl(bool allowContactSheet
     m_selectedThumbnailUrlCache = {};
 
     if (!hasSelection()) {
+        return;
+    }
+
+    if (m_detail.asset.assetType == AssetType::Image
+        && QFile::exists(m_detail.asset.absolutePath)) {
+        m_selectedThumbnailUrlCache = QUrl::fromLocalFile(m_detail.asset.absolutePath);
         return;
     }
 

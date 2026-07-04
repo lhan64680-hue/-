@@ -107,7 +107,7 @@ Rectangle {
 
                         Text {
                             width: parent.width
-                            text: hasCurrentItem ? viewModel.batchCurrentLabel : "等待视频解析任务"
+                            text: hasCurrentItem ? viewModel.batchCurrentLabel : "等待素材解析任务"
                             color: Theme.text
                             font.pixelSize: 15
                             font.weight: Font.DemiBold
@@ -185,7 +185,7 @@ Rectangle {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "视频解析总量"
+                                text: "素材解析总量"
                                 color: Theme.text
                                 font.pixelSize: 14
                                 font.weight: Font.Black
@@ -209,7 +209,7 @@ Rectangle {
 
                         Text {
                             Layout.fillWidth: true
-                            text: viewModel ? viewModel.batchStatusText : "暂无视频解析批次。"
+                            text: viewModel ? viewModel.batchStatusText : "暂无素材解析批次。"
                             color: Theme.muted
                             font.pixelSize: 12
                             wrapMode: Text.Wrap

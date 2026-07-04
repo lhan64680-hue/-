@@ -30,6 +30,8 @@ public:
     bool hasError() const;
     bool hasContent() const;
 
+    static QString extractTextForSummary(const QString &path, bool *truncated = nullptr, QString *errorMessage = nullptr);
+
     Q_INVOKABLE void loadFromFile(const QUrl &sourceUrl, const QString &title = QString());
     Q_INVOKABLE void clear();
 

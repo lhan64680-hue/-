@@ -22,14 +22,20 @@ class MaterialCenterViewModel : public QObject {
     Q_PROPERTY(QString message READ message NOTIFY statusChanged)
     Q_PROPERTY(QVariantList projectOptions READ projectOptions NOTIFY filtersChanged)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY filtersChanged)
+    Q_PROPERTY(QVariantList assetTypeOptions READ assetTypeOptions NOTIFY filtersChanged)
     Q_PROPERTY(QVariantList analysisStatusOptions READ analysisStatusOptions CONSTANT)
     Q_PROPERTY(QVariantList confirmationStatusOptions READ confirmationStatusOptions CONSTANT)
     Q_PROPERTY(QString selectedVideoKey READ selectedVideoKey NOTIFY selectionChanged)
+    Q_PROPERTY(QString selectedAssetKey READ selectedAssetKey NOTIFY selectionChanged)
     Q_PROPERTY(int selectedVideoIndex READ selectedVideoIndex NOTIFY selectionChanged)
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedTitle READ selectedTitle NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedProjectName READ selectedProjectName NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedSourceName READ selectedSourceName NOTIFY selectionChanged)
+    Q_PROPERTY(QString selectedAssetTypeLabel READ selectedAssetTypeLabel NOTIFY selectionChanged)
+    Q_PROPERTY(QString selectedExtension READ selectedExtension NOTIFY selectionChanged)
+    Q_PROPERTY(QString selectedTechnicalSummary READ selectedTechnicalSummary NOTIFY selectionChanged)
+    Q_PROPERTY(QString selectedSourceTextPreview READ selectedSourceTextPreview NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedSummary READ selectedSummary NOTIFY selectionChanged)
     Q_PROPERTY(QVariantList selectedKeywords READ selectedKeywords NOTIFY selectionChanged)
     Q_PROPERTY(QVariantList selectedScenes READ selectedScenes NOTIFY selectionChanged)
@@ -54,6 +60,8 @@ class MaterialCenterViewModel : public QObject {
     Q_PROPERTY(QString selectedAnalysisError READ selectedAnalysisError NOTIFY analysisProgressChanged)
     Q_PROPERTY(QString analyzeButtonText READ analyzeButtonText NOTIFY analysisProgressChanged)
     Q_PROPERTY(bool canAnalyzeSelected READ canAnalyzeSelected NOTIFY analysisProgressChanged)
+    Q_PROPERTY(bool canConfirmSelected READ canConfirmSelected NOTIFY analysisProgressChanged)
+    Q_PROPERTY(bool selectedIsVideo READ selectedIsVideo NOTIFY selectionChanged)
     Q_PROPERTY(int queuedAnalysisCount READ queuedAnalysisCount NOTIFY analysisProgressChanged)
     Q_PROPERTY(bool canConfirmVisible READ canConfirmVisible NOTIFY statusChanged)
     Q_PROPERTY(bool hasAnalyzedVisible READ hasAnalyzedVisible NOTIFY statusChanged)
@@ -71,14 +79,20 @@ public:
     QString message() const;
     QVariantList projectOptions() const;
     QVariantList sourceOptions() const;
+    QVariantList assetTypeOptions() const;
     QVariantList analysisStatusOptions() const;
     QVariantList confirmationStatusOptions() const;
     QString selectedVideoKey() const;
+    QString selectedAssetKey() const;
     int selectedVideoIndex() const;
     bool hasSelection() const;
     QString selectedTitle() const;
     QString selectedProjectName() const;
     QString selectedSourceName() const;
+    QString selectedAssetTypeLabel() const;
+    QString selectedExtension() const;
+    QString selectedTechnicalSummary() const;
+    QString selectedSourceTextPreview() const;
     QString selectedSummary() const;
     QVariantList selectedKeywords() const;
     QVariantList selectedScenes() const;
@@ -103,6 +117,8 @@ public:
     QString selectedAnalysisError() const;
     QString analyzeButtonText() const;
     bool canAnalyzeSelected() const;
+    bool canConfirmSelected() const;
+    bool selectedIsVideo() const;
     int queuedAnalysisCount() const;
     bool canConfirmVisible() const;
     bool hasAnalyzedVisible() const;
@@ -111,6 +127,7 @@ public:
     Q_INVOKABLE void setSearchText(const QString &searchText);
     Q_INVOKABLE void setProjectFilter(const QString &projectUuid);
     Q_INVOKABLE void setSourceFilter(const QString &sourceName);
+    Q_INVOKABLE void setAssetTypeFilter(int assetType);
     Q_INVOKABLE void setAnalysisStatusFilter(int status);
     Q_INVOKABLE void setConfirmationStatusFilter(int status);
     Q_INVOKABLE void selectVideo(const QString &videoKey);
@@ -168,10 +185,12 @@ private:
     QString m_searchText;
     QString m_projectFilter;
     QString m_sourceFilter;
+    int m_assetTypeFilter = -1;
     int m_analysisStatusFilter = -1;
     int m_confirmationStatusFilter = -1;
     QVariantList m_projectOptions;
     QVariantList m_sourceOptions;
+    QVariantList m_assetTypeOptions;
     QString m_message;
     QHash<QString, AnalysisProgressState> m_analysisProgressByVideoKey;
     QHash<QString, VideoAnalysisDetail> m_detailCache;

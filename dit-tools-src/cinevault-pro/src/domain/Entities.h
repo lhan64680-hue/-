@@ -172,6 +172,7 @@ struct AnalysisJob {
 
 struct GlobalVideoAsset {
     QString videoKey;
+    QString assetKey;
     QString projectUuid;
     QString projectName;
     QString projectDatabasePath;
@@ -179,8 +180,10 @@ struct GlobalVideoAsset {
     QString sourceRootName;
     qint64 assetId = 0;
     QString fileName;
+    QString extension;
     QString absolutePath;
     QString relativePath;
+    AssetType assetType = AssetType::Video;
     qint64 sizeBytes = 0;
     QString modifiedAt;
     qint64 durationMs = 0;
@@ -192,6 +195,8 @@ struct GlobalVideoAsset {
     QStringList keywords;
     QStringList scenes;
     QString searchText;
+    QString technicalSummary;
+    QString sourceText;
     QString errorMessage;
     QString updatedAt;
     QString analyzedAt;

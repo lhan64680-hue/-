@@ -4,8 +4,10 @@
 #include "infrastructure/network/VisionResponseParser.h"
 
 #include <algorithm>
+#include <QBuffer>
 #include <QEventLoop>
-#include <QFile>
+#include <QImage>
+#include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -210,6 +212,30 @@ HttpResult postJson(const QString &endpoint,
     result.success = true;
     reply->deleteLater();
     return result;
+}
+
+std::optional<QString> imageAsJpegDataUrl(const QString &imagePath, QString *errorMessage)
+{
+    QImageReader reader(imagePath);
+    reader.setAutoTransform(true);
+    const auto image = reader.read();
+    if (image.isNull()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("无法将图片转换为 JPG：%1，%2").arg(imagePath, reader.errorString());
+        }
+        return std::nullopt;
+    }
+
+    QByteArray jpegBytes;
+    QBuffer buffer(&jpegBytes);
+    if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "JPG", 90)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("图片转 JPG 失败：%1").arg(imagePath);
+        }
+        return std::nullopt;
+    }
+    return QStringLiteral("data:image/jpeg;base64,%1")
+        .arg(QString::fromUtf8(jpegBytes.toBase64()));
 }
 
 QJsonObject makeChatPayload(const QString &model, const QJsonArray &content, int maxTokens)
@@ -418,15 +444,10 @@ std::optional<VisionFrameAnalysis> VisionApiClient::analyzeFrame(const QString &
                                                                  QString *errorMessage,
                                                                  int *httpStatusCode) const
 {
-    QFile imageFile(imagePath);
-    if (!imageFile.open(QIODevice::ReadOnly)) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("无法读取解析帧：%1").arg(imagePath);
-        }
+    auto imageDataUrl = imageAsJpegDataUrl(imagePath, errorMessage);
+    if (!imageDataUrl.has_value()) {
         return std::nullopt;
     }
-    const auto base64 = QString::fromUtf8(imageFile.readAll().toBase64());
-    imageFile.close();
 
     const auto endpoint = normalizeEndpoint(baseUrl);
     const QJsonArray content = {
@@ -437,7 +458,7 @@ std::optional<VisionFrameAnalysis> VisionApiClient::analyzeFrame(const QString &
                                     "caption 用一句中文概括画面，tags/objects 为中文关键词数组。")}},
         QJsonObject{{QStringLiteral("type"), QStringLiteral("image_url")},
                     {QStringLiteral("image_url"),
-                     QJsonObject{{QStringLiteral("url"), QStringLiteral("data:image/jpeg;base64,%1").arg(base64)}}}}
+                     QJsonObject{{QStringLiteral("url"), *imageDataUrl}}}}
     };
 
     const auto result = postChatPayload(endpoint, apiKey, makeChatPayload(model, content, 300), timeoutSec);
@@ -500,6 +521,186 @@ std::optional<VisionFrameAnalysis> VisionApiClient::analyzeFrame(const QString &
         }
     }
     return analysis;
+}
+
+std::optional<VisionVideoSummary> VisionApiClient::analyzeImage(const QString &imagePath,
+                                                                const QString &baseUrl,
+                                                                const QString &apiKey,
+                                                                const QString &model,
+                                                                int timeoutSec,
+                                                                QString *errorMessage,
+                                                                int *httpStatusCode) const
+{
+    auto imageDataUrl = imageAsJpegDataUrl(imagePath, errorMessage);
+    if (!imageDataUrl.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto endpoint = normalizeEndpoint(baseUrl);
+    const QJsonArray content = {
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
+                    {QStringLiteral("text"),
+                     QStringLiteral("请分析这张图片素材，只返回 JSON，格式为 "
+                                    "{\"summary\":\"\",\"keywords\":[],\"scenes\":[]}。"
+                                    "summary 用 3-5 句中文说明主要主体、场景环境、可见物体、动作/状态、风格和可用于检索的画面特征。"
+                                    "keywords 返回 8-16 个中文搜索关键词，scenes 返回场景/地点/环境类中文关键词数组。"
+                                    "不要加入 Markdown。")}},
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("image_url")},
+                    {QStringLiteral("image_url"),
+                     QJsonObject{{QStringLiteral("url"), *imageDataUrl}}}}
+    };
+
+    const auto result = postChatPayload(endpoint, apiKey, makeChatPayload(model, content, 700), timeoutSec);
+    if (httpStatusCode) {
+        *httpStatusCode = result.statusCode;
+    }
+    if (!result.success) {
+        if (errorMessage) {
+            *errorMessage = result.errorMessage;
+        }
+        return std::nullopt;
+    }
+
+    const auto schema = QStringLiteral("{\"summary\":\"\",\"keywords\":[],\"scenes\":[]}");
+    QString parseError;
+    auto payload = VisionResponseParser::parseAssistantJson(result.body, &parseError);
+    auto usedRepair = false;
+    if (!payload.has_value()) {
+        payload = repairAssistantPayload(result.body,
+                                         endpoint,
+                                         apiKey,
+                                         model,
+                                         timeoutSec,
+                                         schema,
+                                         parseError,
+                                         700,
+                                         errorMessage);
+        usedRepair = true;
+        if (!payload.has_value()) {
+            return fallbackVideoSummaryFromResponse(result.body, errorMessage);
+        }
+    }
+
+    QString normalizeError;
+    auto summary = VisionResponseParser::normalizeVideoSummary(*payload, &normalizeError);
+    if (!summary.has_value() && !usedRepair) {
+        payload = repairAssistantPayload(result.body,
+                                         endpoint,
+                                         apiKey,
+                                         model,
+                                         timeoutSec,
+                                         schema,
+                                         normalizeError,
+                                         700,
+                                         errorMessage);
+        usedRepair = true;
+        if (payload.has_value()) {
+            summary = VisionResponseParser::normalizeVideoSummary(*payload, &normalizeError);
+        } else {
+            return fallbackVideoSummaryFromResponse(result.body, errorMessage);
+        }
+    }
+    if (!summary.has_value()) {
+        auto fallback = fallbackVideoSummaryFromResponse(result.body, errorMessage);
+        if (fallback.has_value()) {
+            return fallback;
+        }
+        if (errorMessage && errorMessage->isEmpty()) {
+            *errorMessage = normalizeError;
+        }
+    }
+    return summary;
+}
+
+std::optional<VisionVideoSummary> VisionApiClient::summarizeText(const QString &fileName,
+                                                                 const QString &text,
+                                                                 const QString &baseUrl,
+                                                                 const QString &apiKey,
+                                                                 const QString &model,
+                                                                 int timeoutSec,
+                                                                 QString *errorMessage,
+                                                                 int *httpStatusCode) const
+{
+    const auto boundedText = text.trimmed().left(64000);
+    if (boundedText.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("没有可用于摘要的文本内容");
+        }
+        return std::nullopt;
+    }
+
+    const auto endpoint = normalizeEndpoint(baseUrl);
+    const QJsonArray content = {
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
+                    {QStringLiteral("text"),
+                     QStringLiteral("下面是素材文件《%1》的文本内容，请归纳为中文 JSON，格式为 "
+                                    "{\"summary\":\"\",\"keywords\":[],\"scenes\":[]}。"
+                                    "summary 用 3-6 句概括内容主题、关键信息、可能用途和可检索要点；"
+                                    "keywords 返回 8-16 个中文搜索关键词；scenes 可返回文档中出现的场景、地点、项目或主题分类，没有则返回空数组。"
+                                    "只返回 JSON，不要加入 Markdown。\n\n%2")
+                         .arg(fileName, boundedText)}}
+    };
+
+    const auto result = postChatPayload(endpoint, apiKey, makeChatPayload(model, content, 800), timeoutSec);
+    if (httpStatusCode) {
+        *httpStatusCode = result.statusCode;
+    }
+    if (!result.success) {
+        if (errorMessage) {
+            *errorMessage = result.errorMessage;
+        }
+        return std::nullopt;
+    }
+
+    const auto schema = QStringLiteral("{\"summary\":\"\",\"keywords\":[],\"scenes\":[]}");
+    QString parseError;
+    auto payload = VisionResponseParser::parseAssistantJson(result.body, &parseError);
+    auto usedRepair = false;
+    if (!payload.has_value()) {
+        payload = repairAssistantPayload(result.body,
+                                         endpoint,
+                                         apiKey,
+                                         model,
+                                         timeoutSec,
+                                         schema,
+                                         parseError,
+                                         800,
+                                         errorMessage);
+        usedRepair = true;
+        if (!payload.has_value()) {
+            return fallbackVideoSummaryFromResponse(result.body, errorMessage);
+        }
+    }
+
+    QString normalizeError;
+    auto summary = VisionResponseParser::normalizeVideoSummary(*payload, &normalizeError);
+    if (!summary.has_value() && !usedRepair) {
+        payload = repairAssistantPayload(result.body,
+                                         endpoint,
+                                         apiKey,
+                                         model,
+                                         timeoutSec,
+                                         schema,
+                                         normalizeError,
+                                         800,
+                                         errorMessage);
+        usedRepair = true;
+        if (payload.has_value()) {
+            summary = VisionResponseParser::normalizeVideoSummary(*payload, &normalizeError);
+        } else {
+            return fallbackVideoSummaryFromResponse(result.body, errorMessage);
+        }
+    }
+    if (!summary.has_value()) {
+        auto fallback = fallbackVideoSummaryFromResponse(result.body, errorMessage);
+        if (fallback.has_value()) {
+            return fallback;
+        }
+        if (errorMessage && errorMessage->isEmpty()) {
+            *errorMessage = normalizeError;
+        }
+    }
+    return summary;
 }
 
 std::optional<VisionVideoSummary> VisionApiClient::summarizeVideo(const QString &fileName,

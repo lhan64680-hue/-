@@ -151,6 +151,8 @@ QString Formatters::videoAnalysisStatusLabel(VideoAnalysisStatus status, Confirm
             : QStringLiteral("待确认");
     case VideoAnalysisStatus::Failed:
         return QStringLiteral("解析失败");
+    case VideoAnalysisStatus::IndexedOnly:
+        return QStringLiteral("仅索引");
     }
     return QStringLiteral("未知");
 }

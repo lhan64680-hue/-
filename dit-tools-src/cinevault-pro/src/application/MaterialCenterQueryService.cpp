@@ -2,6 +2,7 @@
 
 #include "core/search/SearchEngine.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
+#include "shared/Formatters.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -41,6 +42,7 @@ GlobalVideoAsset readAssetRow(const QSqlQuery &query)
 {
     GlobalVideoAsset asset;
     asset.videoKey = query.value(0).toString();
+    asset.assetKey = asset.videoKey;
     asset.projectUuid = query.value(1).toString();
     asset.projectName = query.value(2).toString();
     asset.projectDatabasePath = query.value(3).toString();
@@ -48,32 +50,36 @@ GlobalVideoAsset readAssetRow(const QSqlQuery &query)
     asset.sourceRootName = query.value(5).toString();
     asset.assetId = query.value(6).toLongLong();
     asset.fileName = query.value(7).toString();
-    asset.absolutePath = query.value(8).toString();
-    asset.relativePath = query.value(9).toString();
-    asset.sizeBytes = query.value(10).toLongLong();
-    asset.modifiedAt = query.value(11).toString();
-    asset.durationMs = query.value(12).toLongLong();
-    asset.thumbnailPath = query.value(13).toString();
-    asset.thumbnailStatus = static_cast<ThumbnailStatus>(query.value(14).toInt());
-    asset.analysisStatus = static_cast<VideoAnalysisStatus>(query.value(15).toInt());
-    asset.confirmationStatus = static_cast<ConfirmationStatus>(query.value(16).toInt());
-    asset.errorMessage = query.value(17).toString();
-    asset.updatedAt = query.value(18).toString();
-    asset.summary = query.value(19).toString();
-    asset.keywords = parseJsonList(query.value(20).toString());
-    asset.scenes = parseJsonList(query.value(21).toString());
-    asset.searchText = query.value(22).toString();
-    asset.analyzedAt = query.value(23).toString();
-    asset.confirmedAt = query.value(24).toString();
+    asset.extension = query.value(8).toString();
+    asset.absolutePath = query.value(9).toString();
+    asset.relativePath = query.value(10).toString();
+    asset.assetType = static_cast<AssetType>(query.value(11).toInt());
+    asset.sizeBytes = query.value(12).toLongLong();
+    asset.modifiedAt = query.value(13).toString();
+    asset.durationMs = query.value(14).toLongLong();
+    asset.technicalSummary = query.value(15).toString();
+    asset.sourceText = query.value(16).toString();
+    asset.thumbnailPath = query.value(17).toString();
+    asset.thumbnailStatus = static_cast<ThumbnailStatus>(query.value(18).toInt());
+    asset.analysisStatus = static_cast<VideoAnalysisStatus>(query.value(19).toInt());
+    asset.confirmationStatus = static_cast<ConfirmationStatus>(query.value(20).toInt());
+    asset.errorMessage = query.value(21).toString();
+    asset.updatedAt = query.value(22).toString();
+    asset.summary = query.value(23).toString();
+    asset.keywords = parseJsonList(query.value(24).toString());
+    asset.scenes = parseJsonList(query.value(25).toString());
+    asset.searchText = query.value(26).toString();
+    asset.analyzedAt = query.value(27).toString();
+    asset.confirmedAt = query.value(28).toString();
     asset.analysisTask.videoKey = asset.videoKey;
-    asset.analysisTask.stage = static_cast<VideoAnalysisTaskStage>(query.value(25).toInt());
-    asset.analysisTask.totalFrames = query.value(26).toInt();
-    asset.analysisTask.completedFrames = query.value(27).toInt();
-    asset.analysisTask.successfulFrames = query.value(28).toInt();
-    asset.analysisTask.skippedFrames = query.value(29).toInt();
-    asset.analysisTask.summaryRetryCount = query.value(30).toInt();
-    asset.analysisTask.lastErrorMessage = query.value(31).toString();
-    asset.analysisTask.lastUpdatedAt = query.value(32).toString();
+    asset.analysisTask.stage = static_cast<VideoAnalysisTaskStage>(query.value(29).toInt());
+    asset.analysisTask.totalFrames = query.value(30).toInt();
+    asset.analysisTask.completedFrames = query.value(31).toInt();
+    asset.analysisTask.successfulFrames = query.value(32).toInt();
+    asset.analysisTask.skippedFrames = query.value(33).toInt();
+    asset.analysisTask.summaryRetryCount = query.value(34).toInt();
+    asset.analysisTask.lastErrorMessage = query.value(35).toString();
+    asset.analysisTask.lastUpdatedAt = query.value(36).toString();
     return asset;
 }
 }
@@ -143,11 +149,34 @@ QVariantList MaterialCenterQueryService::fetchSourceOptions(const QString &proje
     return options;
 }
 
+QVariantList MaterialCenterQueryService::fetchAssetTypeOptions() const
+{
+    QVariantList options;
+    if (!m_globalDatabaseManager || !m_globalDatabaseManager->isOpen()) {
+        return options;
+    }
+
+    QSqlQuery query(m_globalDatabaseManager->database());
+    if (!query.exec(QStringLiteral("SELECT DISTINCT asset_type FROM global_video_asset ORDER BY asset_type"))) {
+        return options;
+    }
+
+    while (query.next()) {
+        const auto type = static_cast<AssetType>(query.value(0).toInt());
+        options.append(QVariantMap{
+            {QStringLiteral("value"), static_cast<int>(type)},
+            {QStringLiteral("label"), Formatters::assetTypeLabel(type)}
+        });
+    }
+    return options;
+}
+
 QVector<GlobalVideoAsset> MaterialCenterQueryService::fetchAssets(const QString &keyword,
                                                                   const QString &projectUuid,
                                                                   const QString &sourceName,
                                                                   int analysisStatusFilter,
-                                                                  int confirmationStatusFilter) const
+                                                                  int confirmationStatusFilter,
+                                                                  int assetTypeFilter) const
 {
     QVector<GlobalVideoAsset> assets;
     if (!m_globalDatabaseManager || !m_globalDatabaseManager->isOpen()) {
@@ -156,7 +185,8 @@ QVector<GlobalVideoAsset> MaterialCenterQueryService::fetchAssets(const QString 
 
     QString sql = QStringLiteral(
         "SELECT g.video_key, g.project_uuid, g.project_name, g.project_database_path, g.source_root_id, g.source_root_name, "
-        "g.asset_id, g.file_name, g.absolute_path, g.relative_path, g.size_bytes, g.modified_at, g.duration_ms, "
+        "g.asset_id, g.file_name, COALESCE(g.extension, ''), g.absolute_path, g.relative_path, COALESCE(g.asset_type, 1), "
+        "g.size_bytes, g.modified_at, g.duration_ms, COALESCE(g.technical_summary, ''), COALESCE(g.source_text, ''), "
         "COALESCE(g.thumbnail_path, ''), COALESCE(g.thumbnail_status, 0), g.analysis_status, g.confirmation_status, COALESCE(g.error_message, ''), "
         "g.updated_at, COALESCE(r.summary, ''), COALESCE(r.keywords_json, '[]'), COALESCE(r.scenes_json, '[]'), "
         "COALESCE(r.search_text, ''), COALESCE(r.analyzed_at, ''), COALESCE(r.confirmed_at, ''), "
@@ -185,13 +215,22 @@ QVector<GlobalVideoAsset> MaterialCenterQueryService::fetchAssets(const QString 
         sql += QStringLiteral(" AND g.confirmation_status = ?");
         binds.append(confirmationStatusFilter);
     }
+    if (assetTypeFilter >= 0) {
+        sql += QStringLiteral(" AND g.asset_type = ?");
+        binds.append(assetTypeFilter);
+    }
     if (!keyword.trimmed().isEmpty()) {
         const auto likePattern = m_searchEngine ? m_searchEngine->buildLikePattern(keyword) : QStringLiteral("%%");
         if (m_globalDatabaseManager->hasFts5() && m_searchEngine) {
             sql += QStringLiteral(
                 " AND (g.video_key IN (SELECT video_key FROM video_search_fts WHERE video_search_fts MATCH ?) "
                 "OR COALESCE(r.search_text, '') LIKE ? ESCAPE '\\' "
+                "OR COALESCE(g.source_text, '') LIKE ? ESCAPE '\\' "
+                "OR COALESCE(g.technical_summary, '') LIKE ? ESCAPE '\\' "
                 "OR g.file_name LIKE ? ESCAPE '\\' "
+                "OR g.absolute_path LIKE ? ESCAPE '\\' "
+                "OR g.relative_path LIKE ? ESCAPE '\\' "
+                "OR COALESCE(g.extension, '') LIKE ? ESCAPE '\\' "
                 "OR g.project_name LIKE ? ESCAPE '\\' "
                 "OR g.source_root_name LIKE ? ESCAPE '\\' "
                 "OR EXISTS ("
@@ -205,7 +244,12 @@ QVector<GlobalVideoAsset> MaterialCenterQueryService::fetchAssets(const QString 
         } else {
             sql += QStringLiteral(
                 " AND (COALESCE(r.search_text, '') LIKE ? ESCAPE '\\' "
+                "OR COALESCE(g.source_text, '') LIKE ? ESCAPE '\\' "
+                "OR COALESCE(g.technical_summary, '') LIKE ? ESCAPE '\\' "
                 "OR g.file_name LIKE ? ESCAPE '\\' "
+                "OR g.absolute_path LIKE ? ESCAPE '\\' "
+                "OR g.relative_path LIKE ? ESCAPE '\\' "
+                "OR COALESCE(g.extension, '') LIKE ? ESCAPE '\\' "
                 "OR g.project_name LIKE ? ESCAPE '\\' "
                 "OR g.source_root_name LIKE ? ESCAPE '\\' "
                 "OR EXISTS ("
@@ -216,15 +260,9 @@ QVector<GlobalVideoAsset> MaterialCenterQueryService::fetchAssets(const QString 
                 "OR COALESCE(f.actions, '') LIKE ? ESCAPE '\\' "
                 "OR COALESCE(f.setting_text, '') LIKE ? ESCAPE '\\')))");
         }
-        binds.append(likePattern);
-        binds.append(likePattern);
-        binds.append(likePattern);
-        binds.append(likePattern);
-        binds.append(likePattern);
-        binds.append(likePattern);
-        binds.append(likePattern);
-        binds.append(likePattern);
-        binds.append(likePattern);
+        for (int index = 0; index < 14; ++index) {
+            binds.append(likePattern);
+        }
     }
     sql += QStringLiteral(
         " ORDER BY g.file_name COLLATE NOCASE ASC, "
@@ -257,7 +295,8 @@ VideoAnalysisDetail MaterialCenterQueryService::fetchDetail(const QString &video
     QSqlQuery assetQuery(m_globalDatabaseManager->database());
     assetQuery.prepare(QStringLiteral(
         "SELECT g.video_key, g.project_uuid, g.project_name, g.project_database_path, g.source_root_id, g.source_root_name, "
-        "g.asset_id, g.file_name, g.absolute_path, g.relative_path, g.size_bytes, g.modified_at, g.duration_ms, "
+        "g.asset_id, g.file_name, COALESCE(g.extension, ''), g.absolute_path, g.relative_path, COALESCE(g.asset_type, 1), "
+        "g.size_bytes, g.modified_at, g.duration_ms, COALESCE(g.technical_summary, ''), COALESCE(g.source_text, ''), "
         "COALESCE(g.thumbnail_path, ''), COALESCE(g.thumbnail_status, 0), g.analysis_status, g.confirmation_status, COALESCE(g.error_message, ''), "
         "g.updated_at, COALESCE(r.summary, ''), COALESCE(r.keywords_json, '[]'), COALESCE(r.scenes_json, '[]'), "
         "COALESCE(r.search_text, ''), COALESCE(r.analyzed_at, ''), COALESCE(r.confirmed_at, ''), "

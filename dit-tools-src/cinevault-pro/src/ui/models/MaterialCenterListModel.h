@@ -11,7 +11,11 @@ class MaterialCenterListModel : public QAbstractListModel {
 public:
     enum Roles {
         VideoKeyRole = Qt::UserRole + 1,
+        AssetKeyRole,
         FileNameRole,
+        AssetTypeRole,
+        AssetTypeLabelRole,
+        ExtensionRole,
         ProjectNameRole,
         SourceNameRole,
         RelativePathRole,
@@ -26,7 +30,9 @@ public:
         ThumbnailLoadingRole,
         UpdatedAtRole,
         DurationMsRole,
-        ErrorMessageRole
+        ErrorMessageRole,
+        CanAnalyzeRole,
+        CanConfirmRole
     };
 
     explicit MaterialCenterListModel(QObject *parent = nullptr);

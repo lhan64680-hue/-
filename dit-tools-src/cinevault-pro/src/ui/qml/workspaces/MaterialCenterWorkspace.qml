@@ -140,7 +140,7 @@ Rectangle {
                     ThemedTextField {
                         Layout.preferredWidth: 240
                         Layout.fillWidth: true
-                        placeholderText: "搜索摘要、关键词、项目名或文件名"
+                        placeholderText: "搜索文件名、路径、摘要、关键词或文本内容"
                         text: shellVm ? shellVm.globalSearchText : ""
                         onTextChanged: if (shellVm) shellVm.globalSearchText = text
                     }
@@ -157,6 +157,13 @@ Rectangle {
                         model: viewModel ? viewModel.sourceOptions : []
                         textRole: "label"
                         onActivated: if (viewModel) viewModel.setSourceFilter(model[index].value)
+                    }
+
+                    ThemedComboBox {
+                        Layout.preferredWidth: 126
+                        model: viewModel ? viewModel.assetTypeOptions : []
+                        textRole: "label"
+                        onActivated: if (viewModel) viewModel.setAssetTypeFilter(model[index].value)
                     }
 
                     ThemedComboBox {
@@ -221,9 +228,9 @@ Rectangle {
                         width: ListView.view.width
                         height: errorMessage.length > 0 ? 138 : 118
                         radius: 18
-                        color: viewModel && viewModel.selectedVideoKey === videoKey ? Theme.selectedBg : Theme.bg
+                        color: viewModel && viewModel.selectedAssetKey === assetKey ? Theme.selectedBg : Theme.bg
                         border.width: 1
-                        border.color: viewModel && viewModel.selectedVideoKey === videoKey ? Theme.blue : Theme.line
+                        border.color: viewModel && viewModel.selectedAssetKey === assetKey ? Theme.blue : Theme.line
 
                         MouseArea {
                             anchors.fill: parent
@@ -231,7 +238,7 @@ Rectangle {
                             onClicked: {
                                 root.forceActiveFocus()
                                 if (viewModel) {
-                                    viewModel.selectVideo(videoKey)
+                                    viewModel.selectVideo(assetKey)
                                 }
                             }
                         }
@@ -317,7 +324,7 @@ Rectangle {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: projectName + " · " + sourceName
+                                    text: assetTypeLabel + (extension.length > 0 ? " · " + extension : "") + " · " + projectName + " · " + sourceName
                                     color: Theme.muted
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
@@ -325,7 +332,7 @@ Rectangle {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: summary.length > 0 ? summary : "尚未生成视频内容摘要"
+                                    text: summary.length > 0 ? summary : "尚未生成内容摘要"
                                     color: Theme.text
                                     font.pixelSize: 13
                                     wrapMode: Text.Wrap
@@ -379,10 +386,11 @@ Rectangle {
                                 ActionButton {
                                     Layout.preferredWidth: 82
                                     Layout.preferredHeight: 32
+                                    visible: isConfirmed || canConfirm
                                     text: isConfirmed ? "已确认" : "确认"
-                                    primary: !isConfirmed
-                                    enabled: viewModel && !isConfirmed
-                                    onClicked: if (viewModel) viewModel.confirmVideo(videoKey)
+                                    primary: canConfirm
+                                    enabled: viewModel && canConfirm
+                                    onClicked: if (viewModel) viewModel.confirmVideo(assetKey)
                                 }
 
                                 Item { Layout.fillHeight: true }
@@ -422,7 +430,7 @@ Rectangle {
 
                         Text {
                             Layout.fillWidth: true
-                            text: viewModel && viewModel.hasSelection ? viewModel.selectedTitle : "选择左侧视频查看详情"
+                            text: viewModel && viewModel.hasSelection ? viewModel.selectedTitle : "选择左侧素材查看详情"
                             color: Theme.text
                             font.pixelSize: 20
                             font.weight: Font.Black
@@ -453,7 +461,9 @@ Rectangle {
                                 visible: !viewModel || !viewModel.hasSelection || viewModel.selectedThumbnailUrl.toString().length === 0
                                 text: viewModel && viewModel.selectedThumbnailLoading
                                     ? "缩略图生成中..."
-                                    : (viewModel && viewModel.selectedFramesLoading ? "正在加载预览..." : "暂无多宫格拼图")
+                                    : (viewModel && viewModel.selectedFramesLoading
+                                        ? "正在加载预览..."
+                                        : (viewModel && viewModel.selectedIsVideo ? "暂无多宫格拼图" : "暂无预览"))
                                 color: Theme.muted
                             }
 
@@ -476,6 +486,18 @@ Rectangle {
                             elide: Text.ElideRight
                         }
 
+                        Text {
+                            Layout.fillWidth: true
+                            visible: viewModel && viewModel.hasSelection
+                            text: "类型：" + (viewModel ? viewModel.selectedAssetTypeLabel : "")
+                                + ((viewModel && viewModel.selectedExtension.length > 0) ? " · " + viewModel.selectedExtension : "")
+                            color: Theme.muted
+                            font.pixelSize: 12
+                            wrapMode: Text.WrapAnywhere
+                            maximumLineCount: 2
+                            elide: Text.ElideRight
+                        }
+
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 8
@@ -487,6 +509,14 @@ Rectangle {
                                 primary: true
                                 enabled: viewModel && viewModel.canAnalyzeSelected
                                 onClicked: if (viewModel) viewModel.analyzeSelected()
+                            }
+
+                            ActionButton {
+                                Layout.preferredWidth: 98
+                                Layout.preferredHeight: 34
+                                text: viewModel && viewModel.selectedConfirmationStatusLabel === "已确认" ? "已确认" : "确认结果"
+                                enabled: viewModel && viewModel.canConfirmSelected
+                                onClicked: if (viewModel) viewModel.confirmSelected()
                             }
                         }
 
@@ -585,7 +615,7 @@ Rectangle {
                                 spacing: 10
 
                                 Text {
-                                    text: "视频摘要"
+                                    text: "内容摘要"
                                     color: Theme.text
                                     font.pixelSize: 15
                                     font.weight: Font.DemiBold
@@ -595,9 +625,19 @@ Rectangle {
                                     Layout.fillWidth: true
                                     text: viewModel && viewModel.selectedSummary.length > 0
                                         ? viewModel.selectedSummary
-                                        : "当前还没有摘要。先执行解析任务，完成后这里会显示视频内容概述。"
+                                        : "当前还没有摘要。先执行解析任务，完成后这里会显示内容概述。"
                                     color: Theme.muted
                                     wrapMode: Text.Wrap
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: viewModel && viewModel.selectedSourceTextPreview.length > 0
+                                    text: "正文预览：" + (viewModel ? viewModel.selectedSourceTextPreview : "")
+                                    color: Theme.muted
+                                    wrapMode: Text.Wrap
+                                    maximumLineCount: 6
+                                    elide: Text.ElideRight
                                 }
                             }
                         }
@@ -699,7 +739,7 @@ Rectangle {
                                 spacing: 8
 
                                 Text {
-                                    text: "路径与解析图片"
+                                    text: "路径与素材信息"
                                     color: Theme.text
                                     font.pixelSize: 15
                                     font.weight: Font.DemiBold
@@ -714,6 +754,15 @@ Rectangle {
 
                                 Text {
                                     Layout.fillWidth: true
+                                    visible: viewModel && viewModel.selectedTechnicalSummary.length > 0
+                                    text: "技术摘要：" + (viewModel ? viewModel.selectedTechnicalSummary : "")
+                                    color: Theme.muted
+                                    wrapMode: Text.WrapAnywhere
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: viewModel && viewModel.selectedIsVideo
                                     text: "解析图片目录：" + (viewModel ? viewModel.selectedCachePath : "")
                                     color: Theme.muted
                                     wrapMode: Text.WrapAnywhere
@@ -723,6 +772,7 @@ Rectangle {
 
                         Text {
                             text: "逐帧解析"
+                            visible: viewModel && viewModel.selectedIsVideo
                             color: Theme.text
                             font.pixelSize: 15
                             font.weight: Font.DemiBold
@@ -730,7 +780,7 @@ Rectangle {
 
                         Text {
                             Layout.fillWidth: true
-                            visible: viewModel && viewModel.hasSelection && viewModel.selectedFrameSearchStatus.length > 0
+                            visible: viewModel && viewModel.selectedIsVideo && viewModel.selectedFrameSearchStatus.length > 0
                             text: viewModel ? viewModel.selectedFrameSearchStatus : ""
                             color: Theme.muted
                             font.pixelSize: 12
@@ -740,7 +790,7 @@ Rectangle {
                         RowLayout {
                             Layout.fillWidth: true
                             visible: viewModel
-                                && viewModel.hasSelection
+                                && viewModel.selectedIsVideo
                                 && !viewModel.selectedFramesLoading
                                 && viewModel.selectedFrameCount > 0
                             spacing: 10
@@ -782,7 +832,7 @@ Rectangle {
                         }
 
                         Repeater {
-                            model: viewModel ? viewModel.selectedFrames : []
+                            model: viewModel && viewModel.selectedIsVideo ? viewModel.selectedFrames : []
 
                             delegate: Rectangle {
                                 id: frameCard
@@ -950,11 +1000,11 @@ Rectangle {
                         Text {
                             Layout.fillWidth: true
                             visible: viewModel
-                                && viewModel.hasSelection
+                                && viewModel.selectedIsVideo
                                 && !viewModel.selectedFramesLoading
                                 && viewModel.selectedFrames.length === 0
                             text: shellVm && shellVm.globalSearchText.length > 0
-                                ? "当前关键词没有命中该视频的逐帧解析。"
+                                ? "当前关键词没有命中该素材的逐帧解析。"
                                 : "当前还没有逐帧解析结果。"
                             color: Theme.muted
                             font.pixelSize: 12

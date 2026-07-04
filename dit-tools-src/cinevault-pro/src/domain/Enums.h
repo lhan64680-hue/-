@@ -84,7 +84,8 @@ enum class VideoAnalysisStatus : qint32 {
     Pending = 0,
     Running,
     Ready,
-    Failed
+    Failed,
+    IndexedOnly
 };
 
 enum class VideoAnalysisTaskStage : qint32 {

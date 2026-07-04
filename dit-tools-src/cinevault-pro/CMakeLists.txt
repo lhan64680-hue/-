@@ -378,6 +378,29 @@ if(BUILD_TESTING)
     add_test(NAME LocalImageUrlHelperTest COMMAND LocalImageUrlHelperTest)
 
     if(NOT CINEVAULT_BUILD_MINIMAL_GUI)
+        qt_add_executable(DocumentPreviewServiceTest
+            tests/unit/DocumentPreviewServiceTest.cpp
+            src/application/DocumentPreviewService.cpp
+        )
+        target_include_directories(DocumentPreviewServiceTest PRIVATE src)
+        if(QT_ROOT AND EXISTS "${CINEVAULT_QTCORE_PRIVATE_INCLUDE_DIR}/QtCore/private/qzipreader_p.h")
+            target_include_directories(DocumentPreviewServiceTest PRIVATE "${CINEVAULT_QTCORE_PRIVATE_INCLUDE_DIR}")
+        endif()
+        target_link_libraries(DocumentPreviewServiceTest PRIVATE Qt6::Core Qt6::Test)
+        add_test(NAME DocumentPreviewServiceTest COMMAND DocumentPreviewServiceTest)
+
+        qt_add_executable(MaterialCenterQueryServiceTest
+            tests/unit/MaterialCenterQueryServiceTest.cpp
+            src/application/MaterialCenterQueryService.cpp
+            src/core/search/SearchEngine.cpp
+            src/infrastructure/db/GlobalDatabaseManager.cpp
+            src/shared/Formatters.cpp
+            src/shared/Paths.cpp
+        )
+        target_include_directories(MaterialCenterQueryServiceTest PRIVATE src)
+        target_link_libraries(MaterialCenterQueryServiceTest PRIVATE Qt6::Core Qt6::Sql Qt6::Test)
+        add_test(NAME MaterialCenterQueryServiceTest COMMAND MaterialCenterQueryServiceTest)
+
         qt_add_executable(FeedbackMessageListModelTest
             tests/unit/FeedbackMessageListModelTest.cpp
             src/ui/models/FeedbackMessageListModel.cpp
@@ -440,6 +463,12 @@ if(BUILD_TESTING)
         )
         if(TARGET FeedbackMessageListModelTest)
             list(APPEND CINEVAULT_PATH_AWARE_TESTS FeedbackMessageListModelTest)
+        endif()
+        if(TARGET DocumentPreviewServiceTest)
+            list(APPEND CINEVAULT_PATH_AWARE_TESTS DocumentPreviewServiceTest)
+        endif()
+        if(TARGET MaterialCenterQueryServiceTest)
+            list(APPEND CINEVAULT_PATH_AWARE_TESTS MaterialCenterQueryServiceTest)
         endif()
         if(TARGET FeedbackAttachmentCacheTest)
             list(APPEND CINEVAULT_PATH_AWARE_TESTS FeedbackAttachmentCacheTest)

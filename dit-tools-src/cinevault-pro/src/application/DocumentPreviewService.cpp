@@ -18,6 +18,7 @@
 
 namespace {
 constexpr qint64 kMaxPreviewBytes = 1024 * 1024;
+constexpr int kMaxSummaryTextChars = 64000;
 constexpr int kMaxPreviewRows = 180;
 constexpr int kMaxTableColumns = 24;
 
@@ -505,6 +506,127 @@ PreviewPayload buildLegacyOfficeFallback(const QString &suffix)
     };
 }
 
+QString boundedSummaryText(QString text, bool *truncated)
+{
+    text = text.trimmed();
+    if (text.size() <= kMaxSummaryTextChars) {
+        return text;
+    }
+    if (truncated) {
+        *truncated = true;
+    }
+    return text.left(kMaxSummaryTextChars).trimmed();
+}
+
+QString extractDocxPlainText(const QString &path, QString *errorMessage)
+{
+    QZipReader reader(path);
+    if (!reader.exists() || !reader.isReadable()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("无法解析文档容器：%1").arg(path);
+        }
+        return {};
+    }
+
+    const auto paragraphs = extractXmlTextRuns(reader.fileData(QStringLiteral("word/document.xml")),
+                                               QStringLiteral("p"),
+                                               QStringLiteral("t"));
+    if (paragraphs.isEmpty() && errorMessage) {
+        *errorMessage = QStringLiteral("当前 DOCX 没有可提取的正文内容。");
+    }
+    return paragraphs.join(QStringLiteral("\n"));
+}
+
+QString extractPptxPlainText(const QString &path, bool *truncated, QString *errorMessage)
+{
+    QZipReader reader(path);
+    if (!reader.exists() || !reader.isReadable()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("无法解析演示文稿容器：%1").arg(path);
+        }
+        return {};
+    }
+
+    auto entries = reader.fileInfoList();
+    const QRegularExpression slideExpression(QStringLiteral("^ppt/slides/slide(\\d+)\\.xml$"));
+    entries.erase(std::remove_if(entries.begin(), entries.end(), [&](const QZipReader::FileInfo &entry) {
+        return !slideExpression.match(entry.filePath).hasMatch();
+    }), entries.end());
+    std::sort(entries.begin(), entries.end(), [&](const QZipReader::FileInfo &left, const QZipReader::FileInfo &right) {
+        return numericSuffix(left.filePath, slideExpression) < numericSuffix(right.filePath, slideExpression);
+    });
+
+    QStringList slides;
+    for (int index = 0; index < entries.size() && index < kMaxPreviewRows; ++index) {
+        const auto paragraphs = extractXmlTextRuns(reader.fileData(entries.at(index).filePath),
+                                                   QStringLiteral("p"),
+                                                   QStringLiteral("t"));
+        if (!paragraphs.isEmpty()) {
+            slides.append(QStringLiteral("第 %1 页\n%2").arg(index + 1).arg(paragraphs.join(QStringLiteral("\n"))));
+        }
+    }
+    if (truncated && entries.size() > kMaxPreviewRows) {
+        *truncated = true;
+    }
+    if (slides.isEmpty() && errorMessage) {
+        *errorMessage = QStringLiteral("当前 PPTX 没有可提取的文本内容。");
+    }
+    return slides.join(QStringLiteral("\n\n"));
+}
+
+QString extractXlsxPlainText(const QString &path, bool *truncated, QString *errorMessage)
+{
+    QZipReader reader(path);
+    if (!reader.exists() || !reader.isReadable()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("无法解析表格容器：%1").arg(path);
+        }
+        return {};
+    }
+
+    const auto sharedStrings = parseSharedStrings(reader.fileData(QStringLiteral("xl/sharedStrings.xml")));
+    const auto sheetNames = parseWorkbookSheetNames(reader.fileData(QStringLiteral("xl/workbook.xml")));
+    auto entries = reader.fileInfoList();
+    const QRegularExpression sheetExpression(QStringLiteral("^xl/worksheets/sheet(\\d+)\\.xml$"));
+    entries.erase(std::remove_if(entries.begin(), entries.end(), [&](const QZipReader::FileInfo &entry) {
+        return !sheetExpression.match(entry.filePath).hasMatch();
+    }), entries.end());
+    std::sort(entries.begin(), entries.end(), [&](const QZipReader::FileInfo &left, const QZipReader::FileInfo &right) {
+        return numericSuffix(left.filePath, sheetExpression) < numericSuffix(right.filePath, sheetExpression);
+    });
+
+    QStringList sections;
+    int processedRows = 0;
+    for (int index = 0; index < entries.size(); ++index) {
+        bool rowTruncated = false;
+        const auto rows = parseWorksheetRows(reader.fileData(entries.at(index).filePath), sharedStrings, &rowTruncated);
+        if (rows.isEmpty()) {
+            continue;
+        }
+
+        const auto sheetName = index < sheetNames.size() ? sheetNames.at(index) : QStringLiteral("工作表 %1").arg(index + 1);
+        QStringList rowTexts;
+        for (const auto &row : rows) {
+            rowTexts.append(row.join(QStringLiteral("\t")).trimmed());
+        }
+        sections.append(QStringLiteral("%1\n%2").arg(sheetName, rowTexts.join(QStringLiteral("\n"))));
+        processedRows += rows.size();
+        if (truncated && rowTruncated) {
+            *truncated = true;
+        }
+        if (processedRows >= kMaxPreviewRows) {
+            if (truncated) {
+                *truncated = true;
+            }
+            break;
+        }
+    }
+    if (sections.isEmpty() && errorMessage) {
+        *errorMessage = QStringLiteral("当前 XLSX 没有可提取的单元格内容。");
+    }
+    return sections.join(QStringLiteral("\n\n"));
+}
+
 PreviewPayload buildPreviewPayload(const QString &path)
 {
     const auto suffix = QFileInfo(path).suffix().toLower();
@@ -611,6 +733,83 @@ bool DocumentPreviewService::hasError() const
 bool DocumentPreviewService::hasContent() const
 {
     return m_isPdf || !m_content.trimmed().isEmpty();
+}
+
+QString DocumentPreviewService::extractTextForSummary(const QString &path, bool *truncated, QString *errorMessage)
+{
+    if (truncated) {
+        *truncated = false;
+    }
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+
+    const QFileInfo info(path);
+    if (!info.exists() || !info.isFile()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("文档不存在：%1").arg(info.absoluteFilePath());
+        }
+        return {};
+    }
+
+    const auto suffix = info.suffix().toLower();
+    QString text;
+    if (suffix == QStringLiteral("pdf")
+        || suffix == QStringLiteral("doc")
+        || suffix == QStringLiteral("xls")
+        || suffix == QStringLiteral("ppt")) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("当前文件类型本阶段只进入元数据搜索，不做正文摘要。");
+        }
+        return {};
+    }
+    if (suffix == QStringLiteral("docx")) {
+        text = extractDocxPlainText(info.absoluteFilePath(), errorMessage);
+    } else if (suffix == QStringLiteral("xlsx")) {
+        text = extractXlsxPlainText(info.absoluteFilePath(), truncated, errorMessage);
+    } else if (suffix == QStringLiteral("pptx")) {
+        text = extractPptxPlainText(info.absoluteFilePath(), truncated, errorMessage);
+    } else {
+        QMimeDatabase mimeDatabase;
+        const auto mime = mimeDatabase.mimeTypeForFile(info.absoluteFilePath(), QMimeDatabase::MatchExtension);
+        const bool plainTextLike = mime.name().startsWith(QStringLiteral("text/"))
+            || suffix == QStringLiteral("txt")
+            || suffix == QStringLiteral("log")
+            || suffix == QStringLiteral("md")
+            || suffix == QStringLiteral("json")
+            || suffix == QStringLiteral("csv")
+            || suffix == QStringLiteral("tsv")
+            || suffix == QStringLiteral("xml")
+            || suffix == QStringLiteral("yaml")
+            || suffix == QStringLiteral("yml")
+            || suffix == QStringLiteral("srt")
+            || suffix == QStringLiteral("ass")
+            || suffix == QStringLiteral("vtt");
+        if (!plainTextLike) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("当前文件类型本阶段只进入元数据搜索，不做正文摘要。");
+            }
+            return {};
+        }
+
+        auto payload = readPlainTextPreview(info.absoluteFilePath());
+        if (!payload.errorMessage.isEmpty()) {
+            if (errorMessage) {
+                *errorMessage = payload.errorMessage;
+            }
+            return {};
+        }
+        if (truncated && payload.truncated) {
+            *truncated = true;
+        }
+        text = payload.content;
+    }
+
+    text = boundedSummaryText(text, truncated);
+    if (text.isEmpty() && errorMessage && errorMessage->isEmpty()) {
+        *errorMessage = QStringLiteral("当前文档没有可提取的文本内容。");
+    }
+    return text;
 }
 
 void DocumentPreviewService::loadFromFile(const QUrl &sourceUrl, const QString &title)
