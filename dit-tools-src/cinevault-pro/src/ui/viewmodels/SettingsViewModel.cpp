@@ -48,6 +48,14 @@ SettingsViewModel::SettingsViewModel(AppSettings *settings,
         connect(m_updateService, &UpdateService::statusMessageChanged, this, &SettingsViewModel::setLastMessage);
         connect(m_updateService, &UpdateService::busyChanged, this, &SettingsViewModel::settingsChanged);
         connect(m_updateService, &UpdateService::updateReady, this, [this](const QString &versionTag, const QString &, bool) {
+            if (m_settings && m_settings->autoInstallUpdates()) {
+                QString errorMessage;
+                if (!m_updateService->installPendingUpdateNow(&errorMessage)) {
+                    setLastMessage(errorMessage);
+                    QMessageBox::warning(dialogParent(), QStringLiteral("安装更新失败"), errorMessage);
+                }
+                return;
+            }
             promptInstallUpdate(versionTag);
         });
     }
@@ -191,6 +199,21 @@ void SettingsViewModel::setThemeMode(int value)
 bool SettingsViewModel::updateBusy() const
 {
     return m_updateService && m_updateService->isBusy();
+}
+
+bool SettingsViewModel::autoInstallUpdates() const
+{
+    return m_settings && m_settings->autoInstallUpdates();
+}
+
+void SettingsViewModel::setAutoInstallUpdates(bool enabled)
+{
+    if (!m_settings || m_settings->autoInstallUpdates() == enabled) {
+        return;
+    }
+    m_settings->setAutoInstallUpdates(enabled);
+    m_settings->sync();
+    emit settingsChanged();
 }
 
 QString SettingsViewModel::currentVersionLabel() const
@@ -379,12 +402,16 @@ void SettingsViewModel::promptInstallUpdate(const QString &versionTag)
     box.setIcon(QMessageBox::Information);
     box.setWindowTitle(QStringLiteral("发现新版本"));
     box.setText(QStringLiteral("更新包 %1 已下载完成。").arg(versionTag));
-    box.setInformativeText(QStringLiteral("点击立即更新后会关闭当前程序，并打开已下载的当前平台更新包。也可以保留到下次启动时更新。"));
+    box.setInformativeText(QStringLiteral("立即更新会打开独立进度窗口、关闭当前程序、静默安装并自动启动新版本。也可以安排在下次启动时自动更新。"));
     QAbstractButton *installNowButton = box.addButton(QStringLiteral("立即更新"), QMessageBox::AcceptRole);
     QAbstractButton *updateLaterButton = box.addButton(QStringLiteral("下次启动更新"), QMessageBox::RejectRole);
     box.exec();
 
     if (box.clickedButton() == installNowButton) {
+        if (m_settings) {
+            m_settings->setScheduledUpdateVersion(QString());
+            m_settings->sync();
+        }
         QString errorMessage;
         if (!m_updateService->installPendingUpdateNow(&errorMessage)) {
             setLastMessage(errorMessage);
@@ -393,7 +420,11 @@ void SettingsViewModel::promptInstallUpdate(const QString &versionTag)
         return;
     }
 
-    if (box.clickedButton() == updateLaterButton) {
-        setLastMessage(QStringLiteral("更新包已保留，下次启动时将再次提示安装：%1").arg(versionTag));
+    if (box.clickedButton() == updateLaterButton || box.clickedButton() == nullptr) {
+        if (m_settings) {
+            m_settings->setScheduledUpdateVersion(versionTag);
+            m_settings->sync();
+        }
+        setLastMessage(QStringLiteral("已安排下次启动更新：%1").arg(versionTag));
     }
 }

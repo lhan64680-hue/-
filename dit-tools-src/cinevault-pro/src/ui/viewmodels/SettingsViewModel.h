@@ -19,6 +19,7 @@ class SettingsViewModel : public QObject {
     Q_PROPERTY(int analysisTimeoutSec READ analysisTimeoutSec WRITE setAnalysisTimeoutSec NOTIFY settingsChanged)
     Q_PROPERTY(int themeMode READ themeMode WRITE setThemeMode NOTIFY settingsChanged)
     Q_PROPERTY(bool updateBusy READ updateBusy NOTIFY settingsChanged)
+    Q_PROPERTY(bool autoInstallUpdates READ autoInstallUpdates WRITE setAutoInstallUpdates NOTIFY settingsChanged)
     Q_PROPERTY(QString currentVersionLabel READ currentVersionLabel NOTIFY settingsChanged)
     Q_PROPERTY(int updateDownloadMode READ updateDownloadMode WRITE setUpdateDownloadMode NOTIFY settingsChanged)
     Q_PROPERTY(QString updateManualProxyUrl READ updateManualProxyUrl WRITE setUpdateManualProxyUrl NOTIFY settingsChanged)
@@ -52,6 +53,8 @@ public:
     int themeMode() const;
     void setThemeMode(int value);
     bool updateBusy() const;
+    bool autoInstallUpdates() const;
+    void setAutoInstallUpdates(bool enabled);
     QString currentVersionLabel() const;
     int updateDownloadMode() const;
     void setUpdateDownloadMode(int value);

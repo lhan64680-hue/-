@@ -18,6 +18,8 @@ constexpr auto kThemeModeKey = "ui/themeMode";
 constexpr auto kPendingUpdateVersionKey = "updates/pendingVersion";
 constexpr auto kPendingUpdateInstallerPathKey = "updates/pendingInstallerPath";
 constexpr auto kDownloadedUpdateVersionKey = "updates/downloadedVersion";
+constexpr auto kScheduledUpdateVersionKey = "updates/scheduledVersion";
+constexpr auto kAutoInstallUpdatesKey = "updates/autoInstall";
 constexpr auto kUpdateDownloadModeKey = "updates/downloadMode";
 constexpr auto kUpdateManualProxyUrlKey = "updates/manualProxyUrl";
 constexpr auto kFeedbackSessionKey = "feedback/sessionJson";
@@ -263,12 +265,38 @@ void AppSettings::setDownloadedUpdateVersion(const QString &value)
     m_settings->setValue(QLatin1String(kDownloadedUpdateVersionKey), value.trimmed());
 }
 
+QString AppSettings::scheduledUpdateVersion() const
+{
+    return m_settings->value(QLatin1String(kScheduledUpdateVersionKey)).toString().trimmed();
+}
+
+void AppSettings::setScheduledUpdateVersion(const QString &value)
+{
+    const auto normalized = value.trimmed();
+    if (normalized.isEmpty()) {
+        m_settings->remove(QLatin1String(kScheduledUpdateVersionKey));
+    } else {
+        m_settings->setValue(QLatin1String(kScheduledUpdateVersionKey), normalized);
+    }
+}
+
 void AppSettings::clearPendingUpdate()
 {
     m_settings->remove(QLatin1String(kPendingUpdateVersionKey));
     m_settings->remove(QLatin1String(kPendingUpdateInstallerPathKey));
     m_settings->remove(QLatin1String(kDownloadedUpdateVersionKey));
+    m_settings->remove(QLatin1String(kScheduledUpdateVersionKey));
     m_settings->sync();
+}
+
+bool AppSettings::autoInstallUpdates() const
+{
+    return m_settings->value(QLatin1String(kAutoInstallUpdatesKey), false).toBool();
+}
+
+void AppSettings::setAutoInstallUpdates(bool enabled)
+{
+    m_settings->setValue(QLatin1String(kAutoInstallUpdatesKey), enabled);
 }
 
 int AppSettings::updateDownloadMode() const

@@ -53,7 +53,12 @@ public:
 
     QString downloadedUpdateVersion() const;
     void setDownloadedUpdateVersion(const QString &value);
+    QString scheduledUpdateVersion() const;
+    void setScheduledUpdateVersion(const QString &value);
     void clearPendingUpdate();
+
+    bool autoInstallUpdates() const;
+    void setAutoInstallUpdates(bool enabled);
 
     int updateDownloadMode() const;
     void setUpdateDownloadMode(int value);

@@ -175,6 +175,8 @@ else()
     src/application/ReportExportService.cpp
     src/application/UpdateService.h
     src/application/UpdateService.cpp
+    src/application/UpdaterSession.h
+    src/application/UpdaterSession.cpp
     src/infrastructure/ffmpeg/FFmpegAdapter.h
     src/infrastructure/ffmpeg/FFmpegAdapter.cpp
     src/infrastructure/network/VisionApiClient.h
@@ -199,6 +201,8 @@ else()
     src/ui/viewmodels/ReportWorkspaceViewModel.cpp
     src/ui/viewmodels/SettingsViewModel.h
     src/ui/viewmodels/SettingsViewModel.cpp
+    src/ui/widgets/UpdaterWindow.h
+    src/ui/widgets/UpdaterWindow.cpp
     src/ui/viewmodels/FeedbackViewModel.h
     src/ui/viewmodels/FeedbackViewModel.cpp
     src/ui/models/MaterialCenterListModel.h
@@ -330,6 +334,7 @@ if(BUILD_TESTING)
     qt_add_executable(UpdateServiceTest
         tests/unit/UpdateServiceTest.cpp
         src/application/UpdateService.cpp
+        src/application/UpdaterSession.cpp
         src/infrastructure/config/AppSettings.cpp
         src/shared/Paths.cpp
     )

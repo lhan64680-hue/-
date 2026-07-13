@@ -34,7 +34,7 @@ ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\CineVault.exe
 SetupLogging=yes
 PrivilegesRequired=admin
-CloseApplications=no
+CloseApplications=yes
 RestartApplications=no
 
 [Tasks]
@@ -53,66 +53,3 @@ Name: "{autodesktop}\影资管家"; Filename: "{app}\CineVault.exe"; Tasks: desk
 
 [Run]
 Filename: "{app}\CineVault.exe"; Description: "启动影资管家"; Flags: nowait postinstall skipifsilent
-
-[Code]
-function IsCineVaultRunning(): Boolean;
-var
-  ResultCode: Integer;
-begin
-  Exec(ExpandConstant('{cmd}'),
-    '/C tasklist /FI "IMAGENAME eq CineVault.exe" /NH | find /I "CineVault.exe" >NUL 2>NUL',
-    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Result := ResultCode = 0;
-end;
-
-function StopCineVaultProcesses(const Phase: String): Boolean;
-var
-  Attempt: Integer;
-  ResultCode: Integer;
-begin
-  Result := True;
-
-  if not IsCineVaultRunning() then
-    exit;
-
-  Log('CineVault process detected during ' + Phase + '; forcing shutdown before installation continues.');
-
-  for Attempt := 1 to 3 do
-  begin
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM CineVault.exe',
-      '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Sleep(500);
-
-    if not IsCineVaultRunning() then
-      exit;
-  end;
-
-  MsgBox('检测到旧版影资管家仍在运行，安装程序无法自动结束进程。请手动退出影资管家后重新运行安装包。',
-    mbError, MB_OK);
-  Result := False;
-end;
-
-function InitializeSetup(): Boolean;
-begin
-  Result := StopCineVaultProcesses('setup initialization');
-end;
-
-function PrepareToInstall(var NeedsRestart: Boolean): String;
-begin
-  Result := '';
-  if not StopCineVaultProcesses('file installation') then
-    Result := '旧版影资管家进程仍在运行，安装已取消。';
-end;
-
-function NextButtonClick(CurPageID: Integer): Boolean;
-begin
-  Result := True;
-
-  if CurPageID = wpReady then
-    Result := StopCineVaultProcesses('ready page');
-end;
-
-function InitializeUninstall(): Boolean;
-begin
-  Result := StopCineVaultProcesses('uninstall initialization');
-end;

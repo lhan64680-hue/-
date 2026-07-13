@@ -1,7 +1,11 @@
 #include "application/UpdateService.h"
+#include "application/UpdaterSession.h"
+#include "infrastructure/config/AppSettings.h"
 
 #include <QNetworkProxy>
 #include <QProcessEnvironment>
+#include <QSettings>
+#include <QTemporaryDir>
 #include <QtTest>
 
 class UpdateServiceTest : public QObject {
@@ -25,6 +29,10 @@ private slots:
     void preferredProxyUrl_skipsUnsupportedEntries();
     void proxyUrlsForEnvironment_readsCommonVariables();
     void localProxyCandidates_containsCommonPorts();
+    void updaterSessionArguments_roundTripPathsWithSpaces();
+    void updaterSessionArguments_rejectIncompleteSession();
+    void updaterSessionRunner_reportsMissingInstaller();
+    void appSettings_persistsUpdatePolicyAndClearsSchedule();
 };
 
 void UpdateServiceTest::compareVersionTags_ordersSemanticVersions()
@@ -240,6 +248,97 @@ void UpdateServiceTest::localProxyCandidates_containsCommonPorts()
     QVERIFY(proxyUrls.contains(QStringLiteral("http://127.0.0.1:7890")));
     QVERIFY(proxyUrls.contains(QStringLiteral("http://127.0.0.1:10809")));
     QVERIFY(proxyUrls.contains(QStringLiteral("socks5://127.0.0.1:1080")));
+}
+
+void UpdateServiceTest::updaterSessionArguments_roundTripPathsWithSpaces()
+{
+    UpdaterInstallSession source;
+    source.sessionId = QStringLiteral("update_123456");
+    source.versionTag = QStringLiteral("v0.1.145");
+    source.installerPath = QStringLiteral("C:/Users/Test User/Updates/CineVault-Setup-v0.1.145.exe");
+    source.installRoot = QStringLiteral("C:/Program Files/影资管家");
+    source.executableName = QStringLiteral("CineVault.exe");
+    source.oldProcessId = 7788;
+
+    UpdaterInstallSession parsed;
+    QString errorMessage;
+    QVERIFY(UpdaterSessionRunner::parseArguments(
+        UpdaterSessionRunner::buildArguments(source), &parsed, &errorMessage));
+    QVERIFY(errorMessage.isEmpty());
+    QCOMPARE(parsed.sessionId, source.sessionId);
+    QCOMPARE(parsed.versionTag, source.versionTag);
+    QCOMPARE(parsed.installerPath, source.installerPath);
+    QCOMPARE(parsed.installRoot, source.installRoot);
+    QCOMPARE(parsed.executableName, source.executableName);
+    QCOMPARE(parsed.oldProcessId, source.oldProcessId);
+}
+
+void UpdateServiceTest::updaterSessionArguments_rejectIncompleteSession()
+{
+    const QStringList arguments{
+        QStringLiteral("--run-update-session=update_123456"),
+        QStringLiteral("--update-version=v0.1.145")
+    };
+
+    UpdaterInstallSession parsed;
+    QString errorMessage;
+    QVERIFY(!UpdaterSessionRunner::parseArguments(arguments, &parsed, &errorMessage));
+    QCOMPARE(errorMessage, QStringLiteral("更新会话参数不完整。"));
+}
+
+void UpdateServiceTest::updaterSessionRunner_reportsMissingInstaller()
+{
+    UpdaterInstallSession session;
+    session.sessionId = QStringLiteral("update_missing_installer");
+    session.versionTag = QStringLiteral("v0.1.145");
+    session.installerPath = QStringLiteral("Z:/missing/CineVault-Setup-v0.1.145.exe");
+    session.installRoot = QStringLiteral("C:/Program Files/影资管家");
+    session.executableName = QStringLiteral("CineVault.exe");
+    session.oldProcessId = 7788;
+
+    UpdaterSessionRunner runner;
+    bool didFinish = false;
+    bool succeeded = true;
+    QString resultMessage;
+    connect(&runner, &UpdaterSessionRunner::finished,
+            &runner, [&](bool success, const QString &message) {
+                didFinish = true;
+                succeeded = success;
+                resultMessage = message;
+            });
+
+    runner.start(session);
+
+    QVERIFY(didFinish);
+    QVERIFY(!succeeded);
+    QVERIFY(resultMessage.startsWith(QStringLiteral("更新安装包不存在：")));
+}
+
+void UpdateServiceTest::appSettings_persistsUpdatePolicyAndClearsSchedule()
+{
+    QTemporaryDir settingsRoot;
+    QVERIFY(settingsRoot.isValid());
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsRoot.path());
+    QCoreApplication::setOrganizationName(QStringLiteral("DIT Tools Update Test"));
+    QCoreApplication::setApplicationName(QStringLiteral("CineVault Update Test"));
+
+    AppSettings settings;
+    QVERIFY(!settings.autoInstallUpdates());
+    settings.setAutoInstallUpdates(true);
+    settings.setPendingUpdateVersion(QStringLiteral("v0.1.145"));
+    settings.setPendingUpdateInstallerPath(QStringLiteral("C:/Updates/CineVault-Setup-v0.1.145.exe"));
+    settings.setScheduledUpdateVersion(QStringLiteral("v0.1.145"));
+    settings.sync();
+
+    QVERIFY(settings.autoInstallUpdates());
+    QCOMPARE(settings.scheduledUpdateVersion(), QStringLiteral("v0.1.145"));
+
+    settings.clearPendingUpdate();
+    QVERIFY(settings.pendingUpdateVersion().isEmpty());
+    QVERIFY(settings.pendingUpdateInstallerPath().isEmpty());
+    QVERIFY(settings.scheduledUpdateVersion().isEmpty());
+    QVERIFY(settings.autoInstallUpdates());
 }
 
 QTEST_APPLESS_MAIN(UpdateServiceTest)

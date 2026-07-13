@@ -18,6 +18,7 @@ Dialog {
     property int draftThemeMode: Theme.modeSystem
     property int draftUpdateDownloadMode: 0
     property string draftUpdateManualProxyUrl: ""
+    property bool draftAutoInstallUpdates: false
     property int bodyFontSize: 15
     property int sectionTitleSize: 20
     property int controlHeight: 42
@@ -47,6 +48,7 @@ Dialog {
             draftThemeMode = viewModel.themeMode
             draftUpdateDownloadMode = viewModel.updateDownloadMode
             draftUpdateManualProxyUrl = viewModel.updateManualProxyUrl
+            draftAutoInstallUpdates = viewModel.autoInstallUpdates
         }
     }
 
@@ -181,6 +183,27 @@ Dialog {
                             columnSpacing: 14
                             rowSpacing: 14
                             Layout.fillWidth: true
+
+                            Text {
+                                Layout.preferredWidth: root.formLabelWidth
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "自动更新"
+                                color: Theme.muted
+                                font.pixelSize: root.bodyFontSize
+                            }
+
+                            Switch {
+                                checked: root.draftAutoInstallUpdates
+                                text: checked ? "下载完成后自动安装" : "下载完成后询问"
+                                font.pixelSize: root.bodyFontSize
+                                palette.text: Theme.text
+                                onToggled: {
+                                    root.draftAutoInstallUpdates = checked
+                                    if (viewModel) {
+                                        viewModel.autoInstallUpdates = checked
+                                    }
+                                }
+                            }
 
                             Text {
                                 Layout.preferredWidth: root.formLabelWidth
