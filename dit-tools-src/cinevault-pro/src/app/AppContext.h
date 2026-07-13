@@ -9,7 +9,6 @@ class LocalImageUrlHelper;
 #if CINEVAULT_BUILD_MINIMAL_GUI
 class MinimalShellViewModel;
 class MinimalSourceRailViewModel;
-class MinimalImportWorkspaceViewModel;
 class MinimalLibraryWorkspaceViewModel;
 class MinimalInspectorViewModel;
 class MinimalJobTimelineViewModel;
@@ -40,7 +39,6 @@ class VisionApiClient;
 class ShellViewModel;
 class ProjectLibraryViewModel;
 class SourceRailViewModel;
-class ImportWorkspaceViewModel;
 class LibraryWorkspaceViewModel;
 class MaterialCenterViewModel;
 class InspectorViewModel;
@@ -65,7 +63,6 @@ private:
 #if CINEVAULT_BUILD_MINIMAL_GUI
     MinimalShellViewModel *m_shellViewModel = nullptr;
     MinimalSourceRailViewModel *m_sourceRailViewModel = nullptr;
-    MinimalImportWorkspaceViewModel *m_importWorkspaceViewModel = nullptr;
     MinimalLibraryWorkspaceViewModel *m_libraryWorkspaceViewModel = nullptr;
     MinimalInspectorViewModel *m_inspectorViewModel = nullptr;
     MinimalJobTimelineViewModel *m_jobTimelineViewModel = nullptr;
@@ -96,7 +93,6 @@ private:
     ShellViewModel *m_shellViewModel = nullptr;
     ProjectLibraryViewModel *m_projectLibraryViewModel = nullptr;
     SourceRailViewModel *m_sourceRailViewModel = nullptr;
-    ImportWorkspaceViewModel *m_importWorkspaceViewModel = nullptr;
     LibraryWorkspaceViewModel *m_libraryWorkspaceViewModel = nullptr;
     MaterialCenterViewModel *m_materialCenterViewModel = nullptr;
     InspectorViewModel *m_inspectorViewModel = nullptr;

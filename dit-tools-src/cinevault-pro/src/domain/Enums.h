@@ -35,13 +35,12 @@ enum class JobState : qint32 {
 
 enum class WorkspaceId : qint32 {
     ProjectLibrary = 0,
-    Import,
-    Library,
-    MaterialCenter,
-    Qc,
-    Report,
-    Jobs,
-    Feedback
+    Library = 2,
+    MaterialCenter = 3,
+    Qc = 4,
+    Report = 5,
+    Jobs = 6,
+    Feedback = 7
 };
 
 enum class SelectionKind : qint32 {

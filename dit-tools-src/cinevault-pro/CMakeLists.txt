@@ -115,8 +115,6 @@ if(CINEVAULT_BUILD_MINIMAL_GUI)
         src/ui/viewmodels/MinimalShellViewModel.cpp
         src/ui/viewmodels/MinimalSourceRailViewModel.h
         src/ui/viewmodels/MinimalSourceRailViewModel.cpp
-        src/ui/viewmodels/MinimalImportWorkspaceViewModel.h
-        src/ui/viewmodels/MinimalImportWorkspaceViewModel.cpp
         src/ui/viewmodels/MinimalLibraryWorkspaceViewModel.h
         src/ui/viewmodels/MinimalLibraryWorkspaceViewModel.cpp
         src/ui/viewmodels/MinimalInspectorViewModel.h
@@ -189,8 +187,6 @@ else()
     src/ui/viewmodels/ShellViewModel.cpp
     src/ui/viewmodels/SourceRailViewModel.h
     src/ui/viewmodels/SourceRailViewModel.cpp
-    src/ui/viewmodels/ImportWorkspaceViewModel.h
-    src/ui/viewmodels/ImportWorkspaceViewModel.cpp
     src/ui/viewmodels/LibraryWorkspaceViewModel.h
     src/ui/viewmodels/LibraryWorkspaceViewModel.cpp
     src/ui/viewmodels/MaterialCenterViewModel.h
@@ -258,7 +254,6 @@ qt_add_qml_module(CineVault
         src/ui/qml/components/AssetCard.qml
         src/ui/qml/components/VideoPreviewPlayer.qml
         src/ui/qml/components/SettingsDialog.qml
-        src/ui/qml/workspaces/ImportWorkspace.qml
         src/ui/qml/workspaces/ProjectLibraryWorkspace.qml
         src/ui/qml/workspaces/LibraryWorkspace.qml
         src/ui/qml/workspaces/MaterialCenterWorkspace.qml

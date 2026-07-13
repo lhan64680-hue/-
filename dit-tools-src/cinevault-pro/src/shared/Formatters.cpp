@@ -181,7 +181,6 @@ QString Formatters::workspaceLabel(WorkspaceId workspaceId)
 {
     switch (workspaceId) {
     case WorkspaceId::ProjectLibrary: return QStringLiteral("项目库");
-    case WorkspaceId::Import: return QStringLiteral("导入");
     case WorkspaceId::Library: return QStringLiteral("素材库");
     case WorkspaceId::MaterialCenter: return QStringLiteral("素材管理中心");
     case WorkspaceId::Qc: return QStringLiteral("素材库");

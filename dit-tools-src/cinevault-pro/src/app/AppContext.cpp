@@ -4,7 +4,6 @@
 #include "ui/window/WindowThemeController.h"
 
 #if CINEVAULT_BUILD_MINIMAL_GUI
-#include "ui/viewmodels/MinimalImportWorkspaceViewModel.h"
 #include "ui/viewmodels/MinimalInspectorViewModel.h"
 #include "ui/viewmodels/MinimalJobTimelineViewModel.h"
 #include "ui/viewmodels/MinimalLibraryWorkspaceViewModel.h"
@@ -33,7 +32,6 @@
 #include "infrastructure/db/GlobalDatabaseManager.h"
 #include "infrastructure/ffmpeg/FFmpegAdapter.h"
 #include "infrastructure/network/VisionApiClient.h"
-#include "ui/viewmodels/ImportWorkspaceViewModel.h"
 #include "ui/viewmodels/InspectorViewModel.h"
 #include "ui/viewmodels/JobTimelineViewModel.h"
 #include "ui/viewmodels/LibraryWorkspaceViewModel.h"
@@ -56,7 +54,6 @@ AppContext::AppContext(QObject *parent)
 #if CINEVAULT_BUILD_MINIMAL_GUI
     , m_shellViewModel(new MinimalShellViewModel(this))
     , m_sourceRailViewModel(new MinimalSourceRailViewModel(this))
-    , m_importWorkspaceViewModel(new MinimalImportWorkspaceViewModel(this))
     , m_libraryWorkspaceViewModel(new MinimalLibraryWorkspaceViewModel(this))
     , m_inspectorViewModel(new MinimalInspectorViewModel(m_sourceRailViewModel, m_libraryWorkspaceViewModel, this))
     , m_jobTimelineViewModel(new MinimalJobTimelineViewModel(this))
@@ -93,7 +90,6 @@ AppContext::AppContext(QObject *parent)
     , m_shellViewModel(new ShellViewModel(m_projectService, m_importService, m_feedbackService, this))
     , m_projectLibraryViewModel(new ProjectLibraryViewModel(m_projectService, this))
     , m_sourceRailViewModel(new SourceRailViewModel(m_libraryQueryService, this))
-    , m_importWorkspaceViewModel(new ImportWorkspaceViewModel(m_importService, this))
     , m_libraryWorkspaceViewModel(new LibraryWorkspaceViewModel(m_libraryQueryService, this))
     , m_materialCenterViewModel(new MaterialCenterViewModel(m_materialCenterQueryService, m_materialCatalogSyncService, m_videoAnalysisService, m_projectService, &m_settings, this))
     , m_inspectorViewModel(new InspectorViewModel(m_libraryQueryService, this))
@@ -154,7 +150,6 @@ void AppContext::expose(QQmlApplicationEngine &engine)
     context->setContextProperty(QStringLiteral("windowThemeController"), m_windowThemeController);
     context->setContextProperty(QStringLiteral("localImageUrlHelper"), m_localImageUrlHelper);
     context->setContextProperty(QStringLiteral("sourceRailVm"), m_sourceRailViewModel);
-    context->setContextProperty(QStringLiteral("importWorkspaceVm"), m_importWorkspaceViewModel);
     context->setContextProperty(QStringLiteral("libraryWorkspaceVm"), m_libraryWorkspaceViewModel);
     context->setContextProperty(QStringLiteral("inspectorVm"), m_inspectorViewModel);
     context->setContextProperty(QStringLiteral("jobTimelineVm"), m_jobTimelineViewModel);
