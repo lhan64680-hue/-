@@ -21,7 +21,7 @@ class ShellViewModel : public QObject {
     Q_PROPERTY(QString lastMessage READ lastMessage NOTIFY stateChanged)
     Q_PROPERTY(QVariantList workspaceTabs READ workspaceTabs NOTIFY stateChanged)
     Q_PROPERTY(int projectLibraryWorkspaceId READ projectLibraryWorkspaceId CONSTANT)
-    Q_PROPERTY(int materialBackupWorkspaceId READ materialBackupWorkspaceId CONSTANT)
+    Q_PROPERTY(int importWorkspaceId READ importWorkspaceId CONSTANT)
     Q_PROPERTY(int libraryWorkspaceId READ libraryWorkspaceId CONSTANT)
     Q_PROPERTY(int materialCenterWorkspaceId READ materialCenterWorkspaceId CONSTANT)
     Q_PROPERTY(int reportWorkspaceId READ reportWorkspaceId CONSTANT)
@@ -40,7 +40,7 @@ public:
     QString lastMessage() const;
     QVariantList workspaceTabs() const;
     int projectLibraryWorkspaceId() const;
-    int materialBackupWorkspaceId() const;
+    int importWorkspaceId() const;
     int libraryWorkspaceId() const;
     int materialCenterWorkspaceId() const;
     int reportWorkspaceId() const;

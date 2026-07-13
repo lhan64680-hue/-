@@ -10,7 +10,7 @@ ApplicationWindow {
 
     property var shellViewModel: shellVm
     property var projectLibraryViewModel: projectLibraryVm
-    property var materialBackupViewModel: materialBackupVm
+    property var importWorkspaceViewModel: importWorkspaceVm
     property var sourceRailViewModel: sourceRailVm
     property var libraryViewModel: libraryWorkspaceVm
     property var materialCenterViewModel: materialCenterVm
@@ -25,7 +25,7 @@ ApplicationWindow {
     readonly property bool isFeedbackWorkspace: root.shellViewModel && root.shellViewModel.currentWorkspace === root.shellViewModel.feedbackWorkspaceId
     readonly property bool isJobsWorkspace: root.shellViewModel && root.shellViewModel.currentWorkspace === root.shellViewModel.jobsWorkspaceId
     property bool projectLibraryWorkspaceLoaded: true
-    property bool materialBackupWorkspaceLoaded: false
+    property bool importWorkspaceLoaded: false
     property bool libraryWorkspaceLoaded: false
     property bool materialCenterWorkspaceLoaded: false
     property bool reportWorkspaceLoaded: false
@@ -53,8 +53,8 @@ ApplicationWindow {
         }
         if (workspace === root.shellViewModel.projectLibraryWorkspaceId) {
             root.projectLibraryWorkspaceLoaded = true
-        } else if (workspace === root.shellViewModel.materialBackupWorkspaceId) {
-            root.materialBackupWorkspaceLoaded = true
+        } else if (workspace === root.shellViewModel.importWorkspaceId) {
+            root.importWorkspaceLoaded = true
         } else if (workspace === root.shellViewModel.materialCenterWorkspaceId) {
             root.materialCenterWorkspaceLoaded = true
         } else if (workspace === root.shellViewModel.reportWorkspaceId) {
@@ -145,7 +145,7 @@ ApplicationWindow {
 
                 SourceRail {
                     Layout.preferredWidth: root.shellViewModel.currentWorkspace === root.shellViewModel.materialCenterWorkspaceId
-                        || root.shellViewModel.currentWorkspace === root.shellViewModel.materialBackupWorkspaceId
+                        || root.shellViewModel.currentWorkspace === root.shellViewModel.importWorkspaceId
                         || root.isJobsWorkspace
                         || root.isFeedbackWorkspace
                         || root.isProjectLibraryWorkspace
@@ -154,7 +154,7 @@ ApplicationWindow {
                         : (root.sourceRailCollapsed ? 56 : 270)
                     Layout.fillHeight: true
                     visible: root.shellViewModel.currentWorkspace !== root.shellViewModel.materialCenterWorkspaceId
-                        && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialBackupWorkspaceId
+                        && root.shellViewModel.currentWorkspace !== root.shellViewModel.importWorkspaceId
                         && !root.isJobsWorkspace
                         && !root.isFeedbackWorkspace
                         && !root.isProjectLibraryWorkspace
@@ -181,17 +181,17 @@ ApplicationWindow {
 
                     Loader {
                         anchors.fill: parent
-                        active: root.materialBackupWorkspaceLoaded
-                        visible: root.shellViewModel.currentWorkspace === root.shellViewModel.materialBackupWorkspaceId
+                        active: root.importWorkspaceLoaded
+                        visible: root.shellViewModel.currentWorkspace === root.shellViewModel.importWorkspaceId
                         asynchronous: true
-                        sourceComponent: materialBackupWorkspaceComponent
+                        sourceComponent: importWorkspaceComponent
                     }
 
                     Loader {
                         anchors.fill: parent
                         active: root.libraryWorkspaceLoaded
                         visible: root.shellViewModel.currentWorkspace !== root.shellViewModel.projectLibraryWorkspaceId
-                            && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialBackupWorkspaceId
+                            && root.shellViewModel.currentWorkspace !== root.shellViewModel.importWorkspaceId
                             && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialCenterWorkspaceId
                             && root.shellViewModel.currentWorkspace !== root.shellViewModel.reportWorkspaceId
                             && root.shellViewModel.currentWorkspace !== root.shellViewModel.jobsWorkspaceId
@@ -236,7 +236,7 @@ ApplicationWindow {
                 InspectorPane {
                     Layout.preferredWidth: root.shellViewModel.currentWorkspace === root.shellViewModel.reportWorkspaceId
                         || root.shellViewModel.currentWorkspace === root.shellViewModel.materialCenterWorkspaceId
-                        || root.shellViewModel.currentWorkspace === root.shellViewModel.materialBackupWorkspaceId
+                        || root.shellViewModel.currentWorkspace === root.shellViewModel.importWorkspaceId
                         || root.isJobsWorkspace
                         || root.isFeedbackWorkspace
                         || root.isProjectLibraryWorkspace
@@ -246,7 +246,7 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     visible: root.shellViewModel.currentWorkspace !== root.shellViewModel.reportWorkspaceId
                         && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialCenterWorkspaceId
-                        && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialBackupWorkspaceId
+                        && root.shellViewModel.currentWorkspace !== root.shellViewModel.importWorkspaceId
                         && !root.isJobsWorkspace
                         && !root.isFeedbackWorkspace
                         && !root.isProjectLibraryWorkspace
@@ -266,12 +266,12 @@ ApplicationWindow {
             JobTimelineBar {
                 Layout.fillWidth: true
                 Layout.preferredHeight: root.isProjectLibraryWorkspace
-                    || root.shellViewModel.currentWorkspace === root.shellViewModel.materialBackupWorkspaceId
+                    || root.shellViewModel.currentWorkspace === root.shellViewModel.importWorkspaceId
                     || root.isFeedbackWorkspace
                     ? 0
                     : implicitHeight
                 visible: !root.isProjectLibraryWorkspace
-                    && root.shellViewModel.currentWorkspace !== root.shellViewModel.materialBackupWorkspaceId
+                    && root.shellViewModel.currentWorkspace !== root.shellViewModel.importWorkspaceId
                     && !root.isFeedbackWorkspace
                 viewModel: root.jobTimelineViewModel
                 libraryViewModel: root.libraryViewModel
@@ -304,9 +304,10 @@ ApplicationWindow {
     }
 
     Component {
-        id: materialBackupWorkspaceComponent
-        MaterialBackupWorkspace {
-            viewModel: root.materialBackupViewModel
+        id: importWorkspaceComponent
+        ImportWorkspace {
+            shellVm: root.shellViewModel
+            viewModel: root.importWorkspaceViewModel
         }
     }
 

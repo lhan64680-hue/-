@@ -1,6 +1,5 @@
 #include "infrastructure/config/AppSettings.h"
 
-#include <QCryptographicHash>
 #include <QFileInfo>
 #include <QSettings>
 
@@ -21,7 +20,6 @@ constexpr auto kPendingUpdateInstallerPathKey = "updates/pendingInstallerPath";
 constexpr auto kDownloadedUpdateVersionKey = "updates/downloadedVersion";
 constexpr auto kUpdateDownloadModeKey = "updates/downloadMode";
 constexpr auto kUpdateManualProxyUrlKey = "updates/manualProxyUrl";
-constexpr auto kMaterialBackupQueuePrefix = "materialBackup/queues/";
 constexpr auto kFeedbackSessionKey = "feedback/sessionJson";
 
 int normalizedThemeMode(int value)
@@ -53,15 +51,6 @@ QStringList replacedProjectList(const QStringList &projects, const QString &oldP
     return replaced;
 }
 
-QString materialBackupQueueKey(const QString &projectDatabasePath)
-{
-    const auto normalizedPath = normalizedProjectPath(projectDatabasePath);
-    if (normalizedPath.isEmpty()) {
-        return {};
-    }
-    const auto hash = QCryptographicHash::hash(normalizedPath.toUtf8(), QCryptographicHash::Sha1).toHex();
-    return QString::fromLatin1(kMaterialBackupQueuePrefix) + QString::fromLatin1(hash);
-}
 }
 
 AppSettings::AppSettings()
@@ -300,26 +289,6 @@ QString AppSettings::updateManualProxyUrl() const
 void AppSettings::setUpdateManualProxyUrl(const QString &value)
 {
     m_settings->setValue(QLatin1String(kUpdateManualProxyUrlKey), value.trimmed());
-}
-
-QString AppSettings::materialBackupQueueJson(const QString &projectDatabasePath) const
-{
-    const auto key = materialBackupQueueKey(projectDatabasePath);
-    return key.isEmpty() ? QString() : m_settings->value(key).toString();
-}
-
-void AppSettings::setMaterialBackupQueueJson(const QString &projectDatabasePath, const QString &json)
-{
-    const auto key = materialBackupQueueKey(projectDatabasePath);
-    if (key.isEmpty()) {
-        return;
-    }
-    if (json.trimmed().isEmpty()) {
-        m_settings->remove(key);
-    } else {
-        m_settings->setValue(key, json);
-    }
-    m_settings->sync();
 }
 
 QString AppSettings::feedbackSessionJson() const

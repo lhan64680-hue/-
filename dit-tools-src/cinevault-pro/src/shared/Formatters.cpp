@@ -97,7 +97,6 @@ QString Formatters::jobTypeLabel(JobType type)
     case JobType::Preview: return QStringLiteral("预览");
     case JobType::Report: return QStringLiteral("报表");
     case JobType::Export: return QStringLiteral("导出");
-    case JobType::Backup: return QStringLiteral("备份");
     }
     return QStringLiteral("任务");
 }
@@ -182,7 +181,7 @@ QString Formatters::workspaceLabel(WorkspaceId workspaceId)
 {
     switch (workspaceId) {
     case WorkspaceId::ProjectLibrary: return QStringLiteral("项目库");
-    case WorkspaceId::Import: return QStringLiteral("素材备份");
+    case WorkspaceId::Import: return QStringLiteral("导入");
     case WorkspaceId::Library: return QStringLiteral("素材库");
     case WorkspaceId::MaterialCenter: return QStringLiteral("素材管理中心");
     case WorkspaceId::Qc: return QStringLiteral("素材库");

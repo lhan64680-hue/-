@@ -22,8 +22,7 @@ enum class JobType : qint32 {
     ContentAnalysis,
     Preview,
     Report,
-    Export,
-    Backup
+    Export
 };
 
 enum class JobState : qint32 {
@@ -113,27 +112,4 @@ enum class AnalysisRunMode : qint32 {
 enum class ConfirmationStatus : qint32 {
     Pending = 0,
     Confirmed
-};
-
-enum class BackupSourceKind : qint32 {
-    File = 0,
-    Directory,
-    Volume
-};
-
-enum class BackupVerificationMode : qint32 {
-    Off = 0,
-    Size,
-    Sha256,
-    Md5
-};
-
-enum class BackupTaskState : qint32 {
-    Pending = 0,
-    Running,
-    Verifying,
-    Completed,
-    Warning,
-    Failed,
-    Cancelled
 };

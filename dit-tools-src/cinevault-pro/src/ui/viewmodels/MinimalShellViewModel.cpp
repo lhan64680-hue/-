@@ -46,7 +46,7 @@ QVariantList MinimalShellViewModel::workspaceTabs() const
 {
     return {
         QVariantMap{{QStringLiteral("label"), QStringLiteral("项目库")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::ProjectLibrary)}, {QStringLiteral("buttonWidth"), 70}, {QStringLiteral("enabled"), true}},
-        QVariantMap{{QStringLiteral("label"), QStringLiteral("素材备份")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::Import)}, {QStringLiteral("buttonWidth"), 86}, {QStringLiteral("enabled"), true}},
+        QVariantMap{{QStringLiteral("label"), QStringLiteral("导入")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::Import)}, {QStringLiteral("buttonWidth"), 56}, {QStringLiteral("enabled"), true}},
         QVariantMap{{QStringLiteral("label"), QStringLiteral("素材库")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::Library)}, {QStringLiteral("buttonWidth"), 70}, {QStringLiteral("enabled"), true}},
         QVariantMap{{QStringLiteral("label"), QStringLiteral("素材管理中心")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::MaterialCenter)}, {QStringLiteral("buttonWidth"), 108}, {QStringLiteral("enabled"), true}},
         QVariantMap{{QStringLiteral("label"), QStringLiteral("报表")}, {QStringLiteral("value"), static_cast<int>(WorkspaceId::Report)}, {QStringLiteral("buttonWidth"), 56}, {QStringLiteral("enabled"), true}},
@@ -60,7 +60,7 @@ int MinimalShellViewModel::projectLibraryWorkspaceId() const
     return static_cast<int>(WorkspaceId::ProjectLibrary);
 }
 
-int MinimalShellViewModel::materialBackupWorkspaceId() const
+int MinimalShellViewModel::importWorkspaceId() const
 {
     return static_cast<int>(WorkspaceId::Import);
 }

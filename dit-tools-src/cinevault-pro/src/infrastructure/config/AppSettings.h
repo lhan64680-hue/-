@@ -61,9 +61,6 @@ public:
     QString updateManualProxyUrl() const;
     void setUpdateManualProxyUrl(const QString &value);
 
-    QString materialBackupQueueJson(const QString &projectDatabasePath) const;
-    void setMaterialBackupQueueJson(const QString &projectDatabasePath, const QString &json);
-
     QString feedbackSessionJson() const;
     void setFeedbackSessionJson(const QString &json);
 

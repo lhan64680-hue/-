@@ -86,8 +86,6 @@ set(APP_SOURCES
     src/shared/Paths.cpp
     src/shared/Formatters.h
     src/shared/Formatters.cpp
-    src/core/backup/BackupPlanner.h
-    src/core/backup/BackupPlanner.cpp
     src/ui/imaging/LocalImageProvider.h
     src/ui/imaging/LocalImageProvider.cpp
     src/ui/imaging/LocalImageUrlHelper.h
@@ -100,12 +98,6 @@ set(APP_SOURCES
     src/ui/models/ProjectLibraryListModel.cpp
     src/ui/models/AssetListModel.h
     src/ui/models/AssetListModel.cpp
-    src/ui/models/BackupSourceListModel.h
-    src/ui/models/BackupSourceListModel.cpp
-    src/ui/models/BackupDestinationListModel.h
-    src/ui/models/BackupDestinationListModel.cpp
-    src/ui/models/BackupTaskListModel.h
-    src/ui/models/BackupTaskListModel.cpp
     src/ui/models/JobListModel.h
     src/ui/models/JobListModel.cpp
 )
@@ -125,8 +117,6 @@ if(CINEVAULT_BUILD_MINIMAL_GUI)
         src/ui/viewmodels/MinimalSourceRailViewModel.cpp
         src/ui/viewmodels/MinimalImportWorkspaceViewModel.h
         src/ui/viewmodels/MinimalImportWorkspaceViewModel.cpp
-        src/ui/viewmodels/MinimalMaterialBackupViewModel.h
-        src/ui/viewmodels/MinimalMaterialBackupViewModel.cpp
         src/ui/viewmodels/MinimalLibraryWorkspaceViewModel.h
         src/ui/viewmodels/MinimalLibraryWorkspaceViewModel.cpp
         src/ui/viewmodels/MinimalInspectorViewModel.h
@@ -150,10 +140,6 @@ else()
     src/infrastructure/db/GlobalDatabaseManager.cpp
     src/core/search/SearchEngine.h
     src/core/search/SearchEngine.cpp
-    src/core/backup/BackupCopyEngine.h
-    src/core/backup/BackupCopyEngine.cpp
-    src/core/backup/VolumeEjectService.h
-    src/core/backup/VolumeEjectService.cpp
     src/core/scan/FileTypeService.h
     src/core/scan/FileTypeService.cpp
     src/core/media/MediaProbeEngine.h
@@ -179,8 +165,6 @@ else()
     src/application/MaterialCatalogSyncService.cpp
     src/application/MaterialCenterQueryService.h
     src/application/MaterialCenterQueryService.cpp
-    src/application/MaterialBackupService.h
-    src/application/MaterialBackupService.cpp
     src/application/VideoAnalysisService.h
     src/application/VideoAnalysisService.cpp
     src/application/ImportService.h
@@ -207,8 +191,6 @@ else()
     src/ui/viewmodels/SourceRailViewModel.cpp
     src/ui/viewmodels/ImportWorkspaceViewModel.h
     src/ui/viewmodels/ImportWorkspaceViewModel.cpp
-    src/ui/viewmodels/MaterialBackupViewModel.h
-    src/ui/viewmodels/MaterialBackupViewModel.cpp
     src/ui/viewmodels/LibraryWorkspaceViewModel.h
     src/ui/viewmodels/LibraryWorkspaceViewModel.cpp
     src/ui/viewmodels/MaterialCenterViewModel.h
@@ -278,7 +260,6 @@ qt_add_qml_module(CineVault
         src/ui/qml/components/SettingsDialog.qml
         src/ui/qml/workspaces/ImportWorkspace.qml
         src/ui/qml/workspaces/ProjectLibraryWorkspace.qml
-        src/ui/qml/workspaces/MaterialBackupWorkspace.qml
         src/ui/qml/workspaces/LibraryWorkspace.qml
         src/ui/qml/workspaces/MaterialCenterWorkspace.qml
         src/ui/qml/workspaces/ReportWorkspace.qml
@@ -342,14 +323,6 @@ if(BUILD_TESTING)
     target_include_directories(CineVaultSmokeTest PRIVATE src)
     target_link_libraries(CineVaultSmokeTest PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME CineVaultSmokeTest COMMAND CineVaultSmokeTest)
-
-    qt_add_executable(BackupPlannerTest
-        tests/unit/BackupPlannerTest.cpp
-        src/core/backup/BackupPlanner.cpp
-    )
-    target_include_directories(BackupPlannerTest PRIVATE src)
-    target_link_libraries(BackupPlannerTest PRIVATE Qt6::Core Qt6::Test)
-    add_test(NAME BackupPlannerTest COMMAND BackupPlannerTest)
 
     qt_add_executable(VisionApiClientJsonTest
         tests/unit/VisionApiClientJsonTest.cpp
@@ -538,7 +511,6 @@ if(BUILD_TESTING)
     if(WIN32 AND CINEVAULT_TEST_QT_BIN_DIR)
         set(CINEVAULT_PATH_AWARE_TESTS
             CineVaultSmokeTest
-            BackupPlannerTest
             VisionApiClientJsonTest
             UpdateServiceTest
             LocalImageUrlHelperTest

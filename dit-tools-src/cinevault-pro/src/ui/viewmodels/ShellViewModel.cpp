@@ -93,7 +93,7 @@ QVariantList ShellViewModel::workspaceTabs() const
     const auto projectReady = projectEntered();
     return {
         workspaceTab(QStringLiteral("项目库"), WorkspaceId::ProjectLibrary, 70, true),
-        workspaceTab(QStringLiteral("素材备份"), WorkspaceId::Import, 86, projectReady),
+        workspaceTab(QStringLiteral("导入"), WorkspaceId::Import, 56, projectReady),
         workspaceTab(QStringLiteral("素材库"), WorkspaceId::Library, 70, projectReady),
         workspaceTab(QStringLiteral("素材管理中心"), WorkspaceId::MaterialCenter, 108, projectReady),
         workspaceTab(QStringLiteral("报表"), WorkspaceId::Report, 56, projectReady),
@@ -107,7 +107,7 @@ int ShellViewModel::projectLibraryWorkspaceId() const
     return static_cast<int>(WorkspaceId::ProjectLibrary);
 }
 
-int ShellViewModel::materialBackupWorkspaceId() const
+int ShellViewModel::importWorkspaceId() const
 {
     return static_cast<int>(WorkspaceId::Import);
 }

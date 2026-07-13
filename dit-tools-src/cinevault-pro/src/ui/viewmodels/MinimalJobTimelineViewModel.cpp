@@ -70,8 +70,8 @@ void MinimalJobTimelineViewModel::seedJobs()
 {
     const auto now = QDateTime::currentDateTime();
     m_jobs = {
-        Job{1, JobType::Scan, JobState::Completed, QStringLiteral("扫描 A001"), QStringLiteral("首测包中为演示数据"), QString(), 100, 1, now, now},
-        Job{2, JobType::Metadata, JobState::Pending, QStringLiteral("元数据队列"), QStringLiteral("将在后续里程碑接回"), QString(), 0, 1, now, now},
-        Job{3, JobType::Thumbnail, JobState::Pending, QStringLiteral("缩略图队列"), QStringLiteral("将在后续里程碑接回"), QString(), 0, 1, now, now}
+        Job{1, JobType::Scan, JobState::Completed, QStringLiteral("扫描 A001"), QStringLiteral("首测包中为演示数据"), QString(), 100, 1, {}, {}, now, now},
+        Job{2, JobType::Metadata, JobState::Pending, QStringLiteral("元数据队列"), QStringLiteral("将在后续里程碑接回"), QString(), 0, 1, {}, {}, now, now},
+        Job{3, JobType::Thumbnail, JobState::Pending, QStringLiteral("缩略图队列"), QStringLiteral("将在后续里程碑接回"), QString(), 0, 1, {}, {}, now, now}
     };
 }
