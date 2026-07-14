@@ -10,7 +10,13 @@
 #include <QStringList>
 #include <QVector>
 
+#include <functional>
+
 class GlobalDatabaseManager;
+
+using SemanticIndexProgressCallback = std::function<void(qsizetype processed,
+                                                         qsizetype total,
+                                                         const QString &detail)>;
 
 class SemanticSearchIndexService : public SemanticSearchProvider {
 public:
@@ -23,7 +29,8 @@ public:
     bool applyChanges(const QVector<SearchDocumentInput> &upserts,
                       const QStringList &removedDocumentKeys,
                       SemanticIndexUpdateResult *result,
-                      QString *errorMessage);
+                      QString *errorMessage,
+                      const SemanticIndexProgressCallback &progressCallback = {});
     void discardLoadedIndex();
     QVector<SemanticSearchHit> search(const QString &queryText,
                                       qsizetype limit,
@@ -33,7 +40,7 @@ public:
     [[nodiscard]] QString indexFilePath() const;
 
 private:
-    bool ensureReadyLocked(QString *errorMessage);
+    bool ensureReadyLocked(QString *errorMessage, bool allowRebuild);
     bool rebuildLocked(const QString &reason, QString *errorMessage);
     bool setStateLocked(const QString &status,
                         const QString &lastError,

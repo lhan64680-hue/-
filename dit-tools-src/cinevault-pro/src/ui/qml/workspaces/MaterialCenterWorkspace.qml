@@ -281,6 +281,50 @@ Rectangle {
 
         Rectangle {
             Layout.fillWidth: true
+            implicitHeight: visible ? 48 : 0
+            visible: viewModel && viewModel.semanticIndexing
+            radius: 14
+            color: Qt.rgba(0.20, 0.48, 0.95, 0.10)
+            border.width: 1
+            border.color: Qt.rgba(0.20, 0.48, 0.95, 0.34)
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 14
+                anchors.rightMargin: 14
+                spacing: 12
+
+                Text {
+                    Layout.fillWidth: true
+                    text: viewModel ? viewModel.semanticIndexStatusText : ""
+                    color: Theme.text
+                    font.pixelSize: 12
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                }
+
+                ThemedProgressBar {
+                    Layout.preferredWidth: 220
+                    from: 0
+                    to: 100
+                    value: viewModel ? viewModel.semanticIndexProgress : 0
+                    indeterminate: !viewModel || viewModel.semanticIndexProgress <= 0
+                }
+
+                Text {
+                    Layout.preferredWidth: 38
+                    horizontalAlignment: Text.AlignRight
+                    text: viewModel && viewModel.semanticIndexProgress > 0
+                        ? viewModel.semanticIndexProgress + "%"
+                        : ""
+                    color: Theme.muted
+                    font.pixelSize: 12
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
             implicitHeight: visible ? 42 : 0
             visible: viewModel && viewModel.hasActiveSearch
             radius: 14

@@ -17,6 +17,7 @@ class MaterialCenterFrameListModel;
 class MaterialCenterListModel;
 class MaterialCenterQueryService;
 class ProjectService;
+class SearchDocumentSyncService;
 class VideoAnalysisService;
 class AppSettings;
 class VisionApiClient;
@@ -36,6 +37,9 @@ class MaterialCenterViewModel : public QObject {
     Q_PROPERTY(bool hasActiveSearch READ hasActiveSearch NOTIFY searchStateChanged)
     Q_PROPERTY(bool semanticSearchAvailable READ semanticSearchAvailable NOTIFY searchStateChanged)
     Q_PROPERTY(QString semanticSearchStatusText READ semanticSearchStatusText NOTIFY searchStateChanged)
+    Q_PROPERTY(bool semanticIndexing READ semanticIndexing NOTIFY searchStateChanged)
+    Q_PROPERTY(int semanticIndexProgress READ semanticIndexProgress NOTIFY searchStateChanged)
+    Q_PROPERTY(QString semanticIndexStatusText READ semanticIndexStatusText NOTIFY searchStateChanged)
     Q_PROPERTY(QString searchAssistantStatusText READ searchAssistantStatusText NOTIFY searchStateChanged)
     Q_PROPERTY(bool searchAssistantBusy READ searchAssistantBusy NOTIFY searchStateChanged)
     Q_PROPERTY(bool searchAssistantUsed READ searchAssistantUsed NOTIFY searchStateChanged)
@@ -103,6 +107,7 @@ class MaterialCenterViewModel : public QObject {
 public:
     explicit MaterialCenterViewModel(MaterialCenterQueryService *queryService,
                                      MaterialCatalogSyncService *syncService,
+                                     SearchDocumentSyncService *searchDocumentSyncService,
                                      VideoAnalysisService *analysisService,
                                      ProjectService *projectService,
                                      AppSettings *settings,
@@ -121,6 +126,9 @@ public:
     bool hasActiveSearch() const;
     bool semanticSearchAvailable() const;
     QString semanticSearchStatusText() const;
+    bool semanticIndexing() const;
+    int semanticIndexProgress() const;
+    QString semanticIndexStatusText() const;
     QString searchAssistantStatusText() const;
     bool searchAssistantBusy() const;
     bool searchAssistantUsed() const;
@@ -258,6 +266,7 @@ private:
 
     MaterialCenterQueryService *m_queryService = nullptr;
     MaterialCatalogSyncService *m_syncService = nullptr;
+    SearchDocumentSyncService *m_searchDocumentSyncService = nullptr;
     VideoAnalysisService *m_analysisService = nullptr;
     ProjectService *m_projectService = nullptr;
     AppSettings *m_settings = nullptr;
@@ -281,6 +290,10 @@ private:
     QVariantList m_assetTypeOptions;
     QString m_message;
     bool m_semanticSearchAvailable = false;
+    bool m_semanticIndexing = false;
+    int m_semanticIndexProcessed = 0;
+    int m_semanticIndexTotal = 0;
+    QString m_semanticIndexStatusText;
     QString m_searchWarningMessage;
     QString m_searchInterpretationText;
     QString m_searchEmptyReason;

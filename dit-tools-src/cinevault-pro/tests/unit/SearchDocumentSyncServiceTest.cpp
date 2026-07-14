@@ -209,6 +209,8 @@ private slots:
         SearchDocumentSyncService syncService(&fixture.manager, &semanticIndex);
         QSignalSpy completion(&syncService,
                               &SearchDocumentSyncService::synchronizationFinished);
+        QSignalSpy progress(&syncService,
+                            &SearchDocumentSyncService::synchronizationProgress);
 
         syncService.scheduleFullSync();
 
@@ -216,6 +218,15 @@ private slots:
         const auto arguments = completion.takeFirst();
         QVERIFY(arguments.at(0).toBool());
         QCOMPARE(arguments.at(1).toInt(), 4);
+        QVERIFY(!progress.isEmpty());
+        bool reportedDocumentTotal = false;
+        for (const auto &update : progress) {
+            if (update.at(1).toInt() == 4) {
+                reportedDocumentTotal = true;
+                break;
+            }
+        }
+        QVERIFY(reportedDocumentTotal);
         QCOMPARE(scalarCount(fixture.manager.database(),
                              QStringLiteral("SELECT COUNT(*) FROM search_document")),
                  qint64{4});

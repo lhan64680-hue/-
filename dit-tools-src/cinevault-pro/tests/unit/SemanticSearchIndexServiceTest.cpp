@@ -7,13 +7,16 @@
 #include <QtTest>
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QSemaphore>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTemporaryDir>
 
 #include <cmath>
+#include <future>
 
 namespace {
 QString globalDatabasePath()
@@ -77,6 +80,42 @@ private slots:
         }
         QVERIFY2(std::abs(std::sqrt(squaredNorm) - 1.0) < 1e-4,
                  qPrintable(QString::number(std::sqrt(squaredNorm), 'g', 12)));
+    }
+
+    void bgeModelProducesConsistentBatchedVectorsAndProgress()
+    {
+        BgeEmbeddingModel model;
+        QString errorMessage;
+        QVERIFY2(model.isAvailable(&errorMessage), qPrintable(errorMessage));
+        const QStringList texts{
+            QStringLiteral("红色牛仔短裤"),
+            QStringLiteral("雪山山顶日出户外广告"),
+            QStringLiteral("黑色皮革夹克 夜晚城市街道"),
+            QStringLiteral("蓝色海水沙滩航拍")
+        };
+        qsizetype lastProcessed = 0;
+        qsizetype lastTotal = 0;
+        const auto embeddings = model.embedDocuments(
+            texts,
+            [&lastProcessed, &lastTotal](qsizetype processed, qsizetype total) {
+                lastProcessed = processed;
+                lastTotal = total;
+            },
+            &errorMessage);
+        QVERIFY2(errorMessage.isEmpty(), qPrintable(errorMessage));
+        QCOMPARE(embeddings.size(), texts.size());
+        QCOMPARE(lastProcessed, texts.size());
+        QCOMPARE(lastTotal, texts.size());
+        QVERIFY(model.inferenceThreadCount() >= 1);
+        QVERIFY(model.batchSize() >= 1);
+
+        const auto single = model.embedDocument(texts.first(), &errorMessage);
+        QCOMPARE(single.size(), cinevault::searchconfig::kEmbeddingDimensions);
+        double dotProduct = 0.0;
+        for (int index = 0; index < single.size(); ++index) {
+            dotProduct += static_cast<double>(single.at(index)) * embeddings.first().at(index);
+        }
+        QVERIFY2(dotProduct > 0.99, qPrintable(QString::number(dotProduct, 'g', 12)));
     }
 
     void incrementalChangesPersistAcrossServiceInstances()
@@ -161,6 +200,90 @@ private slots:
             QVERIFY2(!hits.isEmpty(), qPrintable(errorMessage));
             QCOMPARE(hits.first().documentKey, QStringLiteral("asset:red-shorts"));
         }
+        manager.closeDatabase();
+    }
+
+    void searchKeepsUsingStableIndexWhileBatchUpdateIsPrepared()
+    {
+        removeGlobalDatabaseFiles();
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto indexPath = QDir(temp.path()).filePath(QStringLiteral("nonblocking.usearch"));
+
+        GlobalDatabaseManager manager;
+        QString errorMessage;
+        QVERIFY2(manager.openDatabase(&errorMessage), qPrintable(errorMessage));
+        SemanticSearchIndexService searchService(&manager, indexPath);
+        SemanticIndexUpdateResult initialResult;
+        QVERIFY2(searchService.applyChanges(
+                     {document(QStringLiteral("asset:stable"),
+                               SearchDocumentType::Asset,
+                               QStringLiteral("stable"),
+                               QStringLiteral("稳定旧索引 历史纪录片归档"),
+                               QStringLiteral("2026-07-14T10:00:00Z"))},
+                     {},
+                     &initialResult,
+                     &errorMessage),
+                 qPrintable(errorMessage));
+
+        QSemaphore embeddingsPrepared;
+        QSemaphore allowCommit;
+        auto updateFuture = std::async(std::launch::async, [indexPath, &embeddingsPrepared, &allowCommit]() {
+            GlobalDatabaseManager workerManager;
+            QString workerError;
+            if (!workerManager.openDatabase(&workerError)) {
+                return qMakePair(false, workerError);
+            }
+            QVector<SearchDocumentInput> documents;
+            documents.reserve(64);
+            for (int index = 0; index < 64; ++index) {
+                documents.append(document(QStringLiteral("asset:parallel-%1").arg(index),
+                                          SearchDocumentType::Asset,
+                                          QStringLiteral("parallel-%1").arg(index),
+                                          QStringLiteral("并发更新素材 %1 城市夜景 露营 旅行 商业广告")
+                                              .arg(index),
+                                          QStringLiteral("2026-07-14T11:00:00Z")));
+            }
+            SemanticSearchIndexService updateService(&workerManager, indexPath);
+            SemanticIndexUpdateResult updateResult;
+            bool paused = false;
+            const auto success = updateService.applyChanges(
+                documents,
+                {},
+                &updateResult,
+                &workerError,
+                [&embeddingsPrepared, &allowCommit, &paused](qsizetype processed,
+                                                             qsizetype,
+                                                             const QString &) {
+                    if (!paused && processed > 0) {
+                        paused = true;
+                        embeddingsPrepared.release();
+                        allowCommit.acquire();
+                    }
+                });
+            workerManager.closeDatabase();
+            return qMakePair(success, workerError);
+        });
+
+        const auto reachedLockFreePhase = embeddingsPrepared.tryAcquire(1, 10000);
+        QElapsedTimer searchTimer;
+        searchTimer.start();
+        errorMessage.clear();
+        const auto stableHits = searchService.search(QStringLiteral("历史纪录片归档"),
+                                                     5,
+                                                     &errorMessage);
+        const auto searchElapsedMs = searchTimer.elapsed();
+        allowCommit.release();
+        const auto updateOutcome = updateFuture.get();
+
+        QVERIFY2(reachedLockFreePhase, "语义向量未在超时前完成批量准备");
+        QVERIFY2(errorMessage.isEmpty(), qPrintable(errorMessage));
+        QVERIFY2(searchElapsedMs < 2000,
+                 qPrintable(QStringLiteral("索引更新期间搜索耗时 %1 ms").arg(searchElapsedMs)));
+        QVERIFY(std::any_of(stableHits.cbegin(), stableHits.cend(), [](const auto &hit) {
+            return hit.documentKey == QStringLiteral("asset:stable");
+        }));
+        QVERIFY2(updateOutcome.first, qPrintable(updateOutcome.second));
         manager.closeDatabase();
     }
 

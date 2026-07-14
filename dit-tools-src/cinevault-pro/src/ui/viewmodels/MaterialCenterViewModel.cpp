@@ -3,6 +3,7 @@
 #include "application/MaterialCatalogSyncService.h"
 #include "application/MaterialCenterQueryService.h"
 #include "application/ProjectService.h"
+#include "application/SearchDocumentSyncService.h"
 #include "application/VideoAnalysisService.h"
 #include "core/search/SearchQueryUnderstanding.h"
 #include "core/thumbnail/ContactSheetBuilder.h"
@@ -245,6 +246,7 @@ struct FrameRerankTaskResult {
 
 MaterialCenterViewModel::MaterialCenterViewModel(MaterialCenterQueryService *queryService,
                                                  MaterialCatalogSyncService *syncService,
+                                                 SearchDocumentSyncService *searchDocumentSyncService,
                                                  VideoAnalysisService *analysisService,
                                                  ProjectService *projectService,
                                                  AppSettings *settings,
@@ -253,6 +255,7 @@ MaterialCenterViewModel::MaterialCenterViewModel(MaterialCenterQueryService *que
     : QObject(parent)
     , m_queryService(queryService)
     , m_syncService(syncService)
+    , m_searchDocumentSyncService(searchDocumentSyncService)
     , m_analysisService(analysisService)
     , m_projectService(projectService)
     , m_settings(settings)
@@ -275,6 +278,49 @@ MaterialCenterViewModel::MaterialCenterViewModel(MaterialCenterQueryService *que
     m_searchRefreshTimer->setSingleShot(true);
     m_searchRefreshTimer->setInterval(250);
     connect(m_searchRefreshTimer, &QTimer::timeout, this, &MaterialCenterViewModel::reload);
+
+    if (m_searchDocumentSyncService) {
+        connect(m_searchDocumentSyncService,
+                &SearchDocumentSyncService::synchronizationProgress,
+                this,
+                [this](int processed, int total, const QString &detail) {
+                    m_semanticIndexing = true;
+                    m_semanticIndexProcessed = qMax(0, processed);
+                    m_semanticIndexTotal = qMax(0, total);
+                    m_semanticIndexStatusText = detail.trimmed().isEmpty()
+                        ? QStringLiteral("正在更新语义索引")
+                        : detail.trimmed();
+                    emit searchStateChanged();
+                });
+        connect(m_searchDocumentSyncService,
+                &SearchDocumentSyncService::synchronizationFinished,
+                this,
+                [this](bool success,
+                       int inserted,
+                       int updated,
+                       int unchanged,
+                       int removed,
+                       const QString &message) {
+                    m_semanticIndexing = false;
+                    if (success) {
+                        m_semanticIndexProcessed = m_semanticIndexTotal;
+                        m_semanticIndexStatusText = QStringLiteral("语义索引已更新：新增 %1、更新 %2、未变 %3、移除 %4")
+                                                        .arg(inserted)
+                                                        .arg(updated)
+                                                        .arg(unchanged)
+                                                        .arg(removed);
+                        if (hasActiveSearch()) {
+                            m_searchRefreshTimer->start(0);
+                        }
+                    } else {
+                        m_semanticIndexStatusText = QStringLiteral("语义索引更新失败：%1")
+                                                        .arg(message.trimmed().isEmpty()
+                                                                 ? QStringLiteral("未知错误")
+                                                                 : message.trimmed());
+                    }
+                    emit searchStateChanged();
+                });
+    }
 
     if (m_syncService) {
         connect(m_syncService, &MaterialCatalogSyncService::catalogChanged, this, [this]() {
@@ -418,9 +464,38 @@ QString MaterialCenterViewModel::semanticSearchStatusText() const
     if (m_lastParsedQuery.semanticText.trimmed().isEmpty()) {
         return QStringLiteral("已按日期、类型与结果目标执行结构化检索");
     }
+    if (m_semanticIndexing) {
+        return QStringLiteral("语义索引正在后台更新，当前搜索不会等待索引");
+    }
     return m_semanticSearchAvailable
         ? QStringLiteral("语义检索已启用")
         : QStringLiteral("语义检索不可用，当前使用词法、路径与结构化筛选");
+}
+
+bool MaterialCenterViewModel::semanticIndexing() const
+{
+    return m_semanticIndexing;
+}
+
+int MaterialCenterViewModel::semanticIndexProgress() const
+{
+    if (m_semanticIndexTotal <= 0) {
+        return 0;
+    }
+    return qBound(0,
+                  qRound((100.0 * m_semanticIndexProcessed) / m_semanticIndexTotal),
+                  100);
+}
+
+QString MaterialCenterViewModel::semanticIndexStatusText() const
+{
+    if (m_semanticIndexing && m_semanticIndexTotal > 0) {
+        return QStringLiteral("%1（%2 / %3）")
+            .arg(m_semanticIndexStatusText)
+            .arg(m_semanticIndexProcessed)
+            .arg(m_semanticIndexTotal);
+    }
+    return m_semanticIndexStatusText;
 }
 
 QString MaterialCenterViewModel::searchAssistantStatusText() const

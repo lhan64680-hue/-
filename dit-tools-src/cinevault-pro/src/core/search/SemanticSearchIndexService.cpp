@@ -19,10 +19,12 @@
 #include <QVariant>
 
 #include <algorithm>
+#include <mutex>
 #include <utility>
 
 namespace {
 QMutex processSemanticIndexMutex;
+QMutex processSemanticUpdateMutex;
 
 struct ExistingDocument {
     qint64 id = 0;
@@ -92,14 +94,16 @@ SemanticSearchIndexService::SemanticSearchIndexService(GlobalDatabaseManager *gl
 
 bool SemanticSearchIndexService::ensureReady(QString *errorMessage)
 {
+    QMutexLocker updateLocker(&processSemanticUpdateMutex);
     QMutexLocker processLocker(&processSemanticIndexMutex);
     QMutexLocker locker(&m_mutex);
     m_lastEnsureRebuilt = false;
-    return ensureReadyLocked(errorMessage);
+    return ensureReadyLocked(errorMessage, true);
 }
 
 bool SemanticSearchIndexService::rebuild(QString *errorMessage)
 {
+    QMutexLocker updateLocker(&processSemanticUpdateMutex);
     QMutexLocker processLocker(&processSemanticIndexMutex);
     QMutexLocker locker(&m_mutex);
     m_ready = false;
@@ -109,6 +113,7 @@ bool SemanticSearchIndexService::rebuild(QString *errorMessage)
 
 bool SemanticSearchIndexService::invalidate(const QString &reason, QString *errorMessage)
 {
+    QMutexLocker updateLocker(&processSemanticUpdateMutex);
     QMutexLocker processLocker(&processSemanticIndexMutex);
     QMutexLocker locker(&m_mutex);
     if (!validateDatabase(m_globalDatabaseManager, errorMessage)) {
@@ -119,7 +124,7 @@ bool SemanticSearchIndexService::invalidate(const QString &reason, QString *erro
     return setStateLocked(QStringLiteral("dirty"), reason.trimmed(), errorMessage);
 }
 
-bool SemanticSearchIndexService::ensureReadyLocked(QString *errorMessage)
+bool SemanticSearchIndexService::ensureReadyLocked(QString *errorMessage, bool allowRebuild)
 {
     if (m_ready) {
         return true;
@@ -185,6 +190,12 @@ bool SemanticSearchIndexService::ensureReadyLocked(QString *errorMessage)
                 return true;
             }
         }
+        if (!allowRebuild) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("语义索引需要后台重建，当前已使用关键词检索");
+            }
+            return false;
+        }
         return rebuildLocked(QStringLiteral("USearch 持久索引损坏或文档数量不一致：%1")
                                  .arg(loadError),
                              errorMessage);
@@ -203,6 +214,13 @@ bool SemanticSearchIndexService::ensureReadyLocked(QString *errorMessage)
         reason = QStringLiteral("语义文档数量已变化");
     } else {
         reason = QStringLiteral("USearch 持久索引文件缺失");
+    }
+    if (!allowRebuild) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("语义索引正在后台准备：%1；当前已使用关键词检索")
+                                .arg(reason);
+        }
+        return false;
     }
     return rebuildLocked(reason, errorMessage);
 }
@@ -262,14 +280,21 @@ bool SemanticSearchIndexService::rebuildLocked(const QString &reason, QString *e
         if (errorMessage) *errorMessage = message;
         return false;
     }
-    for (auto &document : documents) {
-        document.embedding = m_embeddingModel.embedDocument(document.contentText, &modelError);
-        if (document.embedding.size() != cinevault::searchconfig::kEmbeddingDimensions) {
-            const auto message = QStringLiteral("生成语义文档向量失败：%1").arg(modelError);
-            recordFailureLocked(message);
-            if (errorMessage) *errorMessage = message;
-            return false;
-        }
+    QStringList documentTexts;
+    documentTexts.reserve(documents.size());
+    for (const auto &document : std::as_const(documents)) {
+        documentTexts.append(document.contentText);
+    }
+    const auto embeddings = m_embeddingModel.embedDocuments(documentTexts, {}, &modelError);
+    if (embeddings.size() != documents.size()) {
+        const auto message = QStringLiteral("批量生成语义文档向量失败：%1").arg(modelError);
+        recordFailureLocked(message);
+        if (errorMessage) *errorMessage = message;
+        return false;
+    }
+    for (qsizetype index = 0; index < documents.size(); ++index) {
+        auto &document = documents[index];
+        document.embedding = embeddings.at(index);
         if (!rebuiltIndex.add(static_cast<quint64>(document.id), document.embedding, &indexError)) {
             const auto message = QStringLiteral("写入 USearch 重建索引失败：%1").arg(indexError);
             recordFailureLocked(message);
@@ -356,14 +381,18 @@ bool SemanticSearchIndexService::rebuildLocked(const QString &reason, QString *e
 bool SemanticSearchIndexService::applyChanges(const QVector<SearchDocumentInput> &upserts,
                                               const QStringList &removedDocumentKeys,
                                               SemanticIndexUpdateResult *result,
-                                              QString *errorMessage)
+                                              QString *errorMessage,
+                                              const SemanticIndexProgressCallback &progressCallback)
 {
-    QMutexLocker processLocker(&processSemanticIndexMutex);
-    QMutexLocker locker(&m_mutex);
+    QMutexLocker updateLocker(&processSemanticUpdateMutex);
     SemanticIndexUpdateResult localResult;
     m_lastEnsureRebuilt = false;
-    if (!ensureReadyLocked(errorMessage)) {
-        return false;
+    {
+        QMutexLocker processLocker(&processSemanticIndexMutex);
+        QMutexLocker locker(&m_mutex);
+        if (!ensureReadyLocked(errorMessage, true)) {
+            return false;
+        }
     }
     localResult.rebuilt = m_lastEnsureRebuilt;
 
@@ -422,7 +451,8 @@ bool SemanticSearchIndexService::applyChanges(const QVector<SearchDocumentInput>
     }
 
     QVector<PendingDocument> pendingDocuments;
-    QString modelError;
+    QVector<qsizetype> changedPendingIndexes;
+    QStringList changedTexts;
     for (auto iterator = normalizedUpserts.cbegin(); iterator != normalizedUpserts.cend(); ++iterator) {
         PendingDocument pending;
         pending.input = iterator.value();
@@ -445,21 +475,16 @@ bool SemanticSearchIndexService::applyChanges(const QVector<SearchDocumentInput>
             ++localResult.unchanged;
             continue;
         }
-        if (pending.contentChanged) {
-            pending.embedding = m_embeddingModel.embedDocument(pending.input.contentText, &modelError);
-            if (pending.embedding.size() != cinevault::searchconfig::kEmbeddingDimensions) {
-                if (errorMessage) {
-                    *errorMessage = QStringLiteral("生成增量语义向量失败：%1").arg(modelError);
-                }
-                return false;
-            }
-        }
         if (pending.exists) {
             ++localResult.updated;
         } else {
             ++localResult.inserted;
         }
         pendingDocuments.append(std::move(pending));
+        if (pendingDocuments.constLast().contentChanged) {
+            changedPendingIndexes.append(pendingDocuments.size() - 1);
+            changedTexts.append(pendingDocuments.constLast().input.contentText);
+        }
     }
 
     for (const auto &key : std::as_const(normalizedRemovals)) {
@@ -468,10 +493,51 @@ bool SemanticSearchIndexService::applyChanges(const QVector<SearchDocumentInput>
         }
     }
     if (localResult.inserted == 0 && localResult.updated == 0 && localResult.removed == 0) {
+        if (progressCallback) {
+            progressCallback(0, 0, QStringLiteral("语义索引已是最新"));
+        }
         if (result) *result = localResult;
         return true;
     }
 
+    if (!changedTexts.isEmpty()) {
+        if (progressCallback) {
+            progressCallback(0,
+                             changedTexts.size(),
+                             QStringLiteral("正在使用 %1 个线程、每批 %2 条生成语义向量")
+                                 .arg(m_embeddingModel.inferenceThreadCount())
+                                 .arg(m_embeddingModel.batchSize()));
+        }
+        QString modelError;
+        const auto embeddings = m_embeddingModel.embedDocuments(
+            changedTexts,
+            [progressCallback](qsizetype processed, qsizetype total) {
+                if (progressCallback) {
+                    progressCallback(processed,
+                                     total,
+                                     QStringLiteral("正在批量生成语义向量"));
+                }
+            },
+            &modelError);
+        if (embeddings.size() != changedTexts.size()) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("批量生成增量语义向量失败：%1").arg(modelError);
+            }
+            return false;
+        }
+        for (qsizetype index = 0; index < changedPendingIndexes.size(); ++index) {
+            pendingDocuments[changedPendingIndexes.at(index)].embedding = embeddings.at(index);
+        }
+    }
+
+    if (progressCallback) {
+        progressCallback(changedTexts.size(),
+                         changedTexts.size(),
+                         QStringLiteral("正在写入并切换语义索引"));
+    }
+
+    QMutexLocker processLocker(&processSemanticIndexMutex);
+    QMutexLocker locker(&m_mutex);
     if (!setStateLocked(QStringLiteral("dirty"), QString(), errorMessage)) {
         return false;
     }
@@ -622,13 +688,25 @@ QVector<SemanticSearchHit> SemanticSearchIndexService::search(const QString &que
                                                               qsizetype limit,
                                                               QString *errorMessage)
 {
-    QMutexLocker processLocker(&processSemanticIndexMutex);
-    QMutexLocker locker(&m_mutex);
+    std::unique_lock<QMutex> processLocker(processSemanticIndexMutex, std::try_to_lock);
+    if (!processLocker.owns_lock()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("语义索引正在切换，当前已使用关键词检索");
+        }
+        return {};
+    }
+    std::unique_lock<QMutex> locker(m_mutex, std::try_to_lock);
+    if (!locker.owns_lock()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("语义索引正忙，当前已使用关键词检索");
+        }
+        return {};
+    }
     const auto normalizedQuery = normalizedDocumentText(queryText);
     if (normalizedQuery.isEmpty() || limit <= 0) {
         return {};
     }
-    if (!ensureReadyLocked(errorMessage)) {
+    if (!ensureReadyLocked(errorMessage, false)) {
         return {};
     }
 

@@ -9,9 +9,12 @@
 #include <QFileInfo>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QThread>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -42,10 +45,32 @@ QString queryInstruction(const QString &text)
 {
     return QStringLiteral("为这个句子生成表示以用于检索相关文章：%1").arg(text.trimmed());
 }
+
+int configuredInferenceThreads()
+{
+    const auto idealThreads = qMax(1, QThread::idealThreadCount());
+    const auto defaultThreads = qMax(1, idealThreads - 2);
+    bool ok = false;
+    const auto configured = QString::fromLocal8Bit(qgetenv("CINEVAULT_BGE_THREADS")).toInt(&ok);
+    return ok && configured > 0
+        ? qBound(1, configured, 256)
+        : defaultThreads;
+}
+
+int configuredBatchSize()
+{
+    bool ok = false;
+    const auto configured = QString::fromLocal8Bit(qgetenv("CINEVAULT_BGE_BATCH_SIZE")).toInt(&ok);
+    return ok && configured > 0
+        ? qBound(1, configured, 64)
+        : 32;
+}
 }
 
 struct BgeEmbeddingModel::Impl {
     QString root = configuredModelRoot();
+    int inferenceThreads = configuredInferenceThreads();
+    int configuredBatch = configuredBatchSize();
     mutable QMutex mutex;
     mutable bool initialized = false;
     mutable QString initializationError;
@@ -81,7 +106,8 @@ struct BgeEmbeddingModel::Impl {
             environment = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "CineVaultBge");
             Ort::SessionOptions options;
             options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-            options.SetIntraOpNumThreads(1);
+            options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
+            options.SetIntraOpNumThreads(inferenceThreads);
             options.SetInterOpNumThreads(1);
 #if defined(Q_OS_WIN)
             const auto nativeModelPath = QDir::toNativeSeparators(modelPath).toStdWString();
@@ -114,99 +140,156 @@ struct BgeEmbeddingModel::Impl {
 #endif
     }
 
-    QVector<float> embed(const QString &text, bool query, QString *errorMessage) const
+    QVector<QVector<float>> embedBatch(const QStringList &texts,
+                                       bool query,
+                                       const EmbeddingProgressCallback &progressCallback,
+                                       QString *errorMessage) const
     {
         QMutexLocker locker(&mutex);
+        QVector<QVector<float>> embeddings;
+        if (texts.isEmpty()) {
+            return embeddings;
+        }
         if (!ensureInitialized()) {
             if (errorMessage) *errorMessage = initializationError;
-            return {};
-        }
-        const auto input = tokenizer.encode(
-            query ? queryInstruction(text) : text,
-            cinevault::searchconfig::kEmbeddingMaxTokens,
-            errorMessage);
-        if (input.inputIds.empty()) {
-            return {};
+            return embeddings;
         }
 #if !defined(CINEVAULT_HAS_LOCAL_SEARCH) || !CINEVAULT_HAS_LOCAL_SEARCH
-        return {};
+        return embeddings;
 #else
-        try {
-            const std::array<std::int64_t, 2> shape{
-                1,
-                static_cast<std::int64_t>(input.inputIds.size())};
-            auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-            std::vector<Ort::Value> inputValues;
-            std::vector<const char *> inputNamePointers;
-            inputValues.reserve(inputNames.size());
-            inputNamePointers.reserve(inputNames.size());
-            for (const auto &name : inputNames) {
-                const std::vector<std::int64_t> *values = &input.inputIds;
-                if (name == "attention_mask") {
-                    values = &input.attentionMask;
-                } else if (name == "token_type_ids") {
-                    values = &input.tokenTypeIds;
-                } else if (name != "input_ids") {
-                    if (errorMessage) {
-                        *errorMessage = QStringLiteral("BGE ONNX 包含不支持的输入：%1")
-                                            .arg(QString::fromStdString(name));
+        embeddings.reserve(texts.size());
+        for (qsizetype offset = 0; offset < texts.size(); offset += configuredBatch) {
+            const auto count = qMin<qsizetype>(configuredBatch, texts.size() - offset);
+            std::vector<BertTokenizedInput> encodedInputs;
+            encodedInputs.reserve(static_cast<std::size_t>(count));
+            std::size_t sequenceLength = 0;
+            for (qsizetype index = 0; index < count; ++index) {
+                auto input = tokenizer.encode(
+                    query ? queryInstruction(texts.at(offset + index)) : texts.at(offset + index),
+                    cinevault::searchconfig::kEmbeddingMaxTokens,
+                    errorMessage);
+                if (input.inputIds.empty()) {
+                    if (errorMessage && errorMessage->isEmpty()) {
+                        *errorMessage = QStringLiteral("BGE 分词结果为空：第 %1 条文本")
+                                            .arg(offset + index + 1);
                     }
                     return {};
                 }
-                inputValues.emplace_back(Ort::Value::CreateTensor<std::int64_t>(
-                    memoryInfo,
-                    const_cast<std::int64_t *>(values->data()),
-                    values->size(),
-                    shape.data(),
-                    shape.size()));
-                inputNamePointers.push_back(name.c_str());
+                sequenceLength = std::max(sequenceLength, input.inputIds.size());
+                encodedInputs.emplace_back(std::move(input));
             }
-            std::vector<const char *> outputNamePointers;
-            outputNamePointers.reserve(outputNames.size());
-            for (const auto &name : outputNames) {
-                outputNamePointers.push_back(name.c_str());
+
+            const auto elementCount = static_cast<std::size_t>(count) * sequenceLength;
+            std::vector<std::int64_t> inputIds(elementCount, 0);
+            std::vector<std::int64_t> attentionMask(elementCount, 0);
+            std::vector<std::int64_t> tokenTypeIds(elementCount, 0);
+            for (std::size_t row = 0; row < encodedInputs.size(); ++row) {
+                const auto &input = encodedInputs.at(row);
+                const auto rowOffset = row * sequenceLength;
+                std::copy(input.inputIds.cbegin(), input.inputIds.cend(), inputIds.begin() + rowOffset);
+                std::copy(input.attentionMask.cbegin(), input.attentionMask.cend(), attentionMask.begin() + rowOffset);
+                std::copy(input.tokenTypeIds.cbegin(), input.tokenTypeIds.cend(), tokenTypeIds.begin() + rowOffset);
             }
-            auto outputs = session->Run(Ort::RunOptions{nullptr},
-                                        inputNamePointers.data(),
-                                        inputValues.data(),
-                                        inputValues.size(),
-                                        outputNamePointers.data(),
-                                        outputNamePointers.size());
-            if (outputs.empty() || !outputs.front().IsTensor()) {
-                if (errorMessage) *errorMessage = QStringLiteral("BGE ONNX 未返回张量");
+
+            try {
+                const std::array<std::int64_t, 2> shape{
+                    static_cast<std::int64_t>(count),
+                    static_cast<std::int64_t>(sequenceLength)};
+                auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+                std::vector<Ort::Value> inputValues;
+                std::vector<const char *> inputNamePointers;
+                inputValues.reserve(inputNames.size());
+                inputNamePointers.reserve(inputNames.size());
+                for (const auto &name : inputNames) {
+                    std::vector<std::int64_t> *values = &inputIds;
+                    if (name == "attention_mask") {
+                        values = &attentionMask;
+                    } else if (name == "token_type_ids") {
+                        values = &tokenTypeIds;
+                    } else if (name != "input_ids") {
+                        if (errorMessage) {
+                            *errorMessage = QStringLiteral("BGE ONNX 包含不支持的输入：%1")
+                                                .arg(QString::fromStdString(name));
+                        }
+                        return {};
+                    }
+                    inputValues.emplace_back(Ort::Value::CreateTensor<std::int64_t>(
+                        memoryInfo,
+                        values->data(),
+                        values->size(),
+                        shape.data(),
+                        shape.size()));
+                    inputNamePointers.push_back(name.c_str());
+                }
+                std::vector<const char *> outputNamePointers;
+                outputNamePointers.reserve(outputNames.size());
+                for (const auto &name : outputNames) {
+                    outputNamePointers.push_back(name.c_str());
+                }
+                auto outputs = session->Run(Ort::RunOptions{nullptr},
+                                            inputNamePointers.data(),
+                                            inputValues.data(),
+                                            inputValues.size(),
+                                            outputNamePointers.data(),
+                                            outputNamePointers.size());
+                if (outputs.empty() || !outputs.front().IsTensor()) {
+                    if (errorMessage) *errorMessage = QStringLiteral("BGE ONNX 未返回张量");
+                    return {};
+                }
+                const auto info = outputs.front().GetTensorTypeAndShapeInfo();
+                const auto outputShape = info.GetShape();
+                const auto outputElementCount = info.GetElementCount();
+                if (outputShape.empty()
+                    || outputShape.front() != count
+                    || outputShape.back() != cinevault::searchconfig::kEmbeddingDimensions
+                    || outputElementCount % static_cast<std::size_t>(count) != 0) {
+                    if (errorMessage) *errorMessage = QStringLiteral("BGE 批量输出不符合 512 维契约");
+                    return {};
+                }
+
+                const auto valuesPerItem = outputElementCount / static_cast<std::size_t>(count);
+                if (valuesPerItem < static_cast<std::size_t>(cinevault::searchconfig::kEmbeddingDimensions)) {
+                    if (errorMessage) *errorMessage = QStringLiteral("BGE 批量输出数据不完整");
+                    return {};
+                }
+                const auto *values = outputs.front().GetTensorData<float>();
+                for (qsizetype row = 0; row < count; ++row) {
+                    QVector<float> embedding(cinevault::searchconfig::kEmbeddingDimensions);
+                    const auto *rowValues = values + (static_cast<std::size_t>(row) * valuesPerItem);
+                    double squaredNorm = 0.0;
+                    for (int index = 0; index < embedding.size(); ++index) {
+                        embedding[index] = rowValues[index];
+                        squaredNorm += static_cast<double>(embedding[index]) * embedding[index];
+                    }
+                    const auto norm = std::sqrt(squaredNorm);
+                    if (norm <= 0.0) {
+                        if (errorMessage) *errorMessage = QStringLiteral("BGE 输出向量范数为零");
+                        return {};
+                    }
+                    for (auto &value : embedding) {
+                        value = static_cast<float>(value / norm);
+                    }
+                    embeddings.append(std::move(embedding));
+                }
+            } catch (const Ort::Exception &exception) {
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("BGE ONNX 推理失败：%1")
+                                        .arg(QString::fromUtf8(exception.what()));
+                }
                 return {};
             }
-            const auto info = outputs.front().GetTensorTypeAndShapeInfo();
-            const auto outputShape = info.GetShape();
-            if (outputShape.empty()
-                || outputShape.back() != cinevault::searchconfig::kEmbeddingDimensions) {
-                if (errorMessage) *errorMessage = QStringLiteral("BGE 输出维度不符合 512 维契约");
-                return {};
+            if (progressCallback) {
+                progressCallback(offset + count, texts.size());
             }
-            const auto *values = outputs.front().GetTensorData<float>();
-            QVector<float> embedding(cinevault::searchconfig::kEmbeddingDimensions);
-            double squaredNorm = 0.0;
-            for (int index = 0; index < embedding.size(); ++index) {
-                embedding[index] = values[index];
-                squaredNorm += static_cast<double>(embedding[index]) * embedding[index];
-            }
-            const auto norm = std::sqrt(squaredNorm);
-            if (norm <= 0.0) {
-                if (errorMessage) *errorMessage = QStringLiteral("BGE 输出向量范数为零");
-                return {};
-            }
-            for (auto &value : embedding) {
-                value = static_cast<float>(value / norm);
-            }
-            return embedding;
-        } catch (const Ort::Exception &exception) {
-            if (errorMessage) {
-                *errorMessage = QStringLiteral("BGE ONNX 推理失败：%1")
-                                    .arg(QString::fromUtf8(exception.what()));
-            }
-            return {};
         }
+        return embeddings;
 #endif
+    }
+
+    QVector<float> embed(const QString &text, bool query, QString *errorMessage) const
+    {
+        const auto embeddings = embedBatch({text}, query, {}, errorMessage);
+        return embeddings.isEmpty() ? QVector<float>{} : embeddings.first();
     }
 };
 
@@ -232,6 +315,14 @@ QVector<float> BgeEmbeddingModel::embedDocument(const QString &text, QString *er
     return m_impl->embed(text, false, errorMessage);
 }
 
+QVector<QVector<float>> BgeEmbeddingModel::embedDocuments(
+    const QStringList &texts,
+    const EmbeddingProgressCallback &progressCallback,
+    QString *errorMessage) const
+{
+    return m_impl->embedBatch(texts, false, progressCallback, errorMessage);
+}
+
 QVector<float> BgeEmbeddingModel::embedQuery(const QString &text, QString *errorMessage) const
 {
     return m_impl->embed(text, true, errorMessage);
@@ -240,4 +331,14 @@ QVector<float> BgeEmbeddingModel::embedQuery(const QString &text, QString *error
 QString BgeEmbeddingModel::modelRoot() const
 {
     return m_impl->root;
+}
+
+int BgeEmbeddingModel::inferenceThreadCount() const
+{
+    return m_impl->inferenceThreads;
+}
+
+int BgeEmbeddingModel::batchSize() const
+{
+    return m_impl->configuredBatch;
 }

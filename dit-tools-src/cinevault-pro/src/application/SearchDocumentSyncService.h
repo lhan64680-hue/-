@@ -23,6 +23,9 @@ public slots:
     void scheduleFullSync();
 
 signals:
+    void synchronizationProgress(int processed,
+                                 int total,
+                                 const QString &detail);
     void synchronizationFinished(bool success,
                                  int inserted,
                                  int updated,

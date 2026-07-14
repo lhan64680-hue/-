@@ -15,6 +15,7 @@
 #include <QStringList>
 #include <QTimer>
 
+#include <limits>
 #include <utility>
 
 namespace {
@@ -261,7 +262,8 @@ bool collectSearchDocuments(QSqlDatabase db,
 bool synchronizeDatabase(GlobalDatabaseManager *databaseManager,
                          SemanticSearchIndexService *semanticSearchIndexService,
                          SemanticIndexUpdateResult *result,
-                         QString *errorMessage)
+                         QString *errorMessage,
+                         const SemanticIndexProgressCallback &progressCallback = {})
 {
     if (!databaseManager || !databaseManager->isOpen() || !semanticSearchIndexService) {
         if (errorMessage) {
@@ -277,10 +279,17 @@ bool synchronizeDatabase(GlobalDatabaseManager *databaseManager,
                                 errorMessage)) {
         return false;
     }
+    if (progressCallback) {
+        progressCallback(0,
+                         documents.size(),
+                         QStringLiteral("已收集 %1 份搜索文档，正在检查增量变更")
+                             .arg(documents.size()));
+    }
     return semanticSearchIndexService->applyChanges(documents,
                                                     removals,
                                                     result,
-                                                    errorMessage);
+                                                    errorMessage,
+                                                    progressCallback);
 }
 }
 
@@ -330,6 +339,7 @@ void SearchDocumentSyncService::startScheduledSync()
     }
     m_running = true;
     m_pending = false;
+    emit synchronizationProgress(0, 0, QStringLiteral("正在收集语义索引文档"));
     const auto indexPath = m_semanticSearchIndexService->indexFilePath();
     QPointer<SearchDocumentSyncService> guard(this);
 
@@ -341,10 +351,26 @@ void SearchDocumentSyncService::startScheduledSync()
         if (workerDatabaseManager.openDatabase(&errorMessage)) {
             {
                 SemanticSearchIndexService workerIndexService(&workerDatabaseManager, indexPath);
+                const SemanticIndexProgressCallback progressCallback =
+                    [guard](qsizetype processed, qsizetype total, const QString &detail) {
+                        if (!guard) {
+                            return;
+                        }
+                        QMetaObject::invokeMethod(guard, [guard, processed, total, detail]() {
+                            if (!guard) {
+                                return;
+                            }
+                            emit guard->synchronizationProgress(
+                                static_cast<int>(qMin<qsizetype>(processed, std::numeric_limits<int>::max())),
+                                static_cast<int>(qMin<qsizetype>(total, std::numeric_limits<int>::max())),
+                                detail);
+                        }, Qt::QueuedConnection);
+                    };
                 success = synchronizeDatabase(&workerDatabaseManager,
                                               &workerIndexService,
                                               &updateResult,
-                                              &errorMessage);
+                                              &errorMessage,
+                                              progressCallback);
             }
             workerDatabaseManager.closeDatabase();
         }

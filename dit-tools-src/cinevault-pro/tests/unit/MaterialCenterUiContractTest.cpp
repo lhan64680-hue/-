@@ -227,6 +227,9 @@ private slots:
         QVERIFY(source.contains(QStringLiteral("m_searchInterpretationText = result.parsedQuery.interpretationLabels")));
         QVERIFY(source.contains(QStringLiteral("m_lastParsedQuery = result.parsedQuery")));
         QVERIFY(source.contains(QStringLiteral("m_searchEmptyReason")));
+        QVERIFY(source.contains(QStringLiteral("SearchDocumentSyncService::synchronizationProgress")));
+        QVERIFY(source.contains(QStringLiteral("SearchDocumentSyncService::synchronizationFinished")));
+        QVERIFY(source.contains(QStringLiteral("m_searchRefreshTimer->start(0)")));
         QVERIFY(source.contains(QStringLiteral("understandSearchQuery")));
         QVERIFY(source.contains(QStringLiteral("rerankFrameCandidates")));
         QVERIFY(source.contains(QStringLiteral("task.generation != m_searchGeneration")));
@@ -248,6 +251,9 @@ private slots:
             QStringLiteral("visible: viewModel && !viewModel.frameSearchMode"),
             QStringLiteral("viewModel.semanticSearchAvailable"),
             QStringLiteral("viewModel.semanticSearchStatusText"),
+            QStringLiteral("viewModel.semanticIndexing"),
+            QStringLiteral("viewModel.semanticIndexProgress"),
+            QStringLiteral("viewModel.semanticIndexStatusText"),
             QStringLiteral("viewModel.searchWarningMessage"),
             QStringLiteral("viewModel.searchInterpretationText"),
             QStringLiteral("viewModel.searchAssistantStatusText"),
