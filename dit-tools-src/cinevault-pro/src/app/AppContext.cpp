@@ -44,6 +44,7 @@
 #include "ui/viewmodels/FeedbackViewModel.h"
 #include "ui/viewmodels/ShellViewModel.h"
 #include "ui/viewmodels/SourceRailViewModel.h"
+#include "ui/window/QuickSearchController.h"
 #endif
 
 #include <QQmlApplicationEngine>
@@ -68,6 +69,7 @@ AppContext::AppContext(QObject *parent)
     connect(m_libraryWorkspaceViewModel, &MinimalLibraryWorkspaceViewModel::assetSelected, m_inspectorViewModel, &MinimalInspectorViewModel::showAsset);
 }
 #else
+    , m_quickSearchController(new QuickSearchController(&m_settings, this))
     , m_databaseManager(new DatabaseManager(this))
     , m_globalDatabaseManager(new GlobalDatabaseManager(this))
     , m_semanticSearchIndexService(new SemanticSearchIndexService(m_globalDatabaseManager))
@@ -99,7 +101,12 @@ AppContext::AppContext(QObject *parent)
     , m_inspectorViewModel(new InspectorViewModel(m_libraryQueryService, this))
     , m_jobTimelineViewModel(new JobTimelineViewModel(m_jobService, m_videoAnalysisService, this))
     , m_reportWorkspaceViewModel(new ReportWorkspaceViewModel(m_projectService, m_libraryQueryService, m_reportExportService, this))
-    , m_settingsViewModel(new SettingsViewModel(&m_settings, m_visionApiClient, m_videoAnalysisService, m_updateService, this))
+    , m_settingsViewModel(new SettingsViewModel(&m_settings,
+                                                m_visionApiClient,
+                                                m_videoAnalysisService,
+                                                m_updateService,
+                                                m_quickSearchController,
+                                                this))
     , m_feedbackViewModel(new FeedbackViewModel(m_feedbackService, this))
 {
     QString globalDbError;
@@ -168,12 +175,14 @@ void AppContext::expose(QQmlApplicationEngine &engine)
     context->setContextProperty(QStringLiteral("jobTimelineVm"), m_jobTimelineViewModel);
     context->setContextProperty(QStringLiteral("reportWorkspaceVm"), m_reportWorkspaceViewModel);
 #if CINEVAULT_BUILD_MINIMAL_GUI
+    context->setContextProperty(QStringLiteral("quickSearchController"), QVariant());
     context->setContextProperty(QStringLiteral("projectLibraryVm"), QVariant());
     context->setContextProperty(QStringLiteral("materialCenterVm"), QVariant());
     context->setContextProperty(QStringLiteral("documentPreviewVm"), QVariant());
     context->setContextProperty(QStringLiteral("settingsVm"), QVariant());
     context->setContextProperty(QStringLiteral("feedbackVm"), QVariant());
 #else
+    context->setContextProperty(QStringLiteral("quickSearchController"), m_quickSearchController);
     context->setContextProperty(QStringLiteral("projectLibraryVm"), m_projectLibraryViewModel);
     context->setContextProperty(QStringLiteral("materialCenterVm"), m_materialCenterViewModel);
     context->setContextProperty(QStringLiteral("documentPreviewVm"), m_documentPreviewService);

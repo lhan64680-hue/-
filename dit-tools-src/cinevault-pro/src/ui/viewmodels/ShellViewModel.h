@@ -46,7 +46,7 @@ public:
     int feedbackWorkspaceId() const;
 
     void resetProjectUiState();
-    void enterProjectFromLibrary();
+    Q_INVOKABLE void enterProjectFromLibrary();
     void setGlobalSearchText(const QString &text);
     void setCurrentWorkspace(int workspace);
 

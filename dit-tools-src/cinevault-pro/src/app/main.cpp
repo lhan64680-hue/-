@@ -1,7 +1,9 @@
 #include "app/AppBootstrap.h"
 #include "app/AppContext.h"
+#if !CINEVAULT_BUILD_MINIMAL_GUI
 #include "application/UpdaterSession.h"
 #include "ui/widgets/UpdaterWindow.h"
+#endif
 
 #include <QApplication>
 #include <QDateTime>
@@ -43,6 +45,7 @@ int main(int argc, char *argv[])
     QApplication::setApplicationName(QStringLiteral("影资管家"));
     QApplication::setApplicationVersion(QStringLiteral(CINEVAULT_APP_VERSION));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/app.ico")));
+    QApplication::setQuitOnLastWindowClosed(false);
 
     const auto arguments = QCoreApplication::arguments();
 #if !CINEVAULT_BUILD_MINIMAL_GUI
@@ -97,6 +100,7 @@ int main(int argc, char *argv[])
         return app.exec();
     }
 #endif
+#if !CINEVAULT_BUILD_MINIMAL_GUI
     const auto hasUpdaterSessionArgument = std::any_of(
         arguments.cbegin(), arguments.cend(), [](const QString &argument) {
             return argument.startsWith(QStringLiteral("--run-update-session="), Qt::CaseInsensitive);
@@ -118,6 +122,7 @@ int main(int argc, char *argv[])
                                   : updaterArgumentError);
         return 2;
     }
+#endif
 
     AppBootstrap bootstrap;
     if (!bootstrap.run()) {

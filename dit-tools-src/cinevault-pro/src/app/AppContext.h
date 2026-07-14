@@ -48,6 +48,7 @@ class JobTimelineViewModel;
 class ReportWorkspaceViewModel;
 class SettingsViewModel;
 class FeedbackViewModel;
+class QuickSearchController;
 #endif
 
 class AppContext : public QObject {
@@ -84,6 +85,7 @@ private:
     MinimalReportWorkspaceViewModel *m_reportWorkspaceViewModel = nullptr;
 #else
     AppSettings m_settings;
+    QuickSearchController *m_quickSearchController = nullptr;
     DatabaseManager *m_databaseManager = nullptr;
     GlobalDatabaseManager *m_globalDatabaseManager = nullptr;
     SemanticSearchIndexService *m_semanticSearchIndexService = nullptr;

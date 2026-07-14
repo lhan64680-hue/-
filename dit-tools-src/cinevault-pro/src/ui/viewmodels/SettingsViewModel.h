@@ -3,6 +3,7 @@
 #include <QObject>
 
 class AppSettings;
+class QuickSearchController;
 class UpdateService;
 class VideoAnalysisService;
 class VisionApiClient;
@@ -16,9 +17,10 @@ class SettingsViewModel : public QObject {
     Q_PROPERTY(bool frameRerankEnabled READ frameRerankEnabled WRITE setFrameRerankEnabled NOTIFY settingsChanged)
     Q_PROPERTY(bool localOnlySearch READ localOnlySearch WRITE setLocalOnlySearch NOTIFY settingsChanged)
     Q_PROPERTY(bool allowSearchFrameUpload READ allowSearchFrameUpload WRITE setAllowSearchFrameUpload NOTIFY settingsChanged)
-    Q_PROPERTY(int dailySearchModelCallLimit READ dailySearchModelCallLimit WRITE setDailySearchModelCallLimit NOTIFY settingsChanged)
-    Q_PROPERTY(int searchModelCallsToday READ searchModelCallsToday NOTIFY settingsChanged)
-    Q_PROPERTY(QString searchModelBudgetLabel READ searchModelBudgetLabel NOTIFY settingsChanged)
+    Q_PROPERTY(bool quickSearchEnabled READ quickSearchEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(QString quickSearchShortcut READ quickSearchShortcut NOTIFY settingsChanged)
+    Q_PROPERTY(bool startAtLogin READ startAtLogin NOTIFY settingsChanged)
+    Q_PROPERTY(QString quickSearchStatusText READ quickSearchStatusText NOTIFY settingsChanged)
     Q_PROPERTY(int analysisMode READ analysisMode WRITE setAnalysisMode NOTIFY settingsChanged)
     Q_PROPERTY(int frameInterval READ frameInterval WRITE setFrameInterval NOTIFY settingsChanged)
     Q_PROPERTY(int thumbnailFrameIndex READ thumbnailFrameIndex WRITE setThumbnailFrameIndex NOTIFY settingsChanged)
@@ -39,6 +41,7 @@ public:
                                VisionApiClient *visionApiClient,
                                VideoAnalysisService *videoAnalysisService,
                                UpdateService *updateService,
+                               QuickSearchController *quickSearchController,
                                QObject *parent = nullptr);
 
     QString visionBaseUrl() const;
@@ -55,10 +58,10 @@ public:
     void setLocalOnlySearch(bool enabled);
     bool allowSearchFrameUpload() const;
     void setAllowSearchFrameUpload(bool enabled);
-    int dailySearchModelCallLimit() const;
-    void setDailySearchModelCallLimit(int value);
-    int searchModelCallsToday() const;
-    QString searchModelBudgetLabel() const;
+    bool quickSearchEnabled() const;
+    QString quickSearchShortcut() const;
+    bool startAtLogin() const;
+    QString quickSearchStatusText() const;
     int analysisMode() const;
     void setAnalysisMode(int value);
     int frameInterval() const;
@@ -93,6 +96,7 @@ public:
                                         const QString &visionApiKey,
                                         const QString &visionModel,
                                         int analysisTimeoutSec);
+    Q_INVOKABLE QString shortcutFromKeyEvent(int key, int modifiers) const;
     Q_INVOKABLE void saveAndApply(const QString &visionBaseUrl,
                                   const QString &visionApiKey,
                                   const QString &visionModel,
@@ -100,7 +104,9 @@ public:
                                   bool frameRerankEnabled,
                                   bool localOnlySearch,
                                   bool allowSearchFrameUpload,
-                                  int dailySearchModelCallLimit,
+                                  bool quickSearchEnabled,
+                                  const QString &quickSearchShortcut,
+                                  bool startAtLogin,
                                   int analysisMode,
                                   int frameInterval,
                                   int thumbnailFrameIndex,
@@ -121,6 +127,7 @@ private:
     VisionApiClient *m_visionApiClient = nullptr;
     VideoAnalysisService *m_videoAnalysisService = nullptr;
     UpdateService *m_updateService = nullptr;
+    QuickSearchController *m_quickSearchController = nullptr;
     QString m_frameCacheSizeLabel;
     QString m_lastMessage;
 };

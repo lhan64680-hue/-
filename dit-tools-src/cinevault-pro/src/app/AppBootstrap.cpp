@@ -5,13 +5,17 @@
 #include "ui/imaging/LocalImageProvider.h"
 
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include <QQmlError>
 #include <QQuickStyle>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QMessageLogContext>
+#include <QCoreApplication>
 #include <QTextStream>
+#include <QTimer>
+#include <QWindow>
 
 namespace {
 QString qmlLogFilePath()
@@ -109,6 +113,59 @@ bool AppBootstrap::run()
     const auto loaded = !m_engine->rootObjects().isEmpty();
     if (!loaded) {
         appendQmlStartupLog(QStringLiteral("QML root object load failed."));
+        return false;
     }
-    return loaded;
+
+    if (QCoreApplication::arguments().contains(QStringLiteral("--quick-search-probe"),
+                                               Qt::CaseInsensitive)) {
+        QTimer::singleShot(250, m_engine.get(), [this]() {
+            auto *controller = m_engine->rootContext()
+                                   ->contextProperty(QStringLiteral("quickSearchController"))
+                                   .value<QObject *>();
+            if (controller) {
+                QMetaObject::invokeMethod(controller, "requestQuickSearch", Qt::QueuedConnection);
+            }
+        });
+        QTimer::singleShot(500, m_engine.get(), [this]() {
+            auto *rootObject = m_engine->rootObjects().isEmpty()
+                ? nullptr
+                : m_engine->rootObjects().constFirst();
+            auto *searchField = rootObject
+                ? rootObject->findChild<QObject *>(QStringLiteral("quickSearchField"))
+                : nullptr;
+            if (searchField) {
+                searchField->setProperty("text", QStringLiteral("视频"));
+            }
+            auto *materialCenter = m_engine->rootContext()
+                                       ->contextProperty(QStringLiteral("materialCenterVm"))
+                                       .value<QObject *>();
+            if (materialCenter) {
+                QMetaObject::invokeMethod(materialCenter,
+                                          "setSearchText",
+                                          Qt::QueuedConnection,
+                                          Q_ARG(QString, QStringLiteral("视频")));
+            }
+        });
+        QTimer::singleShot(1500, m_engine.get(), [this]() {
+            auto *rootObject = m_engine->rootObjects().isEmpty()
+                ? nullptr
+                : m_engine->rootObjects().constFirst();
+            auto *quickSearchWindow = rootObject
+                ? rootObject->findChild<QWindow *>(QStringLiteral("quickSearchWindow"))
+                : nullptr;
+            const auto visible = quickSearchWindow && quickSearchWindow->isVisible();
+            auto *materialCenter = m_engine->rootContext()
+                                       ->contextProperty(QStringLiteral("materialCenterVm"))
+                                       .value<QObject *>();
+            appendQmlStartupLog(QStringLiteral("[quick-search-probe] windowFound=%1 visible=%2 title=%3 folders=%4 assets=%5 frames=%6")
+                                    .arg(quickSearchWindow ? 1 : 0)
+                                    .arg(visible ? 1 : 0)
+                                    .arg(quickSearchWindow ? quickSearchWindow->title() : QString())
+                                    .arg(materialCenter ? materialCenter->property("folderCount").toInt() : -1)
+                                    .arg(materialCenter ? materialCenter->property("assetCount").toInt() : -1)
+                                    .arg(materialCenter ? materialCenter->property("frameCount").toInt() : -1));
+            QCoreApplication::exit(visible ? 0 : 6);
+        });
+    }
+    return true;
 }

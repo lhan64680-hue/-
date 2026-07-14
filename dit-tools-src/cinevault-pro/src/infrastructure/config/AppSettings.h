@@ -2,7 +2,6 @@
 
 #include "domain/Enums.h"
 
-#include <QDate>
 #include <QStringList>
 
 class QSettings;
@@ -40,11 +39,14 @@ public:
     bool allowSearchFrameUpload() const;
     void setAllowSearchFrameUpload(bool enabled);
 
-    int dailySearchModelCallLimit() const;
-    void setDailySearchModelCallLimit(int value);
-    int searchModelCallsForDate(const QDate &date = QDate::currentDate()) const;
-    bool canUseSearchModel(const QDate &date = QDate::currentDate()) const;
-    bool tryConsumeSearchModelCall(const QDate &date = QDate::currentDate());
+    bool quickSearchEnabled() const;
+    void setQuickSearchEnabled(bool enabled);
+
+    QString quickSearchShortcut() const;
+    void setQuickSearchShortcut(const QString &shortcut);
+
+    bool startAtLogin() const;
+    void setStartAtLogin(bool enabled);
 
     AnalysisMode analysisMode() const;
     void setAnalysisMode(AnalysisMode mode);
