@@ -4,6 +4,7 @@
 #include "shared/Paths.h"
 
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QList>
@@ -201,6 +202,17 @@ bool GlobalDatabaseManager::openDatabase(QString *errorMessage)
     }
 
     m_databaseFilePath = QDir(Paths::resolvedDataRoot()).filePath(QStringLiteral("material-center.sqlite"));
+    QString recoveryMessage;
+    if (!DatabaseMigration::ensureUserDatabase(m_databaseFilePath,
+                                               Paths::installDataRoot(),
+                                               &recoveryMessage,
+                                               errorMessage)) {
+        m_databaseFilePath.clear();
+        return false;
+    }
+    if (!recoveryMessage.isEmpty()) {
+        qInfo().noquote() << recoveryMessage;
+    }
     const QFileInfo databaseInfo(m_databaseFilePath);
     const bool databaseExistedBeforeOpen = databaseInfo.exists() && databaseInfo.isFile() && databaseInfo.size() > 0;
 

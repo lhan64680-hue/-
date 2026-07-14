@@ -18,6 +18,16 @@ private slots:
         QCOMPARE(FolderPathMetadata::depth(QStringLiteral(R"(2026-07-14\CameraA)")), 2);
     }
 
+    void normalizeSourcePath_acceptsUncAndFileUrls()
+    {
+        QCOMPARE(FolderPathMetadata::normalizeSourcePath(QStringLiteral(R"(  \\Server\Share\Shoot\DAY01\  )")),
+                 QStringLiteral("//Server/Share/Shoot/DAY01"));
+        QCOMPARE(FolderPathMetadata::normalizeSourcePath(QStringLiteral("file://Server/Share/Shoot/DAY01")),
+                 QStringLiteral("//server/Share/Shoot/DAY01"));
+        QCOMPARE(FolderPathMetadata::normalizeSourcePath(QStringLiteral("C:\\Shoot\\DAY01\\..\\DAY02")),
+                 QStringLiteral("C:/Shoot/DAY02"));
+    }
+
     void inferDate_acceptsSupportedFormatsAndRejectsInvalidDates_data()
     {
         QTest::addColumn<QString>("rootName");

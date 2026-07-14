@@ -1,7 +1,11 @@
 #pragma once
 
 #include <QAbstractNativeEventFilter>
+#include <QList>
 #include <QObject>
+#include <QPoint>
+#include <QRect>
+#include <QSize>
 #include <QString>
 
 class QAction;
@@ -14,6 +18,7 @@ class QuickSearchController final : public QObject, public QAbstractNativeEventF
     Q_PROPERTY(QString shortcut READ shortcut NOTIFY shortcutStatusChanged)
     Q_PROPERTY(QString shortcutStatusText READ shortcutStatusText NOTIFY shortcutStatusChanged)
     Q_PROPERTY(bool startHidden READ startHidden CONSTANT)
+    Q_PROPERTY(bool trayAvailable READ trayAvailable CONSTANT)
 
 public:
     explicit QuickSearchController(AppSettings *settings, QObject *parent = nullptr);
@@ -22,6 +27,7 @@ public:
     QString shortcut() const;
     QString shortcutStatusText() const;
     bool startHidden() const;
+    bool trayAvailable() const;
 
     bool applyShortcutConfiguration(bool enabled,
                                     const QString &shortcut,
@@ -31,8 +37,14 @@ public:
     static QString normalizedShortcut(const QString &shortcut,
                                       QString *errorMessage = nullptr);
     static QString shortcutFromKeyEvent(int key, int modifiers);
+    static QPoint clampWindowPosition(const QPoint &requestedPosition,
+                                      const QSize &windowSize,
+                                      const QList<QRect> &availableGeometries,
+                                      const QPoint &fallbackPoint);
 
     Q_INVOKABLE void requestQuickSearch();
+    Q_INVOKABLE QPoint restoredWindowPosition(int windowWidth, int windowHeight) const;
+    Q_INVOKABLE QPoint rememberWindowPosition(int x, int y, int windowWidth, int windowHeight);
 
     bool nativeEventFilter(const QByteArray &eventType,
                            void *message,

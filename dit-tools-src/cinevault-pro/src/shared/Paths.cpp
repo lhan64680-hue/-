@@ -2,7 +2,6 @@
 
 #include <QCoreApplication>
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
 
@@ -17,27 +16,6 @@ QString ensureDir(const QString &path, QString *errorMessage)
         return {};
     }
     return path;
-}
-
-bool isWritableDirectory(const QString &path)
-{
-    if (path.isEmpty()) {
-        return false;
-    }
-
-    QDir dir;
-    if (!dir.mkpath(path)) {
-        return false;
-    }
-
-    const auto probePath = QDir(path).filePath(QStringLiteral(".cinevault-write-test"));
-    QFile probe(probePath);
-    if (!probe.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        return false;
-    }
-    probe.write("ok");
-    probe.close();
-    return probe.remove();
 }
 
 QString sanitizedVideoKey(QString videoKey)
@@ -75,10 +53,10 @@ QString Paths::fallbackDataRoot()
 
 QString Paths::resolvedDataRoot()
 {
-    const auto installPath = installDataRoot();
-    if (isWritableDirectory(installPath)) {
-        return installPath;
-    }
+    // Mutable user data must never live below the application installation
+    // directory. Installers own that tree and may replace or remove its files
+    // during an upgrade. Runtime assets such as the bundled BGE model continue
+    // to be read directly from installDataRoot().
     return fallbackDataRoot();
 }
 

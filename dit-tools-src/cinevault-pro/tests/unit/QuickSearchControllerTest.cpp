@@ -70,6 +70,24 @@ private slots:
 #endif
     }
 
+    void clampsRememberedPositionAcrossMultipleScreens()
+    {
+        const QList<QRect> screens{
+            QRect(0, 0, 1920, 1080),
+            QRect(1920, 0, 1280, 1024)
+        };
+        QCOMPARE(QuickSearchController::clampWindowPosition(QPoint(4000, 2000),
+                                                            QSize(820, 650),
+                                                            screens,
+                                                            QPoint(2000, 100)),
+                 QPoint(2380, 374));
+        QCOMPARE(QuickSearchController::clampWindowPosition(QPoint(2100, 100),
+                                                            QSize(820, 650),
+                                                            screens,
+                                                            QPoint(100, 100)),
+                 QPoint(2100, 100));
+    }
+
 private:
     QTemporaryDir m_settingsRoot;
 };

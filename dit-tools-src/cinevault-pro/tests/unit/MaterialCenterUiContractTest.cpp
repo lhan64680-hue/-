@@ -48,6 +48,7 @@ GlobalVideoAsset sampleAsset()
     asset.sourceRootName = QStringLiteral("Camera A");
     asset.relativePath = QStringLiteral("2026-07-14/A001_C001.mov");
     asset.assetType = AssetType::Video;
+    asset.thumbnailPath = QStringLiteral("G:/cache/A001_C001.webp");
     asset.captureDate = QStringLiteral("2026-07-14");
     asset.captureTimeSource = QStringLiteral("quicktime_creation_date");
     asset.searchScore = 0.91;
@@ -175,6 +176,14 @@ private slots:
         QCOMPARE(model.data(model.index(0, 0), MaterialCenterListModel::MatchedFrameCaptionRole).toString(),
                  QStringLiteral("雨夜里人物撑着红伞"));
         QCOMPARE(model.data(model.index(0, 0), MaterialCenterListModel::ResultRankRole).toInt(), 1);
+        QCOMPARE(model.data(model.index(0, 0), MaterialCenterListModel::QuickPreviewPathRole).toString(),
+                 QStringLiteral("G:/cache/A001_C001.webp"));
+        QVERIFY(model.data(model.index(0, 0), MaterialCenterListModel::QuickDetailRole).toString()
+                    .contains(QStringLiteral("雨夜里人物撑着红伞")));
+        QVERIFY(model.data(model.index(0, 0), MaterialCenterListModel::QuickMetaRole).toString()
+                    .contains(QStringLiteral("视频")));
+        QVERIFY(model.data(model.index(0, 0), MaterialCenterListModel::QuickReasonsRole).toString()
+                    .contains(QStringLiteral("拍摄日期命中")));
         QCOMPARE(model.data(model.index(1, 0), MaterialCenterListModel::VideoKeyRole).toString(),
                  QStringLiteral("asset-2"));
         QCOMPARE(model.data(model.index(1, 0), MaterialCenterListModel::ResultRankRole).toInt(), 2);
@@ -200,6 +209,14 @@ private slots:
                     .contains(QStringLiteral("长裤")));
         QCOMPARE(model.data(index, MaterialCenterFrameListModel::ConfidenceRole).toDouble(), 0.89);
         QCOMPARE(model.data(index, MaterialCenterFrameListModel::ResultRankRole).toInt(), 1);
+        QCOMPARE(model.data(index, MaterialCenterFrameListModel::QuickPreviewPathRole).toString(),
+                 QStringLiteral("G:/cache/frame-61.jpg"));
+        QVERIFY(model.data(index, MaterialCenterFrameListModel::QuickDetailRole).toString()
+                    .contains(QStringLiteral("深蓝色牛仔裤")));
+        QVERIFY(model.data(index, MaterialCenterFrameListModel::QuickMetaRole).toString()
+                    .contains(QStringLiteral("00:00:02")));
+        QVERIFY(model.data(index, MaterialCenterFrameListModel::QuickReasonsRole).toString()
+                    .contains(QStringLiteral("同一帧")));
 
         const auto roles = model.roleNames();
         QCOMPARE(roles.value(MaterialCenterFrameListModel::FrameKeyRole), QByteArray("frameKey"));
@@ -329,6 +346,7 @@ private slots:
             QStringLiteral("root.draftQuickSearchEnabled,"),
             QStringLiteral("root.draftQuickSearchShortcut,"),
             QStringLiteral("root.draftStartAtLogin,"),
+            QStringLiteral("root.draftCloseButtonBehavior,"),
             QStringLiteral("root.draftAnalysisMode,")
         });
         QVERIFY(!header.contains(QStringLiteral("dailySearchModelCallLimit")));
@@ -337,6 +355,55 @@ private slots:
         QVERIFY(!qml.contains(QStringLiteral("searchModelBudgetLabel")));
         QVERIFY(implementation.contains(QStringLiteral("emit searchSettingsChanged()")));
         QVERIFY(appContext.contains(QStringLiteral("&SettingsViewModel::searchSettingsChanged")));
+    }
+
+    void settingsSwitchLabelsFollowActiveTheme()
+    {
+        const auto settingsQml = sourceFile(QStringLiteral("src/ui/qml/components/SettingsDialog.qml"));
+        const auto switchQml = sourceFile(QStringLiteral("src/ui/qml/components/ThemedSwitch.qml"));
+        QVERIFY2(!settingsQml.isEmpty() && !switchQml.isEmpty(),
+                 "无法读取设置页主题开关源码");
+
+        QCOMPARE(settingsQml.count(QStringLiteral("ThemedSwitch {")), 7);
+        QVERIFY(switchQml.contains(QStringLiteral("color: control.enabled ? Theme.text : Theme.weak")));
+        QVERIFY(switchQml.contains(QStringLiteral("palette.windowText: control.enabled ? Theme.text : Theme.weak")));
+        QVERIFY(switchQml.contains(QStringLiteral("color: control.checked ? Theme.primaryBg : Theme.inputPressed")));
+    }
+
+    void sourceImportAcceptsTypedNetworkPaths()
+    {
+        const auto mainQml = sourceFile(QStringLiteral("src/ui/qml/Main.qml"));
+        const auto shellHeader = sourceFile(QStringLiteral("src/ui/viewmodels/ShellViewModel.h"));
+        const auto importSource = sourceFile(QStringLiteral("src/application/ImportService.cpp"));
+        QVERIFY2(!mainQml.isEmpty() && !shellHeader.isEmpty() && !importSource.isEmpty(),
+                 "无法读取素材源网络路径契约源码");
+
+        QVERIFY(mainQml.contains(QStringLiteral("UNC 网络共享路径")));
+        QVERIFY(mainQml.contains(QStringLiteral("root.shellViewModel.importSourcePath(sourcePathField.text)")));
+        QVERIFY(shellHeader.contains(QStringLiteral("Q_INVOKABLE bool importSourcePath(const QString &directoryPath)")));
+        QVERIFY(importSource.contains(QStringLiteral("FolderPathMetadata::normalizeSourcePath(directoryPath)")));
+        QVERIFY(importSource.contains(QStringLiteral("目录不存在或网络路径不可访问")));
+    }
+
+    void closeButtonOffersPromptTrayAndExitBehaviors()
+    {
+        const auto mainQml = sourceFile(QStringLiteral("src/ui/qml/Main.qml"));
+        const auto settingsQml = sourceFile(QStringLiteral("src/ui/qml/components/SettingsDialog.qml"));
+        const auto settingsHeader = sourceFile(QStringLiteral("src/ui/viewmodels/SettingsViewModel.h"));
+        const auto trayHeader = sourceFile(QStringLiteral("src/ui/window/QuickSearchController.h"));
+        QVERIFY2(!mainQml.isEmpty() && !settingsQml.isEmpty()
+                     && !settingsHeader.isEmpty() && !trayHeader.isEmpty(),
+                 "无法读取关闭行为契约源码");
+
+        QVERIFY(settingsHeader.contains(QStringLiteral("Q_PROPERTY(int closeButtonBehavior")));
+        QVERIFY(trayHeader.contains(QStringLiteral("Q_PROPERTY(bool trayAvailable")));
+        QVERIFY(settingsQml.contains(QStringLiteral("每次询问")));
+        QVERIFY(settingsQml.contains(QStringLiteral("最小化到托盘")));
+        QVERIFY(settingsQml.contains(QStringLiteral("直接退出软件")));
+        QVERIFY(mainQml.contains(QStringLiteral("if (behavior === 2)")));
+        QVERIFY(mainQml.contains(QStringLiteral("if (behavior === 1)")));
+        QVERIFY(mainQml.contains(QStringLiteral("closeConfirmDialog.open()")));
+        QVERIFY(mainQml.contains(QStringLiteral("Qt.quit()")));
     }
 
     void modelSearchGatesKeepLocalControlsWithoutCallLimits()
@@ -416,7 +483,15 @@ private slots:
             QStringLiteral("Ctrl+Enter 定位"),
             QStringLiteral("sequence: \"Escape\""),
             QStringLiteral("openSelectedProject"),
-            QStringLiteral("openFolderProject")
+            QStringLiteral("openFolderProject"),
+            QStringLiteral("required property string quickPreviewPath"),
+            QStringLiteral("required property string quickDetail"),
+            QStringLiteral("required property string quickMeta"),
+            QStringLiteral("required property string quickReasons"),
+            QStringLiteral("DragHandler"),
+            QStringLiteral("restoredWindowPosition"),
+            QStringLiteral("rememberWindowPosition"),
+            QStringLiteral("打开详情  →")
         };
         for (const auto &contract : qmlContracts) {
             QVERIFY2(quickSearchQml.contains(contract),
@@ -436,6 +511,9 @@ private slots:
         QVERIFY(!quickSearchQml.contains(QStringLiteral("Theme.selectedLine")));
         QVERIFY(!quickSearchQml.contains(QStringLiteral("Theme.blue")));
         QVERIFY(!quickSearchQml.contains(QStringLiteral("Theme.orange")));
+        QVERIFY(!quickSearchQml.contains(QStringLiteral("model.")));
+        QVERIFY(controllerHeader.contains(QStringLiteral("clampWindowPosition")));
+        QVERIFY(controllerSource.contains(QStringLiteral("availableGeometry")));
         QVERIFY(mainQml.contains(QStringLiteral("sequence: \"Ctrl+K\"")));
         QVERIFY(mainQml.contains(QStringLiteral("QuickSearchWindow")));
     }

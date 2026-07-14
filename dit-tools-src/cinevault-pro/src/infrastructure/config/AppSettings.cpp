@@ -15,6 +15,8 @@ constexpr auto kLocalOnlySearchKey = "materialCenter/localOnlySearch";
 constexpr auto kAllowSearchFrameUploadKey = "materialCenter/allowSearchFrameUpload";
 constexpr auto kQuickSearchEnabledKey = "quickSearch/enabled";
 constexpr auto kQuickSearchShortcutKey = "quickSearch/shortcut";
+constexpr auto kQuickSearchWindowXKey = "quickSearch/windowX";
+constexpr auto kQuickSearchWindowYKey = "quickSearch/windowY";
 constexpr auto kStartAtLoginKey = "quickSearch/startAtLogin";
 constexpr auto kAnalysisModeKey = "materialCenter/analysisMode";
 constexpr auto kFrameIntervalKey = "materialCenter/frameInterval";
@@ -22,6 +24,7 @@ constexpr auto kThumbnailFrameIndexKey = "materialCenter/thumbnailFrameIndex";
 constexpr auto kContactSheetFrameCountKey = "materialCenter/contactSheetFrameCount";
 constexpr auto kAnalysisTimeoutSecKey = "materialCenter/analysisTimeoutSec";
 constexpr auto kThemeModeKey = "ui/themeMode";
+constexpr auto kCloseButtonBehaviorKey = "ui/closeButtonBehavior";
 constexpr auto kPendingUpdateVersionKey = "updates/pendingVersion";
 constexpr auto kPendingUpdateInstallerPathKey = "updates/pendingInstallerPath";
 constexpr auto kDownloadedUpdateVersionKey = "updates/downloadedVersion";
@@ -37,6 +40,11 @@ int normalizedThemeMode(int value)
 }
 
 int normalizedUpdateDownloadMode(int value)
+{
+    return value >= 0 && value <= 2 ? value : 0;
+}
+
+int normalizedCloseButtonBehavior(int value)
 {
     return value >= 0 && value <= 2 ? value : 0;
 }
@@ -236,6 +244,24 @@ void AppSettings::setQuickSearchShortcut(const QString &shortcut)
                          normalized.isEmpty() ? QStringLiteral("Alt+Space") : normalized);
 }
 
+bool AppSettings::hasQuickSearchWindowPosition() const
+{
+    return m_settings->contains(QLatin1String(kQuickSearchWindowXKey))
+        && m_settings->contains(QLatin1String(kQuickSearchWindowYKey));
+}
+
+QPoint AppSettings::quickSearchWindowPosition() const
+{
+    return QPoint(m_settings->value(QLatin1String(kQuickSearchWindowXKey)).toInt(),
+                  m_settings->value(QLatin1String(kQuickSearchWindowYKey)).toInt());
+}
+
+void AppSettings::setQuickSearchWindowPosition(const QPoint &position)
+{
+    m_settings->setValue(QLatin1String(kQuickSearchWindowXKey), position.x());
+    m_settings->setValue(QLatin1String(kQuickSearchWindowYKey), position.y());
+}
+
 bool AppSettings::startAtLogin() const
 {
     return m_settings->value(QLatin1String(kStartAtLoginKey), false).toBool();
@@ -316,6 +342,18 @@ int AppSettings::themeMode() const
 void AppSettings::setThemeMode(int value)
 {
     m_settings->setValue(QLatin1String(kThemeModeKey), normalizedThemeMode(value));
+}
+
+int AppSettings::closeButtonBehavior() const
+{
+    return normalizedCloseButtonBehavior(
+        m_settings->value(QLatin1String(kCloseButtonBehaviorKey), 0).toInt());
+}
+
+void AppSettings::setCloseButtonBehavior(int value)
+{
+    m_settings->setValue(QLatin1String(kCloseButtonBehaviorKey),
+                         normalizedCloseButtonBehavior(value));
 }
 
 QString AppSettings::pendingUpdateVersion() const

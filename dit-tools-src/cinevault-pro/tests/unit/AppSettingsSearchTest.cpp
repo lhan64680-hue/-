@@ -37,7 +37,9 @@ private slots:
         QVERIFY(settings.allowSearchFrameUpload());
         QVERIFY(settings.quickSearchEnabled());
         QCOMPARE(settings.quickSearchShortcut(), QStringLiteral("Alt+Space"));
+        QVERIFY(!settings.hasQuickSearchWindowPosition());
         QVERIFY(!settings.startAtLogin());
+        QCOMPARE(settings.closeButtonBehavior(), 0);
     }
 
     void searchAndQuickSearchSettingsPersist()
@@ -50,7 +52,9 @@ private slots:
             settings.setAllowSearchFrameUpload(false);
             settings.setQuickSearchEnabled(false);
             settings.setQuickSearchShortcut(QStringLiteral("Ctrl+Shift+K"));
+            settings.setQuickSearchWindowPosition(QPoint(-820, 135));
             settings.setStartAtLogin(true);
+            settings.setCloseButtonBehavior(1);
             settings.sync();
         }
 
@@ -61,7 +65,10 @@ private slots:
         QVERIFY(!restored.allowSearchFrameUpload());
         QVERIFY(!restored.quickSearchEnabled());
         QCOMPARE(restored.quickSearchShortcut(), QStringLiteral("Ctrl+Shift+K"));
+        QVERIFY(restored.hasQuickSearchWindowPosition());
+        QCOMPARE(restored.quickSearchWindowPosition(), QPoint(-820, 135));
         QVERIFY(restored.startAtLogin());
+        QCOMPARE(restored.closeButtonBehavior(), 1);
     }
 
     void emptyShortcutFallsBackToDefault()
@@ -69,6 +76,18 @@ private slots:
         AppSettings settings;
         settings.setQuickSearchShortcut(QStringLiteral("   "));
         QCOMPARE(settings.quickSearchShortcut(), QStringLiteral("Alt+Space"));
+    }
+
+    void invalidCloseButtonBehaviorFallsBackToAsk()
+    {
+        QSettings rawSettings;
+        rawSettings.setValue(QStringLiteral("ui/closeButtonBehavior"), 99);
+        rawSettings.sync();
+
+        AppSettings settings;
+        QCOMPARE(settings.closeButtonBehavior(), 0);
+        settings.setCloseButtonBehavior(2);
+        QCOMPARE(settings.closeButtonBehavior(), 2);
     }
 
 private:

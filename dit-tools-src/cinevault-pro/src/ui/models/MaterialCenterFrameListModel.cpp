@@ -33,6 +33,31 @@ QString entitySummary(const QVector<VisionEntityFact> &entities)
     }
     return values.join(QStringLiteral("；"));
 }
+
+QString quickDetail(const FrameSearchHit &frame)
+{
+    if (!frame.caption.trimmed().isEmpty()) {
+        return frame.caption;
+    }
+    const auto entities = entitySummary(frame.entities);
+    if (!entities.isEmpty()) {
+        return entities;
+    }
+    if (!frame.ocrText.trimmed().isEmpty()) {
+        return QStringLiteral("画面文字：%1").arg(frame.ocrText);
+    }
+    return frame.relativePath;
+}
+
+QString quickMeta(const FrameSearchHit &frame)
+{
+    QStringList values{
+        timestampLabel(frame.timestampMs),
+        Formatters::assetTypeLabel(frame.assetType)
+    };
+    values.removeAll(QString());
+    return values.join(QStringLiteral(" · "));
+}
 }
 
 MaterialCenterFrameListModel::MaterialCenterFrameListModel(QObject *parent)
@@ -76,6 +101,10 @@ QVariant MaterialCenterFrameListModel::data(const QModelIndex &index, int role) 
     case ConfidenceRole: return item.confidence;
     case ReasonsRole: return item.reasons.join(QStringLiteral(" · "));
     case ResultRankRole: return index.row() + 1;
+    case QuickPreviewPathRole: return item.imagePath;
+    case QuickDetailRole: return quickDetail(item);
+    case QuickMetaRole: return quickMeta(item);
+    case QuickReasonsRole: return item.reasons.join(QStringLiteral(" · "));
     default: return {};
     }
 }
@@ -106,7 +135,11 @@ QHash<int, QByteArray> MaterialCenterFrameListModel::roleNames() const
         {ScoreRole, "score"},
         {ConfidenceRole, "confidence"},
         {ReasonsRole, "reasons"},
-        {ResultRankRole, "resultRank"}
+        {ResultRankRole, "resultRank"},
+        {QuickPreviewPathRole, "quickPreviewPath"},
+        {QuickDetailRole, "quickDetail"},
+        {QuickMetaRole, "quickMeta"},
+        {QuickReasonsRole, "quickReasons"}
     };
 }
 

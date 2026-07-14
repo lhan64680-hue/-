@@ -41,7 +41,11 @@ public:
         ErrorMessageRole,
         CanAnalyzeRole,
         CanConfirmRole,
-        ResultRankRole
+        ResultRankRole,
+        QuickPreviewPathRole,
+        QuickDetailRole,
+        QuickMetaRole,
+        QuickReasonsRole
     };
 
     explicit MaterialCenterListModel(QObject *parent = nullptr);

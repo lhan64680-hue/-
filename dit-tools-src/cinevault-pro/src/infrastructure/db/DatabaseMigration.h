@@ -12,5 +12,10 @@ bool createUpgradeBackup(QSqlDatabase &db,
                          int targetVersion,
                          bool databaseExistedBeforeOpen,
                          QString *errorMessage);
+QString legacyMigrationMarkerPath(const QString &destinationFilePath);
+bool ensureUserDatabase(const QString &destinationFilePath,
+                        const QString &legacyDataRoot,
+                        QString *recoveryMessage,
+                        QString *errorMessage);
 
 }

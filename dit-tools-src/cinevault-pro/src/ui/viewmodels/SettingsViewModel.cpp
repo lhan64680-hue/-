@@ -275,6 +275,22 @@ void SettingsViewModel::setThemeMode(int value)
     emit settingsChanged();
 }
 
+int SettingsViewModel::closeButtonBehavior() const
+{
+    return m_settings ? m_settings->closeButtonBehavior() : 0;
+}
+
+void SettingsViewModel::setCloseButtonBehavior(int value)
+{
+    const auto normalized = qBound(0, value, 2);
+    if (!m_settings || closeButtonBehavior() == normalized) {
+        return;
+    }
+    m_settings->setCloseButtonBehavior(normalized);
+    m_settings->sync();
+    emit settingsChanged();
+}
+
 bool SettingsViewModel::updateBusy() const
 {
     return m_updateService && m_updateService->isBusy();
@@ -440,6 +456,7 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
                                      bool quickSearchEnabled,
                                      const QString &quickSearchShortcut,
                                      bool startAtLogin,
+                                     int closeButtonBehavior,
                                      int analysisMode,
                                      int frameInterval,
                                      int thumbnailFrameIndex,
@@ -483,6 +500,7 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
     m_settings->setQuickSearchEnabled(quickSearchEnabled);
     m_settings->setQuickSearchShortcut(normalizedShortcut);
     m_settings->setStartAtLogin(startAtLogin);
+    m_settings->setCloseButtonBehavior(closeButtonBehavior);
     AnalysisMode resolvedMode = AnalysisMode::Every10Frames;
     if (analysisMode == static_cast<int>(AnalysisMode::EveryFrame)) {
         resolvedMode = AnalysisMode::EveryFrame;

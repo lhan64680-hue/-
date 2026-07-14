@@ -45,6 +45,44 @@ QString timestampLabel(qint64 timestampMs)
         .arg((seconds % 3600) / 60, 2, 10, QLatin1Char('0'))
         .arg(seconds % 60, 2, 10, QLatin1Char('0'));
 }
+
+QString quickPreviewPath(const GlobalVideoAsset &asset)
+{
+    if (!asset.thumbnailPath.trimmed().isEmpty()) {
+        return asset.thumbnailPath;
+    }
+    return asset.assetType == AssetType::Image ? asset.absolutePath : QString();
+}
+
+QString quickDetail(const GlobalVideoAsset &asset)
+{
+    if (!asset.matchedFrameCaption.trimmed().isEmpty()) {
+        const auto time = timestampLabel(asset.matchedTimestampMs);
+        return time.isEmpty()
+            ? asset.matchedFrameCaption
+            : QStringLiteral("%1 · %2").arg(time, asset.matchedFrameCaption);
+    }
+    if (!asset.summary.trimmed().isEmpty()) {
+        return asset.summary;
+    }
+    if (!asset.technicalSummary.trimmed().isEmpty()) {
+        return asset.technicalSummary;
+    }
+    return asset.relativePath;
+}
+
+QString quickMeta(const GlobalVideoAsset &asset)
+{
+    QStringList values{
+        Formatters::assetTypeLabel(asset.assetType),
+        Formatters::videoAnalysisStatusLabel(asset.analysisStatus, asset.confirmationStatus)
+    };
+    if (!asset.captureDate.trimmed().isEmpty()) {
+        values.append(asset.captureDate);
+    }
+    values.removeAll(QString());
+    return values.join(QStringLiteral(" · "));
+}
 }
 
 MaterialCenterListModel::MaterialCenterListModel(QObject *parent)
@@ -98,6 +136,10 @@ QVariant MaterialCenterListModel::data(const QModelIndex &index, int role) const
     case CanConfirmRole: return item.analysisStatus == VideoAnalysisStatus::Ready
             && item.confirmationStatus != ConfirmationStatus::Confirmed;
     case ResultRankRole: return index.row() + 1;
+    case QuickPreviewPathRole: return quickPreviewPath(item);
+    case QuickDetailRole: return quickDetail(item);
+    case QuickMetaRole: return quickMeta(item);
+    case QuickReasonsRole: return item.searchReasons.join(QStringLiteral(" · "));
     default: return {};
     }
 }
@@ -136,7 +178,11 @@ QHash<int, QByteArray> MaterialCenterListModel::roleNames() const
         {ErrorMessageRole, "errorMessage"},
         {CanAnalyzeRole, "canAnalyze"},
         {CanConfirmRole, "canConfirm"},
-        {ResultRankRole, "resultRank"}
+        {ResultRankRole, "resultRank"},
+        {QuickPreviewPathRole, "quickPreviewPath"},
+        {QuickDetailRole, "quickDetail"},
+        {QuickMetaRole, "quickMeta"},
+        {QuickReasonsRole, "quickReasons"}
     };
 }
 

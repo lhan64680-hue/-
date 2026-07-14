@@ -969,7 +969,14 @@ void MaterialCenterViewModel::applySearchResult(const MaterialSearchResult &resu
     m_frameModel->setItems(m_frames);
 
     QString selectedKey = m_detail.asset.videoKey.trimmed();
-    if (!selectedKey.isEmpty() && assetByVideoKey(selectedKey).videoKey.trimmed().isEmpty()) {
+    const bool selectedFrameVisible = std::any_of(m_frames.cbegin(),
+                                                  m_frames.cend(),
+                                                  [&selectedKey](const auto &frame) {
+                                                      return frame.videoKey == selectedKey;
+                                                  });
+    if (!selectedKey.isEmpty()
+        && assetByVideoKey(selectedKey).videoKey.trimmed().isEmpty()
+        && !selectedFrameVisible) {
         selectedKey.clear();
     }
     if (selectedKey.isEmpty() && !m_assets.isEmpty()) {
@@ -1668,18 +1675,40 @@ void MaterialCenterViewModel::confirmSelected()
     confirmVideo(m_detail.asset.videoKey);
 }
 
-void MaterialCenterViewModel::openSelectedProject()
+bool MaterialCenterViewModel::openSelectedProject()
 {
     if (!hasSelection() || !m_projectService) {
-        return;
+        return false;
+    }
+
+    if (m_detail.asset.projectDatabasePath.trimmed().isEmpty() && m_queryService) {
+        const auto videoKey = m_detail.asset.videoKey;
+        auto detail = m_queryService->fetchDetail(videoKey);
+        if (!detail.asset.videoKey.trimmed().isEmpty()) {
+            m_detailRefreshTimer->stop();
+            m_pendingDetailVideoKey.clear();
+            m_detail = detail;
+            m_detailCache.insert(videoKey, detail);
+            refreshSelectedCaches();
+            emit selectionChanged();
+            emit analysisProgressChanged();
+            emit dimensionAnalysisChanged();
+        }
+    }
+
+    if (m_detail.asset.projectDatabasePath.trimmed().isEmpty()) {
+        setMessage(QStringLiteral("无法找到该素材所属项目，不能打开详情。"));
+        return false;
     }
 
     QString errorMessage;
     if (!m_projectService->openProject(m_detail.asset.projectDatabasePath, &errorMessage)) {
         setMessage(errorMessage);
+        return false;
     } else {
         setMessage(QStringLiteral("已打开项目：%1").arg(m_detail.asset.projectName));
     }
+    return true;
 }
 
 void MaterialCenterViewModel::locateSelectedSource()

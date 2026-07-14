@@ -412,6 +412,7 @@ qt_add_qml_module(CineVault
         src/ui/qml/components/ActionButton.qml
         src/ui/qml/components/AssetPreviewOverlay.qml
         src/ui/qml/components/ThemedTextField.qml
+        src/ui/qml/components/ThemedSwitch.qml
         src/ui/qml/components/ThemedComboBox.qml
         src/ui/qml/components/ThemedSpinBox.qml
         src/ui/qml/components/ThemedProgressBar.qml

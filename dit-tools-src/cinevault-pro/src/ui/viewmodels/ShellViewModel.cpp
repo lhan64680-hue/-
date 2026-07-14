@@ -244,24 +244,38 @@ void ShellViewModel::addSourceDirectory()
     emit addSourceDirectoryRequested();
 }
 
-void ShellViewModel::importSourceDirectory(const QUrl &directoryUrl)
+bool ShellViewModel::importSourceDirectory(const QUrl &directoryUrl)
 {
-    QString errorMessage;
     const auto directory = directoryUrl.toLocalFile();
     if (directory.isEmpty()) {
         m_lastMessage = QStringLiteral("已取消添加素材源。");
         emit stateChanged();
-        return;
+        return false;
+    }
+    return importSourcePath(directory);
+}
+
+bool ShellViewModel::importSourcePath(const QString &directoryPath)
+{
+    const auto directory = directoryPath.trimmed();
+    if (directory.isEmpty()) {
+        m_lastMessage = QStringLiteral("请输入本地文件夹或网络共享路径。");
+        emit stateChanged();
+        return false;
     }
 
+    QString errorMessage;
     if (!m_importService->importDirectory(directory, &errorMessage)) {
         m_lastMessage = errorMessage;
         showWarning(QStringLiteral("添加素材源失败"), m_lastMessage);
+        emit stateChanged();
+        return false;
     } else {
         m_lastMessage = m_importService->lastMessage();
         emit sourceImported();
     }
     emit stateChanged();
+    return true;
 }
 
 void ShellViewModel::cancelAddSourceDirectory()
