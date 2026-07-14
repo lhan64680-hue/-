@@ -14,7 +14,9 @@ Dialog {
     property bool draftFrameRerankEnabled: true
     property bool draftLocalOnlySearch: false
     property bool draftAllowSearchFrameUpload: true
-    property int draftDailySearchModelCallLimit: 100
+    property bool draftQuickSearchEnabled: true
+    property string draftQuickSearchShortcut: "Alt+Space"
+    property bool draftStartAtLogin: false
     property int draftAnalysisMode: 0
     property int draftFrameInterval: 10
     property int draftThumbnailFrameIndex: 3
@@ -49,7 +51,9 @@ Dialog {
             draftFrameRerankEnabled = viewModel.frameRerankEnabled
             draftLocalOnlySearch = viewModel.localOnlySearch
             draftAllowSearchFrameUpload = viewModel.allowSearchFrameUpload
-            draftDailySearchModelCallLimit = viewModel.dailySearchModelCallLimit
+            draftQuickSearchEnabled = viewModel.quickSearchEnabled
+            draftQuickSearchShortcut = viewModel.quickSearchShortcut
+            draftStartAtLogin = viewModel.startAtLogin
             draftAnalysisMode = viewModel.analysisMode
             draftFrameInterval = viewModel.frameInterval
             draftThumbnailFrameIndex = viewModel.thumbnailFrameIndex
@@ -139,7 +143,9 @@ Dialog {
                             root.draftFrameRerankEnabled,
                             root.draftLocalOnlySearch,
                             root.draftAllowSearchFrameUpload,
-                            root.draftDailySearchModelCallLimit,
+                            root.draftQuickSearchEnabled,
+                            root.draftQuickSearchShortcut,
+                            root.draftStartAtLogin,
                             root.draftAnalysisMode,
                             root.draftFrameInterval,
                             root.draftThumbnailFrameIndex,
@@ -260,6 +266,138 @@ Dialog {
                                 placeholderText: "http://127.0.0.1:7890"
                                 onTextEdited: root.draftUpdateManualProxyUrl = text
                             }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    radius: 18
+                    color: Theme.panel2
+                    border.width: 1
+                    border.color: Theme.line
+                    implicitHeight: quickSearchContent.implicitHeight + root.sectionPadding * 2
+
+                    ColumnLayout {
+                        id: quickSearchContent
+                        anchors.fill: parent
+                        anchors.margins: root.sectionPadding
+                        spacing: 12
+
+                        Text {
+                            text: "快捷搜索"
+                            color: Theme.text
+                            font.pixelSize: root.sectionTitleSize
+                            font.weight: Font.DemiBold
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "像 Flow Launcher 一样，从任何窗口拉起独立搜索框，直接使用自然语言搜索全部项目的文件夹、画面和素材。"
+                            color: Theme.muted
+                            font.pixelSize: root.bodyFontSize
+                            wrapMode: Text.Wrap
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 2
+                            columnSpacing: 14
+                            rowSpacing: 12
+
+                            Text {
+                                Layout.preferredWidth: root.formLabelWidth
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "全局唤起"
+                                color: Theme.muted
+                                font.pixelSize: root.bodyFontSize
+                            }
+
+                            Switch {
+                                checked: root.draftQuickSearchEnabled
+                                text: checked ? "已启用" : "已关闭"
+                                palette.text: Theme.text
+                                onToggled: root.draftQuickSearchEnabled = checked
+                            }
+
+                            Text {
+                                Layout.preferredWidth: root.formLabelWidth
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "快捷键"
+                                color: root.draftQuickSearchEnabled ? Theme.muted : Theme.weak
+                                font.pixelSize: root.bodyFontSize
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                enabled: root.draftQuickSearchEnabled
+                                spacing: 10
+
+                                ThemedTextField {
+                                    id: quickSearchShortcutRecorder
+                                    Layout.preferredWidth: 220
+                                    Layout.preferredHeight: root.controlHeight
+                                    readOnly: true
+                                    selectByMouse: true
+                                    text: root.draftQuickSearchShortcut
+                                    placeholderText: "点击后按下组合键"
+                                    Keys.onPressed: function(event) {
+                                        if (!viewModel) {
+                                            return
+                                        }
+                                        if (event.key === Qt.Key_Escape) {
+                                            quickSearchShortcutRecorder.focus = false
+                                            event.accepted = true
+                                            return
+                                        }
+                                        var shortcut = viewModel.shortcutFromKeyEvent(event.key, event.modifiers)
+                                        if (shortcut.length > 0) {
+                                            root.draftQuickSearchShortcut = shortcut
+                                        }
+                                        event.accepted = true
+                                    }
+                                }
+
+                                ActionButton {
+                                    Layout.preferredWidth: 104
+                                    Layout.preferredHeight: root.controlHeight
+                                    text: "恢复默认"
+                                    onClicked: root.draftQuickSearchShortcut = "Alt+Space"
+                                }
+
+                                Item { Layout.fillWidth: true }
+                            }
+
+                            Text {
+                                Layout.preferredWidth: root.formLabelWidth
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "开机启动"
+                                color: Theme.muted
+                                font.pixelSize: root.bodyFontSize
+                            }
+
+                            Switch {
+                                checked: root.draftStartAtLogin
+                                text: checked ? "登录后在托盘运行" : "不自动启动"
+                                palette.text: Theme.text
+                                onToggled: root.draftStartAtLogin = checked
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: viewModel ? viewModel.quickSearchStatusText : ""
+                            color: text.indexOf("失败") >= 0 || text.indexOf("占用") >= 0 ? Theme.red : Theme.blue
+                            font.pixelSize: 13
+                            wrapMode: Text.Wrap
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "保存后立即重新注册快捷键。关闭主窗口时程序保留在托盘；可从托盘菜单重新显示或彻底退出。"
+                            color: Theme.weak
+                            font.pixelSize: 12
+                            wrapMode: Text.Wrap
                         }
                     }
                 }
@@ -512,41 +650,6 @@ Dialog {
                                     text: "允许将候选帧缩略图发送到已配置的模型接口"
                                     palette.text: enabled ? Theme.text : Theme.weak
                                     onToggled: root.draftAllowSearchFrameUpload = checked
-                                }
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    enabled: !root.draftLocalOnlySearch
-                                    spacing: 10
-
-                                    Text {
-                                        text: "每日搜索模型调用上限"
-                                        color: parent.enabled ? Theme.muted : Theme.weak
-                                        font.pixelSize: root.bodyFontSize
-                                    }
-
-                                    ThemedSpinBox {
-                                        Layout.preferredWidth: 150
-                                        Layout.preferredHeight: root.controlHeight
-                                        from: 0
-                                        to: 10000
-                                        value: root.draftDailySearchModelCallLimit
-                                        onValueModified: root.draftDailySearchModelCallLimit = value
-                                    }
-
-                                    Text {
-                                        text: root.draftDailySearchModelCallLimit === 0 ? "不限额" : "次/日"
-                                        color: Theme.muted
-                                        font.pixelSize: root.bodyFontSize
-                                    }
-
-                                    Item { Layout.fillWidth: true }
-
-                                    Text {
-                                        text: viewModel ? viewModel.searchModelBudgetLabel : ""
-                                        color: Theme.blue
-                                        font.pixelSize: 13
-                                    }
                                 }
 
                                 Text {

@@ -13,9 +13,9 @@ constexpr auto kSearchAssistantEnabledKey = "materialCenter/searchAssistantEnabl
 constexpr auto kFrameRerankEnabledKey = "materialCenter/frameRerankEnabled";
 constexpr auto kLocalOnlySearchKey = "materialCenter/localOnlySearch";
 constexpr auto kAllowSearchFrameUploadKey = "materialCenter/allowSearchFrameUpload";
-constexpr auto kDailySearchModelCallLimitKey = "materialCenter/dailySearchModelCallLimit";
-constexpr auto kSearchModelCallDateKey = "materialCenter/searchModelCallDate";
-constexpr auto kSearchModelCallCountKey = "materialCenter/searchModelCallCount";
+constexpr auto kQuickSearchEnabledKey = "quickSearch/enabled";
+constexpr auto kQuickSearchShortcutKey = "quickSearch/shortcut";
+constexpr auto kStartAtLoginKey = "quickSearch/startAtLogin";
 constexpr auto kAnalysisModeKey = "materialCenter/analysisMode";
 constexpr auto kFrameIntervalKey = "materialCenter/frameInterval";
 constexpr auto kThumbnailFrameIndexKey = "materialCenter/thumbnailFrameIndex";
@@ -210,44 +210,40 @@ void AppSettings::setAllowSearchFrameUpload(bool enabled)
     m_settings->setValue(QLatin1String(kAllowSearchFrameUploadKey), enabled);
 }
 
-int AppSettings::dailySearchModelCallLimit() const
+bool AppSettings::quickSearchEnabled() const
 {
-    return qBound(0, m_settings->value(QLatin1String(kDailySearchModelCallLimitKey), 100).toInt(), 10000);
+    return m_settings->value(QLatin1String(kQuickSearchEnabledKey), true).toBool();
 }
 
-void AppSettings::setDailySearchModelCallLimit(int value)
+void AppSettings::setQuickSearchEnabled(bool enabled)
 {
-    m_settings->setValue(QLatin1String(kDailySearchModelCallLimitKey), qBound(0, value, 10000));
+    m_settings->setValue(QLatin1String(kQuickSearchEnabledKey), enabled);
 }
 
-int AppSettings::searchModelCallsForDate(const QDate &date) const
+QString AppSettings::quickSearchShortcut() const
 {
-    if (!date.isValid()
-        || m_settings->value(QLatin1String(kSearchModelCallDateKey)).toString()
-               != date.toString(Qt::ISODate)) {
-        return 0;
-    }
-    return qMax(0, m_settings->value(QLatin1String(kSearchModelCallCountKey), 0).toInt());
+    const auto shortcut = m_settings->value(QLatin1String(kQuickSearchShortcutKey),
+                                            QStringLiteral("Alt+Space"))
+                              .toString()
+                              .trimmed();
+    return shortcut.isEmpty() ? QStringLiteral("Alt+Space") : shortcut;
 }
 
-bool AppSettings::canUseSearchModel(const QDate &date) const
+void AppSettings::setQuickSearchShortcut(const QString &shortcut)
 {
-    if (!date.isValid()) {
-        return false;
-    }
-    const auto limit = dailySearchModelCallLimit();
-    return limit == 0 || searchModelCallsForDate(date) < limit;
+    const auto normalized = shortcut.trimmed();
+    m_settings->setValue(QLatin1String(kQuickSearchShortcutKey),
+                         normalized.isEmpty() ? QStringLiteral("Alt+Space") : normalized);
 }
 
-bool AppSettings::tryConsumeSearchModelCall(const QDate &date)
+bool AppSettings::startAtLogin() const
 {
-    if (!canUseSearchModel(date)) {
-        return false;
-    }
-    const auto count = searchModelCallsForDate(date);
-    m_settings->setValue(QLatin1String(kSearchModelCallDateKey), date.toString(Qt::ISODate));
-    m_settings->setValue(QLatin1String(kSearchModelCallCountKey), count + 1);
-    return true;
+    return m_settings->value(QLatin1String(kStartAtLoginKey), false).toBool();
+}
+
+void AppSettings::setStartAtLogin(bool enabled)
+{
+    m_settings->setValue(QLatin1String(kStartAtLoginKey), enabled);
 }
 
 AnalysisMode AppSettings::analysisMode() const

@@ -6,6 +6,13 @@ import CineVault
 Rectangle {
     property var shellVm
 
+    function focusSearch() {
+        if (globalSearchField.visible) {
+            globalSearchField.forceActiveFocus()
+            globalSearchField.selectAll()
+        }
+    }
+
     color: Theme.topBar
     border.width: 1
     border.color: Theme.line
@@ -108,6 +115,7 @@ Rectangle {
         Item { Layout.fillWidth: true }
 
         ThemedTextField {
+            id: globalSearchField
             Layout.preferredWidth: visible ? 220 : 0
             Layout.minimumWidth: visible ? 160 : 0
             Layout.maximumWidth: visible ? 260 : 0

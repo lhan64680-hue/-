@@ -6,6 +6,7 @@
 #include "infrastructure/network/VisionApiClient.h"
 #include "shared/Formatters.h"
 #include "shared/Paths.h"
+#include "ui/window/QuickSearchController.h"
 
 #include <QtConcurrent>
 
@@ -37,13 +38,21 @@ SettingsViewModel::SettingsViewModel(AppSettings *settings,
                                      VisionApiClient *visionApiClient,
                                      VideoAnalysisService *videoAnalysisService,
                                      UpdateService *updateService,
+                                     QuickSearchController *quickSearchController,
                                      QObject *parent)
     : QObject(parent)
     , m_settings(settings)
     , m_visionApiClient(visionApiClient)
     , m_videoAnalysisService(videoAnalysisService)
     , m_updateService(updateService)
+    , m_quickSearchController(quickSearchController)
 {
+    if (m_quickSearchController) {
+        connect(m_quickSearchController,
+                &QuickSearchController::shortcutStatusChanged,
+                this,
+                &SettingsViewModel::settingsChanged);
+    }
     if (m_updateService) {
         connect(m_updateService, &UpdateService::statusMessageChanged, this, &SettingsViewModel::setLastMessage);
         connect(m_updateService, &UpdateService::busyChanged, this, &SettingsViewModel::settingsChanged);
@@ -153,31 +162,26 @@ void SettingsViewModel::setAllowSearchFrameUpload(bool enabled)
     emit settingsChanged();
 }
 
-int SettingsViewModel::dailySearchModelCallLimit() const
+bool SettingsViewModel::quickSearchEnabled() const
 {
-    return m_settings ? m_settings->dailySearchModelCallLimit() : 100;
+    return m_settings && m_settings->quickSearchEnabled();
 }
 
-void SettingsViewModel::setDailySearchModelCallLimit(int value)
+QString SettingsViewModel::quickSearchShortcut() const
 {
-    const auto normalized = qBound(0, value, 10000);
-    if (!m_settings || m_settings->dailySearchModelCallLimit() == normalized) return;
-    m_settings->setDailySearchModelCallLimit(normalized);
-    emit settingsChanged();
+    return m_settings ? m_settings->quickSearchShortcut() : QStringLiteral("Alt+Space");
 }
 
-int SettingsViewModel::searchModelCallsToday() const
+bool SettingsViewModel::startAtLogin() const
 {
-    return m_settings ? m_settings->searchModelCallsForDate() : 0;
+    return m_settings && m_settings->startAtLogin();
 }
 
-QString SettingsViewModel::searchModelBudgetLabel() const
+QString SettingsViewModel::quickSearchStatusText() const
 {
-    const auto used = searchModelCallsToday();
-    const auto limit = dailySearchModelCallLimit();
-    return limit == 0
-        ? QStringLiteral("今日搜索模型已调用 %1 次 · 不限额").arg(used)
-        : QStringLiteral("今日搜索模型已调用 %1 / %2 次").arg(used).arg(limit);
+    return m_quickSearchController
+        ? m_quickSearchController->shortcutStatusText()
+        : QStringLiteral("快捷搜索控制器未初始化");
 }
 
 int SettingsViewModel::analysisMode() const
@@ -421,6 +425,11 @@ void SettingsViewModel::testConnectionWith(const QString &visionBaseUrl,
     Q_UNUSED(future);
 }
 
+QString SettingsViewModel::shortcutFromKeyEvent(int key, int modifiers) const
+{
+    return QuickSearchController::shortcutFromKeyEvent(key, modifiers);
+}
+
 void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
                                      const QString &visionApiKey,
                                      const QString &visionModel,
@@ -428,7 +437,9 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
                                      bool frameRerankEnabled,
                                      bool localOnlySearch,
                                      bool allowSearchFrameUpload,
-                                     int dailySearchModelCallLimit,
+                                     bool quickSearchEnabled,
+                                     const QString &quickSearchShortcut,
+                                     bool startAtLogin,
                                      int analysisMode,
                                      int frameInterval,
                                      int thumbnailFrameIndex,
@@ -441,6 +452,27 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
         return;
     }
 
+    const auto normalizedShortcut = QuickSearchController::normalizedShortcut(quickSearchShortcut);
+    QString shortcutError;
+    if (m_quickSearchController
+        && !m_quickSearchController->applyShortcutConfiguration(quickSearchEnabled,
+                                                                 normalizedShortcut,
+                                                                 &shortcutError)) {
+        setLastMessage(shortcutError);
+        emit settingsChanged();
+        return;
+    }
+
+    QString startAtLoginError;
+    const auto startAtLoginChanged = m_settings->startAtLogin() != startAtLogin;
+    if (startAtLoginChanged
+        && m_quickSearchController
+        && !m_quickSearchController->setStartAtLogin(startAtLogin, &startAtLoginError)) {
+        setLastMessage(startAtLoginError);
+        emit settingsChanged();
+        return;
+    }
+
     m_settings->setVisionBaseUrl(visionBaseUrl);
     m_settings->setVisionApiKey(visionApiKey);
     m_settings->setVisionModel(visionModel);
@@ -448,7 +480,9 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
     m_settings->setFrameRerankEnabled(frameRerankEnabled);
     m_settings->setLocalOnlySearch(localOnlySearch);
     m_settings->setAllowSearchFrameUpload(allowSearchFrameUpload);
-    m_settings->setDailySearchModelCallLimit(dailySearchModelCallLimit);
+    m_settings->setQuickSearchEnabled(quickSearchEnabled);
+    m_settings->setQuickSearchShortcut(normalizedShortcut);
+    m_settings->setStartAtLogin(startAtLogin);
     AnalysisMode resolvedMode = AnalysisMode::Every10Frames;
     if (analysisMode == static_cast<int>(AnalysisMode::EveryFrame)) {
         resolvedMode = AnalysisMode::EveryFrame;
@@ -464,7 +498,7 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
     m_settings->setUpdateManualProxyUrl(updateManualProxyUrl);
     m_settings->sync();
 
-    setLastMessage(QStringLiteral("设置已保存并应用，素材解析与搜索将使用新参数。"));
+    setLastMessage(QStringLiteral("设置已保存并应用，快捷搜索、素材解析与搜索将使用新参数。"));
     emit settingsChanged();
     emit searchSettingsChanged();
 }

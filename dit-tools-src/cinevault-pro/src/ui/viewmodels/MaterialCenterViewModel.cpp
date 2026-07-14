@@ -1065,13 +1065,6 @@ void MaterialCenterViewModel::startSearchUnderstanding(const ParsedMaterialQuery
         emit searchStateChanged();
         return;
     }
-    if (!m_settings->canUseSearchModel(referenceDate)) {
-        m_searchAssistantStatusText = QStringLiteral("今日搜索模型调用预算已用尽，已保留本地搜索");
-        m_searchAssistantBusy = false;
-        m_searchAssistantUsed = false;
-        emit searchStateChanged();
-        return;
-    }
     if (!m_visionApiClient
         || m_settings->visionBaseUrl().isEmpty()
         || m_settings->visionApiKey().isEmpty()
@@ -1082,14 +1075,6 @@ void MaterialCenterViewModel::startSearchUnderstanding(const ParsedMaterialQuery
         emit searchStateChanged();
         return;
     }
-    if (!m_settings->tryConsumeSearchModelCall(referenceDate)) {
-        m_searchAssistantStatusText = QStringLiteral("今日搜索模型调用预算已用尽，已保留本地搜索");
-        m_searchAssistantBusy = false;
-        m_searchAssistantUsed = false;
-        emit searchStateChanged();
-        return;
-    }
-
     const auto baseUrl = m_settings->visionBaseUrl();
     const auto apiKey = m_settings->visionApiKey();
     const auto model = m_settings->visionModel();
@@ -1231,13 +1216,6 @@ void MaterialCenterViewModel::startFrameRerank(const ParsedMaterialQuery &query)
         emit searchStateChanged();
         return;
     }
-    const auto referenceDate = QDate::currentDate();
-    if (!m_settings->canUseSearchModel(referenceDate)) {
-        m_searchAssistantStatusText = QStringLiteral("今日搜索模型调用预算已用尽，候选帧保持本地排序");
-        m_searchAssistantBusy = false;
-        emit searchStateChanged();
-        return;
-    }
     if (!m_visionApiClient
         || m_settings->visionBaseUrl().isEmpty()
         || m_settings->visionApiKey().isEmpty()
@@ -1247,13 +1225,6 @@ void MaterialCenterViewModel::startFrameRerank(const ParsedMaterialQuery &query)
         emit searchStateChanged();
         return;
     }
-    if (!m_settings->tryConsumeSearchModelCall(referenceDate)) {
-        m_searchAssistantStatusText = QStringLiteral("今日搜索模型调用预算已用尽，候选帧保持本地排序");
-        m_searchAssistantBusy = false;
-        emit searchStateChanged();
-        return;
-    }
-
     const auto queryText = m_searchText.simplified();
     const auto generation = m_searchGeneration;
     const auto baseUrl = m_settings->visionBaseUrl();

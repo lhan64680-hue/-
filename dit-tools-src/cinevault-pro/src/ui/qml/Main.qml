@@ -31,7 +31,7 @@ ApplicationWindow {
     property bool feedbackWorkspaceLoaded: false
     property bool sourceRailCollapsed: false
 
-    visible: true
+    visible: !(quickSearchController && quickSearchController.startHidden)
     width: 1600
     height: 980
     minimumWidth: 1280
@@ -74,6 +74,10 @@ ApplicationWindow {
         })
     }
     onVisibleChanged: if (visible) Qt.callLater(root.applyWindowTheme)
+    onClosing: function(close) {
+        close.accepted = false
+        root.hide()
+    }
 
     Binding {
         target: Theme
@@ -93,6 +97,26 @@ ApplicationWindow {
         target: root.shellViewModel
         function onCurrentWorkspaceChanged() {
             root.rememberWorkspace(root.shellViewModel.currentWorkspace)
+        }
+    }
+
+    Connections {
+        target: quickSearchController
+        function onShowMainWindowRequested() {
+            root.showNormal()
+            root.raise()
+            root.requestActivate()
+        }
+    }
+
+    Shortcut {
+        sequence: "Ctrl+K"
+        context: Qt.ApplicationShortcut
+        onActivated: {
+            root.showNormal()
+            root.raise()
+            root.requestActivate()
+            topCommandBar.focusSearch()
         }
     }
 
@@ -130,6 +154,7 @@ ApplicationWindow {
             spacing: 0
 
             TopCommandBar {
+                id: topCommandBar
                 Layout.fillWidth: true
                 shellVm: root.shellViewModel
             }
@@ -275,6 +300,13 @@ ApplicationWindow {
         visible: settingsDialog.opened
         color: Qt.rgba(0, 0, 0, Theme.isDark ? 0.36 : 0.28)
         z: 801
+    }
+
+    QuickSearchWindow {
+        controller: quickSearchController
+        materialCenterViewModel: root.materialCenterViewModel
+        shellViewModel: root.shellViewModel
+        mainWindow: root
     }
 
     Component {

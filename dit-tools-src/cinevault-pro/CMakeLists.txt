@@ -362,6 +362,8 @@ else()
     src/ui/viewmodels/ReportWorkspaceViewModel.cpp
     src/ui/viewmodels/SettingsViewModel.h
     src/ui/viewmodels/SettingsViewModel.cpp
+    src/ui/window/QuickSearchController.h
+    src/ui/window/QuickSearchController.cpp
     src/ui/widgets/UpdaterWindow.h
     src/ui/widgets/UpdaterWindow.cpp
     src/ui/viewmodels/FeedbackViewModel.h
@@ -423,6 +425,7 @@ qt_add_qml_module(CineVault
         src/ui/qml/components/AssetCard.qml
         src/ui/qml/components/VideoPreviewPlayer.qml
         src/ui/qml/components/SettingsDialog.qml
+        src/ui/qml/components/QuickSearchWindow.qml
         src/ui/qml/workspaces/ProjectLibraryWorkspace.qml
         src/ui/qml/workspaces/LibraryWorkspace.qml
         src/ui/qml/workspaces/MaterialCenterWorkspace.qml
@@ -527,13 +530,27 @@ if(BUILD_TESTING)
     target_link_libraries(SearchConfigurationTest PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME SearchConfigurationTest COMMAND SearchConfigurationTest)
 
-    qt_add_executable(AppSettingsBudgetTest
-        tests/unit/AppSettingsBudgetTest.cpp
+    qt_add_executable(AppSettingsSearchTest
+        tests/unit/AppSettingsSearchTest.cpp
         src/infrastructure/config/AppSettings.cpp
     )
-    target_include_directories(AppSettingsBudgetTest PRIVATE src)
-    target_link_libraries(AppSettingsBudgetTest PRIVATE Qt6::Core Qt6::Test)
-    add_test(NAME AppSettingsBudgetTest COMMAND AppSettingsBudgetTest)
+    target_include_directories(AppSettingsSearchTest PRIVATE src)
+    target_link_libraries(AppSettingsSearchTest PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME AppSettingsSearchTest COMMAND AppSettingsSearchTest)
+
+    qt_add_executable(QuickSearchControllerTest
+        tests/unit/QuickSearchControllerTest.cpp
+        src/ui/window/QuickSearchController.cpp
+        src/infrastructure/config/AppSettings.cpp
+    )
+    target_include_directories(QuickSearchControllerTest PRIVATE src)
+    target_link_libraries(QuickSearchControllerTest PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Test
+        Qt6::Widgets
+    )
+    add_test(NAME QuickSearchControllerTest COMMAND QuickSearchControllerTest)
 
     qt_add_executable(VisualAnalysisMetadataTest
         tests/unit/VisualAnalysisMetadataTest.cpp
@@ -867,7 +884,8 @@ if(BUILD_TESTING)
         set(CINEVAULT_PATH_AWARE_TESTS
             CineVaultSmokeTest
             SearchConfigurationTest
-            AppSettingsBudgetTest
+            AppSettingsSearchTest
+            QuickSearchControllerTest
             VisualAnalysisMetadataTest
             NaturalLanguageQueryParserTest
             SearchQueryUnderstandingTest

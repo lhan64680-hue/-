@@ -275,7 +275,7 @@ private slots:
         }
     }
 
-    void searchSettingsExposePrivacyAndBudgetContracts()
+    void searchSettingsExposePrivacyUnlimitedCallsAndQuickSearchContracts()
     {
         const auto header = sourceFile(QStringLiteral("src/ui/viewmodels/SettingsViewModel.h"));
         const auto implementation = sourceFile(QStringLiteral("src/ui/viewmodels/SettingsViewModel.cpp"));
@@ -290,9 +290,10 @@ private slots:
             QStringLiteral("Q_PROPERTY(bool frameRerankEnabled"),
             QStringLiteral("Q_PROPERTY(bool localOnlySearch"),
             QStringLiteral("Q_PROPERTY(bool allowSearchFrameUpload"),
-            QStringLiteral("Q_PROPERTY(int dailySearchModelCallLimit"),
-            QStringLiteral("Q_PROPERTY(int searchModelCallsToday"),
-            QStringLiteral("Q_PROPERTY(QString searchModelBudgetLabel"),
+            QStringLiteral("Q_PROPERTY(bool quickSearchEnabled"),
+            QStringLiteral("Q_PROPERTY(QString quickSearchShortcut"),
+            QStringLiteral("Q_PROPERTY(bool startAtLogin"),
+            QStringLiteral("Q_PROPERTY(QString quickSearchStatusText"),
             QStringLiteral("void searchSettingsChanged()")
         };
         for (const auto &contract : propertyContracts) {
@@ -307,7 +308,10 @@ private slots:
             QStringLiteral("使用视觉语言模型复核前 8 个候选帧"),
             QStringLiteral("允许将候选帧缩略图发送到已配置的模型接口"),
             QStringLiteral("enabled: !root.draftLocalOnlySearch && root.draftFrameRerankEnabled"),
-            QStringLiteral("viewModel.searchModelBudgetLabel"),
+            QStringLiteral("像 Flow Launcher 一样"),
+            QStringLiteral("root.draftQuickSearchShortcut"),
+            QStringLiteral("viewModel.shortcutFromKeyEvent"),
+            QStringLiteral("viewModel.quickSearchStatusText"),
             QStringLiteral("查询理解只发送搜索文字"),
             QStringLiteral("候选帧复核会发送最多 8 张缩略图和对应候选 ID")
         };
@@ -322,14 +326,20 @@ private slots:
             QStringLiteral("root.draftFrameRerankEnabled,"),
             QStringLiteral("root.draftLocalOnlySearch,"),
             QStringLiteral("root.draftAllowSearchFrameUpload,"),
-            QStringLiteral("root.draftDailySearchModelCallLimit,"),
+            QStringLiteral("root.draftQuickSearchEnabled,"),
+            QStringLiteral("root.draftQuickSearchShortcut,"),
+            QStringLiteral("root.draftStartAtLogin,"),
             QStringLiteral("root.draftAnalysisMode,")
         });
+        QVERIFY(!header.contains(QStringLiteral("dailySearchModelCallLimit")));
+        QVERIFY(!header.contains(QStringLiteral("searchModelCallsToday")));
+        QVERIFY(!qml.contains(QStringLiteral("每日搜索模型调用上限")));
+        QVERIFY(!qml.contains(QStringLiteral("searchModelBudgetLabel")));
         QVERIFY(implementation.contains(QStringLiteral("emit searchSettingsChanged()")));
         QVERIFY(appContext.contains(QStringLiteral("&SettingsViewModel::searchSettingsChanged")));
     }
 
-    void modelSearchGatesKeepCacheLocalAndConsumeOnlyBeforeRequests()
+    void modelSearchGatesKeepLocalControlsWithoutCallLimits()
     {
         const auto source = sourceFile(QStringLiteral("src/ui/viewmodels/MaterialCenterViewModel.cpp"));
         QVERIFY2(!source.isEmpty(), "无法读取 MaterialCenterViewModel.cpp");
@@ -343,12 +353,13 @@ private slots:
             QStringLiteral("m_settings && m_settings->localOnlySearch()"),
             QStringLiteral("!m_settings->searchAssistantEnabled()"),
             QStringLiteral("m_searchUnderstandingCache.constFind(cacheKey)"),
-            QStringLiteral("!m_settings->canUseSearchModel(referenceDate)"),
             QStringLiteral("!m_visionApiClient"),
-            QStringLiteral("!m_settings->tryConsumeSearchModelCall(referenceDate)"),
             QStringLiteral("client->understandSearchQuery")
         });
         QVERIFY(understanding.contains(QStringLiteral("已保留本地搜索")));
+        QVERIFY(!understanding.contains(QStringLiteral("canUseSearchModel")));
+        QVERIFY(!understanding.contains(QStringLiteral("tryConsumeSearchModelCall")));
+        QVERIFY(!understanding.contains(QStringLiteral("预算")));
 
         const auto rerank = sourceSection(
             source,
@@ -360,13 +371,73 @@ private slots:
             QStringLiteral("!m_settings->frameRerankEnabled()"),
             QStringLiteral("!m_settings->allowSearchFrameUpload()"),
             QStringLiteral("m_frameRerankCache.constFind(cacheKey)"),
-            QStringLiteral("!m_settings->canUseSearchModel(referenceDate)"),
             QStringLiteral("!m_visionApiClient"),
-            QStringLiteral("!m_settings->tryConsumeSearchModelCall(referenceDate)"),
             QStringLiteral("client->rerankFrameCandidates")
         });
         QVERIFY(rerank.contains(QStringLiteral("候选帧缩略图发送未授权，保留本地排序")));
-        QVERIFY(rerank.contains(QStringLiteral("候选帧保持本地排序")));
+        QVERIFY(!rerank.contains(QStringLiteral("canUseSearchModel")));
+        QVERIFY(!rerank.contains(QStringLiteral("tryConsumeSearchModelCall")));
+        QVERIFY(!rerank.contains(QStringLiteral("预算")));
+    }
+
+    void flowStyleQuickSearchHasGlobalHotkeyAndKeyboardContracts()
+    {
+        const auto controllerHeader = sourceFile(QStringLiteral("src/ui/window/QuickSearchController.h"));
+        const auto controllerSource = sourceFile(QStringLiteral("src/ui/window/QuickSearchController.cpp"));
+        const auto quickSearchQml = sourceFile(QStringLiteral("src/ui/qml/components/QuickSearchWindow.qml"));
+        const auto mainQml = sourceFile(QStringLiteral("src/ui/qml/Main.qml"));
+        QVERIFY2(!controllerHeader.isEmpty() && !controllerSource.isEmpty()
+                     && !quickSearchQml.isEmpty() && !mainQml.isEmpty(),
+                 "无法读取快捷搜索契约源码");
+
+        const QStringList nativeContracts = {
+            QStringLiteral("QAbstractNativeEventFilter"),
+            QStringLiteral("RegisterHotKey"),
+            QStringLiteral("UnregisterHotKey"),
+            QStringLiteral("Alt+Space"),
+            QStringLiteral("quickSearchRequested"),
+            QStringLiteral("QSystemTrayIcon"),
+            QStringLiteral("--background")
+        };
+        for (const auto &contract : nativeContracts) {
+            QVERIFY2(controllerHeader.contains(contract) || controllerSource.contains(contract),
+                     qPrintable(QStringLiteral("快捷搜索控制器缺少契约：%1").arg(contract)));
+        }
+
+        const QStringList qmlContracts = {
+            QStringLiteral("Qt.FramelessWindowHint"),
+            QStringLiteral("Qt.WindowStaysOnTopHint"),
+            QStringLiteral("materialCenterViewModel.setSearchText"),
+            QStringLiteral("materialCenterViewModel.folderModel"),
+            QStringLiteral("materialCenterViewModel.frameModel"),
+            QStringLiteral("materialCenterViewModel.assetModel"),
+            QStringLiteral("Keys.onDownPressed"),
+            QStringLiteral("Keys.onUpPressed"),
+            QStringLiteral("Ctrl+Enter 定位"),
+            QStringLiteral("sequence: \"Escape\""),
+            QStringLiteral("openSelectedProject"),
+            QStringLiteral("openFolderProject")
+        };
+        for (const auto &contract : qmlContracts) {
+            QVERIFY2(quickSearchQml.contains(contract),
+                     qPrintable(QStringLiteral("快捷搜索 QML 缺少契约：%1").arg(contract)));
+        }
+        const QStringList neutralDarkPaletteContracts = {
+            QStringLiteral("readonly property color quickBg: \"#0E1014\""),
+            QStringLiteral("readonly property color quickHeader: \"#171A20\""),
+            QStringLiteral("readonly property color quickSelected: \"#2A3039\""),
+            QStringLiteral("readonly property color quickAccent: \"#C6CDD7\"")
+        };
+        for (const auto &contract : neutralDarkPaletteContracts) {
+            QVERIFY2(quickSearchQml.contains(contract),
+                     qPrintable(QStringLiteral("快捷搜索缺少中性深灰主题契约：%1").arg(contract)));
+        }
+        QVERIFY(!quickSearchQml.contains(QStringLiteral("Theme.selectedBg")));
+        QVERIFY(!quickSearchQml.contains(QStringLiteral("Theme.selectedLine")));
+        QVERIFY(!quickSearchQml.contains(QStringLiteral("Theme.blue")));
+        QVERIFY(!quickSearchQml.contains(QStringLiteral("Theme.orange")));
+        QVERIFY(mainQml.contains(QStringLiteral("sequence: \"Ctrl+K\"")));
+        QVERIFY(mainQml.contains(QStringLiteral("QuickSearchWindow")));
     }
 };
 
