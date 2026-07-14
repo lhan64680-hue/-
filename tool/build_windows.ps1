@@ -99,15 +99,17 @@ Copy-Item $exePath -Destination $stagingDir -Force
 $deployedExe = Join-Path $stagingDir "CineVault.exe"
 
 $onnxRuntimeSource = Join-Path $buildDir "onnxruntime.dll"
-$localSearchDataSource = Join-Path $buildDir "data"
+$localSearchModelsSource = Join-Path $buildDir "data\models"
 $hasOnnxRuntime = Test-Path -LiteralPath $onnxRuntimeSource -PathType Leaf
-$hasLocalSearchData = Test-Path -LiteralPath $localSearchDataSource -PathType Container
-if ($hasOnnxRuntime -xor $hasLocalSearchData) {
-    throw "Local-search runtime assets are incomplete in the build directory. Expected both onnxruntime.dll and data/."
+$hasLocalSearchModels = Test-Path -LiteralPath $localSearchModelsSource -PathType Container
+if ($hasOnnxRuntime -xor $hasLocalSearchModels) {
+    throw "Local-search runtime assets are incomplete in the build directory. Expected both onnxruntime.dll and data/models/."
 }
-if ($hasOnnxRuntime -and $hasLocalSearchData) {
+if ($hasOnnxRuntime -and $hasLocalSearchModels) {
     Copy-Item -LiteralPath $onnxRuntimeSource -Destination $stagingDir -Force
-    Copy-Item -LiteralPath $localSearchDataSource -Destination $stagingDir -Recurse -Force
+    $localSearchDataTarget = Join-Path $stagingDir "data"
+    New-Item -ItemType Directory -Force -Path $localSearchDataTarget | Out-Null
+    Copy-Item -LiteralPath $localSearchModelsSource -Destination $localSearchDataTarget -Recurse -Force
 }
 
 $deployMode = if ($Configuration -ieq "Debug") { "--debug" } else { "--release" }
@@ -132,6 +134,18 @@ if ($context.HasFfmpegCli) {
     }
 } else {
     Write-Warning "FFmpeg CLI runtime root was not found. Installer will not include ffmpeg.exe or ffprobe.exe."
+}
+
+# User databases and generated indexes can be created beside test binaries. They
+# must never become installer resources, otherwise an upgrade can overwrite the
+# installed user's parsed material data.
+$forbiddenInstallerFiles = Get-ChildItem -LiteralPath $stagingDir -Recurse -File | Where-Object {
+    $_.Name -match '\.(sqlite|sqlite3|db)(-.+|\..+)?$' -or
+    $_.Extension -in @('.usearch', '.wal', '.shm')
+}
+if ($forbiddenInstallerFiles) {
+    $forbiddenList = ($forbiddenInstallerFiles.FullName | Sort-Object) -join [Environment]::NewLine
+    throw "Installer staging contains mutable user data and publishing was blocked:`n$forbiddenList"
 }
 
 $installerScript = Join-Path $context.RepoRoot "installer\windows\cinevault.iss"

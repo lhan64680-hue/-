@@ -2,6 +2,7 @@
 
 #include "domain/Enums.h"
 
+#include <QPoint>
 #include <QStringList>
 
 class QSettings;
@@ -45,6 +46,10 @@ public:
     QString quickSearchShortcut() const;
     void setQuickSearchShortcut(const QString &shortcut);
 
+    bool hasQuickSearchWindowPosition() const;
+    QPoint quickSearchWindowPosition() const;
+    void setQuickSearchWindowPosition(const QPoint &position);
+
     bool startAtLogin() const;
     void setStartAtLogin(bool enabled);
 
@@ -65,6 +70,9 @@ public:
 
     int themeMode() const;
     void setThemeMode(int value);
+
+    int closeButtonBehavior() const;
+    void setCloseButtonBehavior(int value);
 
     QString pendingUpdateVersion() const;
     void setPendingUpdateVersion(const QString &value);

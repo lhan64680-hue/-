@@ -213,7 +213,7 @@ public:
     Q_INVOKABLE void confirmVideo(const QString &videoKey);
     Q_INVOKABLE void confirmVisible();
     Q_INVOKABLE void confirmSelected();
-    Q_INVOKABLE void openSelectedProject();
+    Q_INVOKABLE bool openSelectedProject();
     Q_INVOKABLE void locateSelectedSource();
     Q_INVOKABLE void openFolderProject(const QString &folderKey);
     Q_INVOKABLE void locateFolder(const QString &folderKey);

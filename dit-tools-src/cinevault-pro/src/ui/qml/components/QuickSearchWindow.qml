@@ -13,6 +13,7 @@ Window {
     property var shellViewModel
     property var mainWindow
     property int selectedFlatIndex: 0
+    property point dragOrigin: Qt.point(0, 0)
     readonly property bool hasQuery: searchField.text.trim().length > 0
     readonly property int folderResultCount: hasQuery && materialCenterViewModel
         ? materialCenterViewModel.folderCount : 0
@@ -50,8 +51,14 @@ Window {
     function openSearch() {
         selectedFlatIndex = 0
         searchField.text = ""
-        x = Screen.virtualX + Math.round((Screen.width - width) / 2)
-        y = Screen.virtualY + Math.round(Screen.height * 0.12)
+        if (controller) {
+            var restoredPosition = controller.restoredWindowPosition(width, height)
+            x = restoredPosition.x
+            y = restoredPosition.y
+        } else {
+            x = Screen.virtualX + Math.round((Screen.width - width) / 2)
+            y = Screen.virtualY + Math.round(Screen.height * 0.12)
+        }
         show()
         raise()
         requestActivate()
@@ -59,6 +66,15 @@ Window {
             searchField.forceActiveFocus()
             searchField.selectAll()
         })
+    }
+
+    function rememberPosition() {
+        if (!controller) {
+            return
+        }
+        var constrainedPosition = controller.rememberWindowPosition(x, y, width, height)
+        x = constrainedPosition.x
+        y = constrainedPosition.y
     }
 
     function hideSearch() {
@@ -169,6 +185,46 @@ Window {
         color: root.quickBg
         border.width: 1
         border.color: root.quickLine
+
+        Item {
+            id: dragStrip
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 16
+            z: 20
+
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top
+                anchors.topMargin: 5
+                width: 44
+                height: 4
+                radius: 2
+                color: root.quickLine
+            }
+
+            DragHandler {
+                id: windowDragHandler
+                target: null
+                acceptedButtons: Qt.LeftButton
+                cursorShape: Qt.SizeAllCursor
+                onActiveChanged: {
+                    if (active) {
+                        root.dragOrigin = Qt.point(root.x, root.y)
+                    } else {
+                        root.rememberPosition()
+                    }
+                }
+                onTranslationChanged: {
+                    if (!active) {
+                        return
+                    }
+                    root.x = root.dragOrigin.x + translation.x
+                    root.y = root.dragOrigin.y + translation.y
+                }
+            }
+        }
 
         ColumnLayout {
             anchors.fill: parent
@@ -339,9 +395,15 @@ Window {
                         delegate: Rectangle {
                             id: folderDelegate
                             required property int index
-                            property string folderKeyValue: String(model.folderKey || "")
-                            property string folderNameValue: String(model.name || "未命名文件夹")
-                            property string folderPathValue: String(model.relativePath || model.absolutePath || "")
+                            required property string folderKey
+                            required property string name
+                            required property string relativePath
+                            required property string absolutePath
+                            required property string projectName
+                            required property int recursiveFileCount
+                            property string folderKeyValue: folderKey
+                            property string folderNameValue: name.length > 0 ? name : "未命名文件夹"
+                            property string folderPathValue: relativePath.length > 0 ? relativePath : absolutePath
 
                             width: ListView.view.width
                             height: 54
@@ -385,14 +447,14 @@ Window {
                                     }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: String(model.projectName || "") + "  ·  " + folderDelegate.folderPathValue
+                                        text: folderDelegate.projectName + "  ·  " + folderDelegate.folderPathValue
                                         color: root.quickMuted
                                         font.pixelSize: 12
                                         elide: Text.ElideMiddle
                                     }
                                 }
                                 Text {
-                                    text: String(model.recursiveFileCount || 0) + " 个文件"
+                                    text: folderDelegate.recursiveFileCount + " 个文件"
                                     color: root.quickWeak
                                     font.pixelSize: 12
                                 }
@@ -445,20 +507,26 @@ Window {
                         delegate: Rectangle {
                             id: resultDelegate
                             required property int index
+                            required property string videoKey
+                            required property string fileName
+                            required property string projectName
+                            required property string sourceName
+                            required property string relativePath
+                            required property string assetTypeLabel
+                            required property int resultRank
+                            required property string quickPreviewPath
+                            required property string quickDetail
+                            required property string quickMeta
+                            required property string quickReasons
                             property bool frameResult: root.materialCenterViewModel
                                 && root.materialCenterViewModel.frameSearchMode
-                            property string videoKeyValue: String(model.videoKey || "")
-                            property string fileNameValue: String(model.fileName || "未命名素材")
-                            property string previewPathValue: frameResult
-                                ? String(model.imagePath || "")
-                                : String(model.thumbnailPath || "")
-                            property string detailValue: frameResult
-                                ? (String(model.timestampLabel || "") + "  ·  " + String(model.caption || model.entitySummary || ""))
-                                : String(model.summary || model.relativePath || "")
+                            property string videoKeyValue: videoKey
+                            property string fileNameValue: fileName.length > 0 ? fileName : "未命名素材"
+                            property string previewPathValue: quickPreviewPath
                             readonly property int flatIndex: root.folderResultCount + index
 
                             width: ListView.view.width
-                            height: 82
+                            height: 104
                             radius: 13
                             color: root.selectedFlatIndex === flatIndex ? root.quickSelected : "transparent"
                             border.width: root.selectedFlatIndex === flatIndex ? 1 : 0
@@ -471,8 +539,11 @@ Window {
                                     root.materialCenterViewModel.locateSelectedSource()
                                     root.hideSearch()
                                 } else {
-                                    root.materialCenterViewModel.openSelectedProject()
-                                    root.enterMaterialCenter()
+                                    if (root.materialCenterViewModel.openSelectedProject()) {
+                                        root.enterMaterialCenter()
+                                    } else {
+                                        root.showMainWindow()
+                                    }
                                 }
                             }
 
@@ -482,7 +553,7 @@ Window {
                                 spacing: 12
 
                                 Rectangle {
-                                    Layout.preferredWidth: 92
+                                    Layout.preferredWidth: 124
                                     Layout.fillHeight: true
                                     radius: 10
                                     color: root.quickSurface
@@ -495,14 +566,38 @@ Window {
                                         fillMode: Image.PreserveAspectCrop
                                         asynchronous: true
                                         cache: true
+                                        smooth: true
                                     }
 
                                     Text {
                                         anchors.centerIn: parent
                                         visible: previewImage.status !== Image.Ready
-                                        text: resultDelegate.frameResult ? "画面" : "素材"
+                                        text: resultDelegate.assetTypeLabel.length > 0
+                                            ? resultDelegate.assetTypeLabel
+                                            : (resultDelegate.frameResult ? "画面" : "素材")
                                         color: root.quickWeak
                                         font.pixelSize: 12
+                                    }
+
+                                    Rectangle {
+                                        visible: previewImage.status === Image.Ready
+                                            && resultDelegate.frameResult
+                                            && resultDelegate.quickMeta.length > 0
+                                        anchors.left: parent.left
+                                        anchors.bottom: parent.bottom
+                                        anchors.margins: 5
+                                        width: previewTime.implicitWidth + 10
+                                        height: 21
+                                        radius: 6
+                                        color: "#B80E1014"
+
+                                        Text {
+                                            id: previewTime
+                                            anchors.centerIn: parent
+                                            text: resultDelegate.quickMeta.split(" · ")[0]
+                                            color: root.quickText
+                                            font.pixelSize: 10
+                                        }
                                     }
                                 }
 
@@ -521,7 +616,7 @@ Window {
                                             elide: Text.ElideRight
                                         }
                                         Text {
-                                            text: "#" + String(model.resultRank || (index + 1))
+                                            text: "#" + resultDelegate.resultRank
                                             color: root.quickAccent
                                             font.pixelSize: 12
                                         }
@@ -529,7 +624,7 @@ Window {
 
                                     Text {
                                         Layout.fillWidth: true
-                                        text: String(model.projectName || "") + "  ·  " + String(model.sourceName || "")
+                                        text: resultDelegate.projectName + "  ·  " + resultDelegate.sourceName
                                         color: root.quickMuted
                                         font.pixelSize: 12
                                         elide: Text.ElideRight
@@ -537,10 +632,35 @@ Window {
 
                                     Text {
                                         Layout.fillWidth: true
-                                        text: resultDelegate.detailValue
-                                        color: root.quickWeak
-                                        font.pixelSize: 12
+                                        text: resultDelegate.quickDetail.length > 0
+                                            ? resultDelegate.quickDetail
+                                            : resultDelegate.relativePath
+                                        color: root.quickText
+                                        font.pixelSize: 13
                                         elide: Text.ElideRight
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 10
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: resultDelegate.quickReasons.length > 0
+                                                ? resultDelegate.quickMeta + "  ·  " + resultDelegate.quickReasons
+                                                : resultDelegate.quickMeta
+                                            color: root.quickWeak
+                                            font.pixelSize: 11
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Text {
+                                            visible: root.selectedFlatIndex === resultDelegate.flatIndex
+                                            text: "打开详情  →"
+                                            color: root.quickAccent
+                                            font.pixelSize: 11
+                                            font.weight: Font.DemiBold
+                                        }
                                     }
                                 }
                             }

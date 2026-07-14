@@ -33,7 +33,11 @@ public:
         ScoreRole,
         ConfidenceRole,
         ReasonsRole,
-        ResultRankRole
+        ResultRankRole,
+        QuickPreviewPathRole,
+        QuickDetailRole,
+        QuickMetaRole,
+        QuickReasonsRole
     };
 
     explicit MaterialCenterFrameListModel(QObject *parent = nullptr);

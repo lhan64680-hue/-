@@ -2,6 +2,7 @@
 #include "core/search/SearchEngine.h"
 #include "domain/Enums.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
+#include "shared/Paths.h"
 
 #include <QtTest>
 
@@ -39,7 +40,7 @@ QString jsonArray(std::initializer_list<QString> values)
 
 QString globalDatabasePath()
 {
-    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/material-center.sqlite"));
+    return QDir(Paths::resolvedDataRoot()).filePath(QStringLiteral("material-center.sqlite"));
 }
 
 QStringList keysFor(const QVector<GlobalVideoAsset> &assets)

@@ -2,6 +2,7 @@
 #include "core/search/SemanticSearchIndexService.h"
 #include "infrastructure/db/DatabaseMigration.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
+#include "shared/Paths.h"
 #include "shared/SearchConfiguration.h"
 
 #include <QtTest>
@@ -21,7 +22,7 @@
 namespace {
 QString globalDatabasePath()
 {
-    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/material-center.sqlite"));
+    return QDir(Paths::resolvedDataRoot()).filePath(QStringLiteral("material-center.sqlite"));
 }
 
 void removeGlobalDatabaseFiles()

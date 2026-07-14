@@ -30,6 +30,7 @@ ApplicationWindow {
     property bool jobsWorkspaceLoaded: false
     property bool feedbackWorkspaceLoaded: false
     property bool sourceRailCollapsed: false
+    property bool forceExitRequested: false
 
     visible: !(quickSearchController && quickSearchController.startHidden)
     width: 1600
@@ -43,6 +44,21 @@ ApplicationWindow {
         if (windowThemeController) {
             windowThemeController.apply(root, Theme.topBar, Theme.text, Theme.isDark)
         }
+    }
+
+    function minimizeToTray() {
+        closeConfirmDialog.close()
+        if (quickSearchController && quickSearchController.trayAvailable) {
+            root.hide()
+        } else {
+            root.showMinimized()
+        }
+    }
+
+    function requestApplicationExit() {
+        root.forceExitRequested = true
+        closeConfirmDialog.close()
+        Qt.quit()
     }
 
     function rememberWorkspace(workspace) {
@@ -75,8 +91,22 @@ ApplicationWindow {
     }
     onVisibleChanged: if (visible) Qt.callLater(root.applyWindowTheme)
     onClosing: function(close) {
+        if (root.forceExitRequested) {
+            close.accepted = true
+            return
+        }
+        var behavior = root.settingsViewModel ? root.settingsViewModel.closeButtonBehavior : 0
+        if (behavior === 2) {
+            close.accepted = true
+            root.requestApplicationExit()
+            return
+        }
         close.accepted = false
-        root.hide()
+        if (behavior === 1) {
+            root.minimizeToTray()
+        } else if (!closeConfirmDialog.opened) {
+            closeConfirmDialog.open()
+        }
     }
 
     Binding {
@@ -120,17 +150,179 @@ ApplicationWindow {
         }
     }
 
+    Dialog {
+        id: closeConfirmDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: 560
+        height: 260
+        padding: 24
+        closePolicy: Popup.CloseOnEscape
+
+        background: Rectangle {
+            radius: 18
+            color: Theme.panel
+            border.width: 1
+            border.color: Theme.line
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 14
+
+            Text {
+                text: "关闭影资管家"
+                color: Theme.text
+                font.pixelSize: 22
+                font.weight: Font.DemiBold
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "请选择本次关闭主窗口后的操作。默认行为可在设置页的“外观”区域修改。"
+                color: Theme.muted
+                font.pixelSize: 14
+                wrapMode: Text.Wrap
+            }
+
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 10
+
+                ActionButton {
+                    Layout.preferredWidth: 142
+                    Layout.preferredHeight: 42
+                    text: "最小化到托盘"
+                    primary: true
+                    onClicked: root.minimizeToTray()
+                }
+
+                Item { Layout.fillWidth: true }
+
+                ActionButton {
+                    Layout.preferredWidth: 86
+                    Layout.preferredHeight: 42
+                    text: "取消"
+                    onClicked: closeConfirmDialog.reject()
+                }
+
+                ActionButton {
+                    Layout.preferredWidth: 110
+                    Layout.preferredHeight: 42
+                    text: "退出软件"
+                    danger: true
+                    onClicked: root.requestApplicationExit()
+                }
+            }
+        }
+    }
+
     FolderDialog {
         id: sourceFolderDialog
         title: "选择素材源目录"
-        onAccepted: root.shellViewModel.importSourceDirectory(selectedFolder)
-        onRejected: root.shellViewModel.cancelAddSourceDirectory()
+        onAccepted: {
+            if (root.shellViewModel.importSourceDirectory(selectedFolder)) {
+                sourcePathDialog.close()
+            }
+        }
+    }
+
+    Dialog {
+        id: sourcePathDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: 640
+        height: 300
+        padding: 24
+        closePolicy: Popup.CloseOnEscape
+
+        function submitPath() {
+            if (root.shellViewModel && root.shellViewModel.importSourcePath(sourcePathField.text)) {
+                sourcePathField.text = ""
+                sourcePathDialog.close()
+            }
+        }
+
+        onOpened: {
+            sourcePathField.text = ""
+            sourcePathField.forceActiveFocus()
+        }
+        onRejected: if (root.shellViewModel) root.shellViewModel.cancelAddSourceDirectory()
+
+        background: Rectangle {
+            radius: 18
+            color: Theme.panel
+            border.width: 1
+            border.color: Theme.line
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 14
+
+            Text {
+                text: "添加素材源"
+                color: Theme.text
+                font.pixelSize: 22
+                font.weight: Font.DemiBold
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "可以浏览本地文件夹，也可以直接输入 UNC 网络共享路径。请确保当前 Windows 账户有读取权限。"
+                color: Theme.muted
+                font.pixelSize: 14
+                wrapMode: Text.Wrap
+            }
+
+            ThemedTextField {
+                id: sourcePathField
+                objectName: "sourcePathField"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 44
+                placeholderText: "例如：\\\\服务器\\共享\\素材"
+                selectByMouse: true
+                Keys.onReturnPressed: sourcePathDialog.submitPath()
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 10
+
+                ActionButton {
+                    Layout.preferredWidth: 126
+                    Layout.preferredHeight: 42
+                    text: "浏览文件夹"
+                    onClicked: sourceFolderDialog.open()
+                }
+
+                Item { Layout.fillWidth: true }
+
+                ActionButton {
+                    Layout.preferredWidth: 86
+                    Layout.preferredHeight: 42
+                    text: "取消"
+                    onClicked: sourcePathDialog.reject()
+                }
+
+                ActionButton {
+                    Layout.preferredWidth: 110
+                    Layout.preferredHeight: 42
+                    text: "添加路径"
+                    primary: true
+                    enabled: sourcePathField.text.trim().length > 0
+                    onClicked: sourcePathDialog.submitPath()
+                }
+            }
+        }
     }
 
     Connections {
         target: root.shellViewModel
         function onAddSourceDirectoryRequested() {
-            sourceFolderDialog.open()
+            sourcePathDialog.open()
         }
         function onOpenSettingsRequested() {
             settingsDialog.open()

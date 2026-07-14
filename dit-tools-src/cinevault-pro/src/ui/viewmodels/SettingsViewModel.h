@@ -27,6 +27,7 @@ class SettingsViewModel : public QObject {
     Q_PROPERTY(int contactSheetFrameCount READ contactSheetFrameCount WRITE setContactSheetFrameCount NOTIFY settingsChanged)
     Q_PROPERTY(int analysisTimeoutSec READ analysisTimeoutSec WRITE setAnalysisTimeoutSec NOTIFY settingsChanged)
     Q_PROPERTY(int themeMode READ themeMode WRITE setThemeMode NOTIFY settingsChanged)
+    Q_PROPERTY(int closeButtonBehavior READ closeButtonBehavior WRITE setCloseButtonBehavior NOTIFY settingsChanged)
     Q_PROPERTY(bool updateBusy READ updateBusy NOTIFY settingsChanged)
     Q_PROPERTY(bool autoInstallUpdates READ autoInstallUpdates WRITE setAutoInstallUpdates NOTIFY settingsChanged)
     Q_PROPERTY(QString currentVersionLabel READ currentVersionLabel NOTIFY settingsChanged)
@@ -74,6 +75,8 @@ public:
     void setAnalysisTimeoutSec(int value);
     int themeMode() const;
     void setThemeMode(int value);
+    int closeButtonBehavior() const;
+    void setCloseButtonBehavior(int value);
     bool updateBusy() const;
     bool autoInstallUpdates() const;
     void setAutoInstallUpdates(bool enabled);
@@ -107,6 +110,7 @@ public:
                                   bool quickSearchEnabled,
                                   const QString &quickSearchShortcut,
                                   bool startAtLogin,
+                                  int closeButtonBehavior,
                                   int analysisMode,
                                   int frameInterval,
                                   int thumbnailFrameIndex,

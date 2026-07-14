@@ -1,6 +1,7 @@
 #include "application/SearchDocumentSyncService.h"
 #include "core/search/SemanticSearchIndexService.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
+#include "shared/Paths.h"
 
 #include <QtTest>
 
@@ -14,7 +15,7 @@
 namespace {
 QString globalDatabasePath()
 {
-    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/material-center.sqlite"));
+    return QDir(Paths::resolvedDataRoot()).filePath(QStringLiteral("material-center.sqlite"));
 }
 
 bool execute(QSqlDatabase db, const QString &statement, QString *errorMessage)

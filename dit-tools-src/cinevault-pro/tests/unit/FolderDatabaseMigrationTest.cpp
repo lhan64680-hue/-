@@ -1,6 +1,7 @@
 #include "infrastructure/db/DatabaseManager.h"
 #include "infrastructure/db/DatabaseMigration.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
+#include "shared/Paths.h"
 
 #include <QtTest>
 
@@ -10,11 +11,12 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTemporaryDir>
+#include <QUuid>
 
 namespace {
 QString globalDatabasePath()
 {
-    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/material-center.sqlite"));
+    return QDir(Paths::resolvedDataRoot()).filePath(QStringLiteral("material-center.sqlite"));
 }
 
 void removeGlobalDatabaseFiles()
@@ -26,6 +28,8 @@ void removeGlobalDatabaseFiles()
     QFile::remove(DatabaseMigration::backupFilePath(path, 8));
     QFile::remove(DatabaseMigration::backupFilePath(path, 9));
     QFile::remove(DatabaseMigration::backupFilePath(path, 11));
+    QFile::remove(DatabaseMigration::legacyMigrationMarkerPath(path));
+    QFile::remove(path + QStringLiteral(".legacy-migration-tmp"));
 }
 
 bool executeStatements(QSqlDatabase &db, const QStringList &statements, QString *errorMessage)
@@ -130,6 +134,94 @@ int schemaVersionFromFile(const QString &databasePath, QString *errorMessage)
     QSqlDatabase::removeDatabase(connectionName);
     return version;
 }
+
+bool createRecoveryCandidate(const QString &databasePath,
+                             int assetCount,
+                             int frameCount,
+                             QString *errorMessage)
+{
+    if (!QDir().mkpath(QFileInfo(databasePath).absolutePath())) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("无法创建测试数据库目录");
+        }
+        return false;
+    }
+    QFile::remove(databasePath);
+    const auto connectionName = QStringLiteral("recovery_candidate_%1")
+                                    .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    bool success = false;
+    {
+        auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+        db.setDatabaseName(databasePath);
+        if (!db.open()) {
+            if (errorMessage) {
+                *errorMessage = db.lastError().text();
+            }
+        } else {
+            success = executeStatements(
+                db,
+                {QStringLiteral("CREATE TABLE schema_version (version INTEGER NOT NULL)"),
+                 QStringLiteral("INSERT INTO schema_version VALUES (11)"),
+                 QStringLiteral("CREATE TABLE global_video_asset (video_key TEXT PRIMARY KEY)"),
+                 QStringLiteral("CREATE TABLE video_analysis_result (video_key TEXT PRIMARY KEY)"),
+                 QStringLiteral("CREATE TABLE video_frame_analysis (video_key TEXT, frame_number INTEGER)")},
+                errorMessage);
+            if (success) {
+                QSqlQuery asset(db);
+                asset.prepare(QStringLiteral("INSERT INTO global_video_asset(video_key) VALUES (?)"));
+                for (int index = 0; index < assetCount && success; ++index) {
+                    asset.addBindValue(QStringLiteral("asset-%1").arg(index));
+                    success = asset.exec();
+                    if (!success && errorMessage) {
+                        *errorMessage = asset.lastError().text();
+                    }
+                }
+            }
+            if (success) {
+                QSqlQuery frame(db);
+                frame.prepare(QStringLiteral(
+                    "INSERT INTO video_frame_analysis(video_key, frame_number) VALUES (?, ?)"));
+                for (int index = 0; index < frameCount && success; ++index) {
+                    frame.addBindValue(QStringLiteral("asset-%1").arg(index % qMax(1, assetCount)));
+                    frame.addBindValue(index);
+                    success = frame.exec();
+                    if (!success && errorMessage) {
+                        *errorMessage = frame.lastError().text();
+                    }
+                }
+            }
+            db.close();
+        }
+    }
+    QSqlDatabase::removeDatabase(connectionName);
+    return success;
+}
+
+qint64 recoveryRowCount(const QString &databasePath, const QString &tableName, QString *errorMessage)
+{
+    const auto connectionName = QStringLiteral("recovery_count_%1")
+                                    .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    qint64 count = -1;
+    {
+        auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+        db.setDatabaseName(databasePath);
+        if (!db.open()) {
+            if (errorMessage) {
+                *errorMessage = db.lastError().text();
+            }
+        } else {
+            QSqlQuery query(db);
+            if (query.exec(QStringLiteral("SELECT COUNT(*) FROM \"%1\"").arg(tableName)) && query.next()) {
+                count = query.value(0).toLongLong();
+            } else if (errorMessage) {
+                *errorMessage = query.lastError().text();
+            }
+            db.close();
+        }
+    }
+    QSqlDatabase::removeDatabase(connectionName);
+    return count;
+}
 }
 
 class FolderDatabaseMigrationTest : public QObject {
@@ -139,6 +231,62 @@ private slots:
     void cleanup()
     {
         removeGlobalDatabaseFiles();
+    }
+
+    void globalUserData_isSeparatedFromInstallerAndRecoversPopulatedBackup()
+    {
+        QVERIFY(QDir::cleanPath(Paths::resolvedDataRoot()).compare(
+                    QDir::cleanPath(Paths::installDataRoot()),
+                    Qt::CaseInsensitive)
+                != 0);
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto legacyRoot = QDir(temp.path()).filePath(QStringLiteral("legacy-install-data"));
+        const auto userRoot = QDir(temp.path()).filePath(QStringLiteral("user-data"));
+        QVERIFY(QDir().mkpath(legacyRoot));
+        QVERIFY(QDir().mkpath(userRoot));
+
+        const auto legacyMain = QDir(legacyRoot).filePath(QStringLiteral("material-center.sqlite"));
+        const auto legacyBackup = DatabaseMigration::backupFilePath(legacyMain, 11);
+        const auto destination = QDir(userRoot).filePath(QStringLiteral("material-center.sqlite"));
+        QString errorMessage;
+        QVERIFY2(createRecoveryCandidate(legacyMain, 0, 0, &errorMessage), qPrintable(errorMessage));
+        QVERIFY2(createRecoveryCandidate(legacyBackup, 2, 5, &errorMessage), qPrintable(errorMessage));
+
+        QString recoveryMessage;
+        QVERIFY2(DatabaseMigration::ensureUserDatabase(destination,
+                                                       legacyRoot,
+                                                       &recoveryMessage,
+                                                       &errorMessage),
+                 qPrintable(errorMessage));
+        QVERIFY(recoveryMessage.contains(legacyBackup));
+        QCOMPARE(recoveryRowCount(destination, QStringLiteral("global_video_asset"), &errorMessage), 2);
+        QCOMPARE(recoveryRowCount(destination, QStringLiteral("video_frame_analysis"), &errorMessage), 5);
+        QVERIFY(QFileInfo::exists(DatabaseMigration::legacyMigrationMarkerPath(destination)));
+
+        const auto connectionName = QStringLiteral("clear_recovered_database");
+        {
+            auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+            db.setDatabaseName(destination);
+            QVERIFY2(db.open(), qPrintable(db.lastError().text()));
+            QVERIFY2(executeStatements(db,
+                                       {QStringLiteral("DELETE FROM video_frame_analysis"),
+                                        QStringLiteral("DELETE FROM global_video_asset")},
+                                       &errorMessage),
+                     qPrintable(errorMessage));
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(connectionName);
+
+        recoveryMessage.clear();
+        QVERIFY2(DatabaseMigration::ensureUserDatabase(destination,
+                                                       legacyRoot,
+                                                       &recoveryMessage,
+                                                       &errorMessage),
+                 qPrintable(errorMessage));
+        QVERIFY(recoveryMessage.isEmpty());
+        QCOMPARE(recoveryRowCount(destination, QStringLiteral("global_video_asset"), &errorMessage), 0);
     }
 
     void projectV2ToV3_createsBackupAndBackfillsHierarchy()

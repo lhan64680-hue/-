@@ -11,6 +11,7 @@ struct FolderDateMetadata {
 namespace FolderPathMetadata {
 
 QString normalizeRelativePath(const QString &path);
+QString normalizeSourcePath(const QString &path);
 QString normalizedPathKey(const QString &path);
 QString relativePathFromRoot(const QString &rootPath, const QString &absolutePath);
 QString folderName(const QString &absolutePath, const QString &fallbackName = QString());

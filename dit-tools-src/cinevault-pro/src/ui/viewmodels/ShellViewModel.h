@@ -54,7 +54,8 @@ public:
     Q_INVOKABLE void openProject();
     Q_INVOKABLE void closeProject();
     Q_INVOKABLE void addSourceDirectory();
-    Q_INVOKABLE void importSourceDirectory(const QUrl &directoryUrl);
+    Q_INVOKABLE bool importSourceDirectory(const QUrl &directoryUrl);
+    Q_INVOKABLE bool importSourcePath(const QString &directoryPath);
     Q_INVOKABLE void cancelAddSourceDirectory();
     Q_INVOKABLE void openSettings();
 

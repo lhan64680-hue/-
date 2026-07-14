@@ -5,12 +5,15 @@
 #include <QAction>
 #include <QApplication>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QDir>
+#include <QGuiApplication>
 #include <QIcon>
 #include <QKeyCombination>
 #include <QKeySequence>
 #include <QMenu>
 #include <QSettings>
+#include <QScreen>
 #include <QSystemTrayIcon>
 
 #ifdef Q_OS_WIN
@@ -150,6 +153,11 @@ bool QuickSearchController::startHidden() const
     return m_startHidden;
 }
 
+bool QuickSearchController::trayAvailable() const
+{
+    return m_trayIcon != nullptr;
+}
+
 QString QuickSearchController::normalizedShortcut(const QString &shortcut,
                                                   QString *errorMessage)
 {
@@ -200,9 +208,116 @@ QString QuickSearchController::shortcutFromKeyEvent(int key, int modifiers)
                                   .toString(QKeySequence::PortableText));
 }
 
+QPoint QuickSearchController::clampWindowPosition(const QPoint &requestedPosition,
+                                                  const QSize &windowSize,
+                                                  const QList<QRect> &availableGeometries,
+                                                  const QPoint &fallbackPoint)
+{
+    if (availableGeometries.isEmpty()) {
+        return requestedPosition;
+    }
+
+    const QSize normalizedSize(qMax(1, windowSize.width()), qMax(1, windowSize.height()));
+    const QRect requestedRect(requestedPosition, normalizedSize);
+    QRect targetGeometry;
+    qint64 largestIntersectionArea = 0;
+    for (const auto &geometry : availableGeometries) {
+        const auto intersection = requestedRect.intersected(geometry);
+        const auto area = static_cast<qint64>(intersection.width()) * intersection.height();
+        if (area > largestIntersectionArea) {
+            largestIntersectionArea = area;
+            targetGeometry = geometry;
+        }
+    }
+
+    if (!targetGeometry.isValid()) {
+        for (const auto &geometry : availableGeometries) {
+            if (geometry.contains(fallbackPoint)) {
+                targetGeometry = geometry;
+                break;
+            }
+        }
+    }
+    if (!targetGeometry.isValid()) {
+        targetGeometry = availableGeometries.first();
+    }
+
+    const int x = normalizedSize.width() >= targetGeometry.width()
+        ? targetGeometry.left()
+        : qBound(targetGeometry.left(),
+                 requestedPosition.x(),
+                 targetGeometry.right() - normalizedSize.width() + 1);
+    const int y = normalizedSize.height() >= targetGeometry.height()
+        ? targetGeometry.top()
+        : qBound(targetGeometry.top(),
+                 requestedPosition.y(),
+                 targetGeometry.bottom() - normalizedSize.height() + 1);
+    return QPoint(x, y);
+}
+
 void QuickSearchController::requestQuickSearch()
 {
     emit quickSearchRequested();
+}
+
+QPoint QuickSearchController::restoredWindowPosition(int windowWidth, int windowHeight) const
+{
+    QList<QRect> geometries;
+    const auto screens = QGuiApplication::screens();
+    geometries.reserve(screens.size());
+    for (const auto *screen : screens) {
+        if (screen) {
+            geometries.append(screen->availableGeometry());
+        }
+    }
+
+    const auto cursorPosition = QCursor::pos();
+    QPoint requestedPosition;
+    if (m_settings && m_settings->hasQuickSearchWindowPosition()) {
+        requestedPosition = m_settings->quickSearchWindowPosition();
+    } else {
+        QRect defaultGeometry;
+        for (const auto &geometry : geometries) {
+            if (geometry.contains(cursorPosition)) {
+                defaultGeometry = geometry;
+                break;
+            }
+        }
+        if (!defaultGeometry.isValid() && !geometries.isEmpty()) {
+            defaultGeometry = geometries.first();
+        }
+        requestedPosition = QPoint(
+            defaultGeometry.left() + qMax(0, (defaultGeometry.width() - windowWidth) / 2),
+            defaultGeometry.top() + qMax(0, qRound(defaultGeometry.height() * 0.12)));
+    }
+    return clampWindowPosition(requestedPosition,
+                               QSize(windowWidth, windowHeight),
+                               geometries,
+                               cursorPosition);
+}
+
+QPoint QuickSearchController::rememberWindowPosition(int x,
+                                                     int y,
+                                                     int windowWidth,
+                                                     int windowHeight)
+{
+    QList<QRect> geometries;
+    const auto screens = QGuiApplication::screens();
+    geometries.reserve(screens.size());
+    for (const auto *screen : screens) {
+        if (screen) {
+            geometries.append(screen->availableGeometry());
+        }
+    }
+    const auto position = clampWindowPosition(QPoint(x, y),
+                                              QSize(windowWidth, windowHeight),
+                                              geometries,
+                                              QCursor::pos());
+    if (m_settings) {
+        m_settings->setQuickSearchWindowPosition(position);
+        m_settings->sync();
+    }
+    return position;
 }
 
 bool QuickSearchController::applyShortcutConfiguration(bool enabled,

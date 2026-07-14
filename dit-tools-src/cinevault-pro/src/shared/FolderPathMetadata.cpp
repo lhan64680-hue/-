@@ -3,6 +3,7 @@
 #include <QDate>
 #include <QDir>
 #include <QRegularExpression>
+#include <QUrl>
 
 namespace {
 QString portableCleanPath(QString path)
@@ -77,6 +78,18 @@ QString FolderPathMetadata::normalizeRelativePath(const QString &path)
 {
     const auto normalized = portableCleanPath(path);
     return normalized.isEmpty() || normalized == QStringLiteral(".") ? QStringLiteral("") : normalized;
+}
+
+QString FolderPathMetadata::normalizeSourcePath(const QString &path)
+{
+    auto normalized = path.trimmed();
+    if (normalized.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
+        const QUrl fileUrl(normalized);
+        if (fileUrl.isLocalFile()) {
+            normalized = fileUrl.toLocalFile();
+        }
+    }
+    return portableCleanPath(normalized);
 }
 
 QString FolderPathMetadata::normalizedPathKey(const QString &path)

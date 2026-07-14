@@ -4,6 +4,7 @@
 #include "core/jobs/JobEngine.h"
 #include "core/scan/ScanEngine.h"
 #include "infrastructure/db/DatabaseManager.h"
+#include "shared/FolderPathMetadata.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -70,10 +71,19 @@ ImportService::ImportService(DatabaseManager *databaseManager, JobService *jobSe
 
 bool ImportService::importDirectory(const QString &directoryPath, QString *errorMessage)
 {
-    const QFileInfo info(directoryPath);
+    const auto requestedPath = FolderPathMetadata::normalizeSourcePath(directoryPath);
+    if (requestedPath.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("请输入本地文件夹或网络共享路径。");
+        }
+        return false;
+    }
+    const QFileInfo requestedInfo(requestedPath);
+    const auto normalizedPath = FolderPathMetadata::normalizeSourcePath(requestedInfo.absoluteFilePath());
+    const QFileInfo info(normalizedPath);
     if (!info.exists() || !info.isDir()) {
         if (errorMessage) {
-            *errorMessage = QStringLiteral("目录不存在：%1").arg(directoryPath);
+            *errorMessage = QStringLiteral("目录不存在或网络路径不可访问：%1").arg(directoryPath.trimmed());
         }
         return false;
     }
@@ -84,14 +94,19 @@ bool ImportService::importDirectory(const QString &directoryPath, QString *error
         return false;
     }
 
+    const auto normalizedPathKey = FolderPathMetadata::normalizedPathKey(normalizedPath);
     QSqlQuery duplicateQuery(m_databaseManager->database());
-    duplicateQuery.prepare(QStringLiteral("SELECT id FROM source_root WHERE path = ?"));
-    duplicateQuery.addBindValue(info.absoluteFilePath());
-    if (duplicateQuery.exec() && duplicateQuery.next()) {
-        if (errorMessage) {
-            *errorMessage = QStringLiteral("素材源已存在：%1").arg(info.absoluteFilePath());
+    duplicateQuery.prepare(QStringLiteral("SELECT path FROM source_root"));
+    if (duplicateQuery.exec()) {
+        while (duplicateQuery.next()) {
+            if (FolderPathMetadata::normalizedPathKey(duplicateQuery.value(0).toString()) != normalizedPathKey) {
+                continue;
+            }
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("素材源已存在：%1").arg(normalizedPath);
+            }
+            return false;
         }
-        return false;
     }
 
     const auto now = QDateTime::currentDateTime().toString(Qt::ISODate);
@@ -99,8 +114,9 @@ bool ImportService::importDirectory(const QString &directoryPath, QString *error
     insertQuery.prepare(QStringLiteral(
         "INSERT INTO source_root (name, path, status, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?)"));
-    insertQuery.addBindValue(info.fileName().isEmpty() ? info.absoluteFilePath() : info.fileName());
-    insertQuery.addBindValue(info.absoluteFilePath());
+    const auto sourceName = FolderPathMetadata::folderName(normalizedPath, normalizedPath);
+    insertQuery.addBindValue(sourceName);
+    insertQuery.addBindValue(normalizedPath);
     insertQuery.addBindValue(QStringLiteral("scanning"));
     insertQuery.addBindValue(now);
     insertQuery.addBindValue(now);
@@ -113,8 +129,8 @@ bool ImportService::importDirectory(const QString &directoryPath, QString *error
 
     SourceRoot sourceRoot;
     sourceRoot.id = insertQuery.lastInsertId().toLongLong();
-    sourceRoot.name = info.fileName().isEmpty() ? info.absoluteFilePath() : info.fileName();
-    sourceRoot.path = info.absoluteFilePath();
+    sourceRoot.name = sourceName;
+    sourceRoot.path = normalizedPath;
     sourceRoot.status = QStringLiteral("scanning");
 
     const auto jobId = m_jobService->engine()->createJob(JobType::Scan,

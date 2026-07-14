@@ -17,6 +17,7 @@ Dialog {
     property bool draftQuickSearchEnabled: true
     property string draftQuickSearchShortcut: "Alt+Space"
     property bool draftStartAtLogin: false
+    property int draftCloseButtonBehavior: 0
     property int draftAnalysisMode: 0
     property int draftFrameInterval: 10
     property int draftThumbnailFrameIndex: 3
@@ -54,6 +55,7 @@ Dialog {
             draftQuickSearchEnabled = viewModel.quickSearchEnabled
             draftQuickSearchShortcut = viewModel.quickSearchShortcut
             draftStartAtLogin = viewModel.startAtLogin
+            draftCloseButtonBehavior = viewModel.closeButtonBehavior
             draftAnalysisMode = viewModel.analysisMode
             draftFrameInterval = viewModel.frameInterval
             draftThumbnailFrameIndex = viewModel.thumbnailFrameIndex
@@ -146,6 +148,7 @@ Dialog {
                             root.draftQuickSearchEnabled,
                             root.draftQuickSearchShortcut,
                             root.draftStartAtLogin,
+                            root.draftCloseButtonBehavior,
                             root.draftAnalysisMode,
                             root.draftFrameInterval,
                             root.draftThumbnailFrameIndex,
@@ -213,11 +216,10 @@ Dialog {
                                 font.pixelSize: root.bodyFontSize
                             }
 
-                            Switch {
+                            ThemedSwitch {
                                 checked: root.draftAutoInstallUpdates
                                 text: checked ? "下载完成后自动安装" : "下载完成后询问"
                                 font.pixelSize: root.bodyFontSize
-                                palette.text: Theme.text
                                 onToggled: {
                                     root.draftAutoInstallUpdates = checked
                                     if (viewModel) {
@@ -313,10 +315,10 @@ Dialog {
                                 font.pixelSize: root.bodyFontSize
                             }
 
-                            Switch {
+                            ThemedSwitch {
                                 checked: root.draftQuickSearchEnabled
                                 text: checked ? "已启用" : "已关闭"
-                                palette.text: Theme.text
+                                font.pixelSize: root.bodyFontSize
                                 onToggled: root.draftQuickSearchEnabled = checked
                             }
 
@@ -376,10 +378,10 @@ Dialog {
                                 font.pixelSize: root.bodyFontSize
                             }
 
-                            Switch {
+                            ThemedSwitch {
                                 checked: root.draftStartAtLogin
                                 text: checked ? "登录后在托盘运行" : "不自动启动"
-                                palette.text: Theme.text
+                                font.pixelSize: root.bodyFontSize
                                 onToggled: root.draftStartAtLogin = checked
                             }
                         }
@@ -455,6 +457,41 @@ Dialog {
                             }
 
                             Item { Layout.fillWidth: true }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Text {
+                                Layout.preferredWidth: 88
+                                Layout.alignment: Qt.AlignVCenter
+                                text: "关闭按钮"
+                                color: Theme.muted
+                                font.pixelSize: root.bodyFontSize
+                            }
+
+                            ThemedComboBox {
+                                Layout.preferredWidth: 220
+                                Layout.preferredHeight: root.controlHeight
+                                font.pixelSize: root.bodyFontSize
+                                model: [
+                                    { label: "每次询问", value: 0 },
+                                    { label: "最小化到托盘", value: 1 },
+                                    { label: "直接退出软件", value: 2 }
+                                ]
+                                textRole: "label"
+                                currentIndex: root.draftCloseButtonBehavior
+                                onActivated: root.draftCloseButtonBehavior = model[index].value
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "选择点击主窗口关闭按钮时的默认行为"
+                                color: Theme.weak
+                                font.pixelSize: 12
+                                wrapMode: Text.Wrap
+                            }
                         }
 
                     }
@@ -621,34 +658,34 @@ Dialog {
                                     font.weight: Font.DemiBold
                                 }
 
-                                Switch {
+                                ThemedSwitch {
                                     checked: root.draftLocalOnlySearch
                                     text: "仅本地搜索（不发起任何搜索模型网络请求）"
-                                    palette.text: Theme.text
+                                    font.pixelSize: root.bodyFontSize
                                     onToggled: root.draftLocalOnlySearch = checked
                                 }
 
-                                Switch {
+                                ThemedSwitch {
                                     enabled: !root.draftLocalOnlySearch
                                     checked: root.draftSearchAssistantEnabled
                                     text: "使用视觉语言模型辅助理解自然语言查询"
-                                    palette.text: enabled ? Theme.text : Theme.weak
+                                    font.pixelSize: root.bodyFontSize
                                     onToggled: root.draftSearchAssistantEnabled = checked
                                 }
 
-                                Switch {
+                                ThemedSwitch {
                                     enabled: !root.draftLocalOnlySearch
                                     checked: root.draftFrameRerankEnabled
                                     text: "使用视觉语言模型复核前 8 个候选帧"
-                                    palette.text: enabled ? Theme.text : Theme.weak
+                                    font.pixelSize: root.bodyFontSize
                                     onToggled: root.draftFrameRerankEnabled = checked
                                 }
 
-                                Switch {
+                                ThemedSwitch {
                                     enabled: !root.draftLocalOnlySearch && root.draftFrameRerankEnabled
                                     checked: root.draftAllowSearchFrameUpload
                                     text: "允许将候选帧缩略图发送到已配置的模型接口"
-                                    palette.text: enabled ? Theme.text : Theme.weak
+                                    font.pixelSize: root.bodyFontSize
                                     onToggled: root.draftAllowSearchFrameUpload = checked
                                 }
 
