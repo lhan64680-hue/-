@@ -27,9 +27,17 @@ public:
     bool removeProjectReference(const QString &projectUuid, const QString &databasePath, QString *errorMessage);
 
 private:
-    bool initializeSchema(QSqlDatabase &db, QString *errorMessage);
+    bool initializeSchema(QSqlDatabase &db, bool databaseExistedBeforeOpen, QString *errorMessage);
     bool createSchema(QSqlDatabase &db, QString *errorMessage);
     bool ensureSchemaCompatibility(QSqlDatabase &db, QString *errorMessage);
+    bool migrateToVersion8(QSqlDatabase &db, QString *errorMessage);
+    bool migrateToVersion9(QSqlDatabase &db, QString *errorMessage);
+    bool migrateToVersion10(QSqlDatabase &db, QString *errorMessage);
+    bool migrateToVersion11(QSqlDatabase &db, QString *errorMessage);
+    bool ensureFolderSchemaCompatibility(QSqlDatabase &db, QString *errorMessage);
+    bool ensureVisualAnalysisSchemaCompatibility(QSqlDatabase &db, QString *errorMessage);
+    bool ensureSemanticSearchSchemaCompatibility(QSqlDatabase &db, QString *errorMessage);
+    bool ensureCaptureTimeSchemaCompatibility(QSqlDatabase &db, QString *errorMessage);
     int currentSchemaVersion(QSqlDatabase &db) const;
     bool setSchemaVersion(QSqlDatabase &db, int version, QString *errorMessage) const;
 

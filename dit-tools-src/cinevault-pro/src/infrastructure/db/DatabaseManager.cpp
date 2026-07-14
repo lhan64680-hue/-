@@ -1,6 +1,11 @@
 #include "infrastructure/db/DatabaseManager.h"
 
+#include "infrastructure/db/DatabaseMigration.h"
+#include "shared/FolderPathMetadata.h"
+
+#include <QDateTime>
 #include <QFileInfo>
+#include <QHash>
 #include <QList>
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -85,6 +90,9 @@ bool DatabaseManager::openProjectDatabase(const QString &databaseFilePath, QStri
 {
     closeProjectDatabase();
 
+    const QFileInfo databaseInfo(databaseFilePath);
+    const bool databaseExistedBeforeOpen = databaseInfo.exists() && databaseInfo.isFile() && databaseInfo.size() > 0;
+
     auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_mainConnectionName);
     db.setDatabaseName(databaseFilePath);
     if (!db.open()) {
@@ -94,7 +102,7 @@ bool DatabaseManager::openProjectDatabase(const QString &databaseFilePath, QStri
         return false;
     }
 
-    if (!initializeSchema(db, errorMessage)) {
+    if (!initializeSchema(db, databaseExistedBeforeOpen, errorMessage)) {
         db.close();
         db = QSqlDatabase();
         QSqlDatabase::removeDatabase(m_mainConnectionName);
@@ -166,30 +174,64 @@ void DatabaseManager::closeThreadConnection(const QString &connectionName) const
     QSqlDatabase::removeDatabase(connectionName);
 }
 
-bool DatabaseManager::initializeSchema(QSqlDatabase &db, QString *errorMessage)
+bool DatabaseManager::initializeSchema(QSqlDatabase &db, bool databaseExistedBeforeOpen, QString *errorMessage)
 {
-    if (!createBaseSchema(db, errorMessage)) {
+    auto version = currentSchemaVersion(db);
+    if (version < 3
+        && !DatabaseMigration::createUpgradeBackup(db, 3, databaseExistedBeforeOpen, errorMessage)) {
         return false;
     }
-    if (!ensureBaseSchemaCompatibility(db, errorMessage)) {
+    if (!DatabaseMigration::configureSqlite(db, errorMessage)) {
+        return false;
+    }
+    if (!db.transaction()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("无法开始项目数据库迁移事务：%1").arg(db.lastError().text());
+        }
         return false;
     }
 
-    auto version = currentSchemaVersion(db);
+    auto rollback = [&db]() {
+        db.rollback();
+        return false;
+    };
+    if (!createBaseSchema(db, errorMessage)) {
+        return rollback();
+    }
+    if (!ensureBaseSchemaCompatibility(db, errorMessage)) {
+        return rollback();
+    }
+
     if (version < 1) {
         version = 1;
         if (!setSchemaVersion(db, version, errorMessage)) {
-            return false;
+            return rollback();
         }
     }
 
     if (version < 2) {
         if (!migrateToVersion2(db, errorMessage)) {
-            return false;
+            return rollback();
         }
         version = 2;
     } else if (!ensureMediaSchemaCompatibility(db, errorMessage)) {
-        return false;
+        return rollback();
+    }
+
+    if (version < 3) {
+        if (!migrateToVersion3(db, errorMessage)) {
+            return rollback();
+        }
+        version = 3;
+    } else if (!ensureFolderSchemaCompatibility(db, errorMessage)) {
+        return rollback();
+    }
+
+    if (!db.commit()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("提交项目数据库迁移失败：%1").arg(db.lastError().text());
+        }
+        return rollback();
     }
 
     m_schemaVersion = version;
@@ -199,9 +241,6 @@ bool DatabaseManager::initializeSchema(QSqlDatabase &db, QString *errorMessage)
 bool DatabaseManager::createBaseSchema(QSqlDatabase &db, QString *errorMessage) const
 {
     const QStringList statements = {
-        QStringLiteral("PRAGMA journal_mode=WAL;"),
-        QStringLiteral("PRAGMA synchronous=NORMAL;"),
-        QStringLiteral("PRAGMA foreign_keys=ON;"),
         QStringLiteral("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);"),
         QStringLiteral("INSERT INTO schema_version(version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM schema_version);"),
         QStringLiteral("CREATE TABLE IF NOT EXISTS project (id TEXT PRIMARY KEY, name TEXT NOT NULL, root_path TEXT NOT NULL, created_at TEXT NOT NULL);"),
@@ -225,10 +264,19 @@ bool DatabaseManager::createBaseSchema(QSqlDatabase &db, QString *errorMessage) 
         QStringLiteral("CREATE TABLE IF NOT EXISTS folder_node ("
                        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
                        "source_root_id INTEGER NOT NULL,"
+                       "name TEXT NOT NULL DEFAULT '',"
                        "absolute_path TEXT NOT NULL,"
+                       "path_key TEXT NOT NULL DEFAULT '',"
                        "relative_path TEXT NOT NULL,"
+                       "parent_relative_path TEXT NOT NULL DEFAULT '',"
+                       "depth INTEGER NOT NULL DEFAULT 0,"
                        "file_count INTEGER NOT NULL DEFAULT 0,"
+                       "direct_file_count INTEGER NOT NULL DEFAULT 0,"
+                       "recursive_file_count INTEGER NOT NULL DEFAULT 0,"
+                       "normalized_date TEXT NOT NULL DEFAULT '',"
+                       "date_anchor TEXT NOT NULL DEFAULT '',"
                        "created_at TEXT NOT NULL,"
+                       "updated_at TEXT NOT NULL DEFAULT '',"
                        "FOREIGN KEY(source_root_id) REFERENCES source_root(id) ON DELETE CASCADE"
                        ");"),
         QStringLiteral("CREATE TABLE IF NOT EXISTS asset_file ("
@@ -484,6 +532,198 @@ bool DatabaseManager::ensureMediaSchemaCompatibility(QSqlDatabase &db, QString *
                              {QStringLiteral("error_message"), QStringLiteral("error_message TEXT")}
                          },
                          errorMessage);
+}
+
+bool DatabaseManager::migrateToVersion3(QSqlDatabase &db, QString *errorMessage) const
+{
+    if (!ensureFolderSchemaCompatibility(db, errorMessage)
+        || !backfillFolderHierarchy(db, errorMessage)) {
+        return false;
+    }
+    return setSchemaVersion(db, 3, errorMessage);
+}
+
+bool DatabaseManager::ensureFolderSchemaCompatibility(QSqlDatabase &db, QString *errorMessage) const
+{
+    if (!ensureColumns(db,
+                       QStringLiteral("folder_node"),
+                       {
+                           {QStringLiteral("name"), QStringLiteral("name TEXT NOT NULL DEFAULT ''")},
+                           {QStringLiteral("path_key"), QStringLiteral("path_key TEXT NOT NULL DEFAULT ''")},
+                           {QStringLiteral("parent_relative_path"), QStringLiteral("parent_relative_path TEXT NOT NULL DEFAULT ''")},
+                           {QStringLiteral("depth"), QStringLiteral("depth INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("direct_file_count"), QStringLiteral("direct_file_count INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("recursive_file_count"), QStringLiteral("recursive_file_count INTEGER NOT NULL DEFAULT 0")},
+                           {QStringLiteral("normalized_date"), QStringLiteral("normalized_date TEXT NOT NULL DEFAULT ''")},
+                           {QStringLiteral("date_anchor"), QStringLiteral("date_anchor TEXT NOT NULL DEFAULT ''")},
+                           {QStringLiteral("updated_at"), QStringLiteral("updated_at TEXT NOT NULL DEFAULT ''")}
+                       },
+                       errorMessage)) {
+        return false;
+    }
+
+    return executeBatch(db,
+                        {
+                            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_folder_node_path_key ON folder_node(source_root_id, path_key);"),
+                            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_folder_node_parent ON folder_node(source_root_id, parent_relative_path, depth);"),
+                            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_folder_node_date ON folder_node(normalized_date, date_anchor);")
+                        },
+                        errorMessage);
+}
+
+bool DatabaseManager::backfillFolderHierarchy(QSqlDatabase &db, QString *errorMessage) const
+{
+    struct SourceInfo {
+        QString name;
+        QString path;
+    };
+    struct FolderInfo {
+        qint64 id = 0;
+        qint64 sourceRootId = 0;
+        QString rootName;
+        QString absolutePath;
+        QString relativePath;
+        qint64 directFileCount = 0;
+        qint64 recursiveFileCount = 0;
+    };
+
+    QHash<qint64, SourceInfo> sources;
+    QSqlQuery sourceQuery(db);
+    if (!sourceQuery.exec(QStringLiteral("SELECT id, name, path FROM source_root ORDER BY id"))) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("读取项目素材源失败：%1").arg(sourceQuery.lastError().text());
+        }
+        return false;
+    }
+    while (sourceQuery.next()) {
+        sources.insert(sourceQuery.value(0).toLongLong(),
+                       {sourceQuery.value(1).toString(), sourceQuery.value(2).toString()});
+    }
+
+    const auto now = QDateTime::currentDateTime().toString(Qt::ISODate);
+    for (auto it = sources.cbegin(); it != sources.cend(); ++it) {
+        bool hasRoot = false;
+        QSqlQuery roots(db);
+        roots.prepare(QStringLiteral("SELECT relative_path FROM folder_node WHERE source_root_id = ?"));
+        roots.addBindValue(it.key());
+        if (!roots.exec()) {
+            if (errorMessage) {
+                *errorMessage = roots.lastError().text();
+            }
+            return false;
+        }
+        while (roots.next()) {
+            if (FolderPathMetadata::normalizeRelativePath(roots.value(0).toString()).isEmpty()) {
+                hasRoot = true;
+                break;
+            }
+        }
+        if (hasRoot) {
+            continue;
+        }
+
+        const auto date = FolderPathMetadata::inferDate(it.value().name, QString());
+        QSqlQuery insertRoot(db);
+        insertRoot.prepare(QStringLiteral(
+            "INSERT INTO folder_node "
+            "(source_root_id, name, absolute_path, path_key, relative_path, parent_relative_path, depth, file_count, "
+            "direct_file_count, recursive_file_count, normalized_date, date_anchor, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, '', '', 0, 0, 0, 0, ?, ?, ?, ?)"));
+        insertRoot.addBindValue(it.key());
+        insertRoot.addBindValue(FolderPathMetadata::folderName(it.value().path, it.value().name));
+        insertRoot.addBindValue(it.value().path);
+        insertRoot.addBindValue(FolderPathMetadata::normalizedPathKey(it.value().path));
+        insertRoot.addBindValue(date.normalizedDate);
+        insertRoot.addBindValue(date.anchorRelativePath);
+        insertRoot.addBindValue(now);
+        insertRoot.addBindValue(now);
+        if (!insertRoot.exec()) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("补建素材源根目录失败：%1").arg(insertRoot.lastError().text());
+            }
+            return false;
+        }
+    }
+
+    QVector<FolderInfo> folders;
+    QHash<QString, int> folderIndexes;
+    QSqlQuery folderQuery(db);
+    if (!folderQuery.exec(QStringLiteral(
+            "SELECT fn.id, fn.source_root_id, fn.absolute_path, fn.relative_path, COALESCE(sr.name, '') "
+            "FROM folder_node fn LEFT JOIN source_root sr ON sr.id = fn.source_root_id ORDER BY fn.id"))) {
+        if (errorMessage) {
+            *errorMessage = folderQuery.lastError().text();
+        }
+        return false;
+    }
+    while (folderQuery.next()) {
+        FolderInfo folder;
+        folder.id = folderQuery.value(0).toLongLong();
+        folder.sourceRootId = folderQuery.value(1).toLongLong();
+        folder.absolutePath = folderQuery.value(2).toString();
+        folder.relativePath = FolderPathMetadata::normalizeRelativePath(folderQuery.value(3).toString());
+        folder.rootName = folderQuery.value(4).toString();
+        const auto index = folders.size();
+        folders.append(folder);
+        folderIndexes.insert(QStringLiteral("%1|%2")
+                                 .arg(folder.sourceRootId)
+                                 .arg(folder.relativePath.toCaseFolded()),
+                             index);
+    }
+
+    QSqlQuery assetQuery(db);
+    if (!assetQuery.exec(QStringLiteral("SELECT source_root_id, relative_path FROM asset_file"))) {
+        if (errorMessage) {
+            *errorMessage = assetQuery.lastError().text();
+        }
+        return false;
+    }
+    while (assetQuery.next()) {
+        const auto sourceRootId = assetQuery.value(0).toLongLong();
+        const auto parentPath = FolderPathMetadata::parentRelativePath(assetQuery.value(1).toString());
+        const auto directKey = QStringLiteral("%1|%2").arg(sourceRootId).arg(parentPath.toCaseFolded());
+        const auto directIndex = folderIndexes.value(directKey, -1);
+        if (directIndex >= 0) {
+            ++folders[directIndex].directFileCount;
+        }
+        for (const auto &ancestor : FolderPathMetadata::ancestorRelativePaths(parentPath)) {
+            const auto key = QStringLiteral("%1|%2").arg(sourceRootId).arg(ancestor.toCaseFolded());
+            const auto index = folderIndexes.value(key, -1);
+            if (index >= 0) {
+                ++folders[index].recursiveFileCount;
+            }
+        }
+    }
+
+    QSqlQuery update(db);
+    update.prepare(QStringLiteral(
+        "UPDATE folder_node SET name = ?, path_key = ?, relative_path = ?, parent_relative_path = ?, depth = ?, "
+        "file_count = ?, direct_file_count = ?, recursive_file_count = ?, normalized_date = ?, date_anchor = ?, "
+        "updated_at = ? WHERE id = ?"));
+    for (const auto &folder : folders) {
+        const auto fallbackName = sources.value(folder.sourceRootId).name;
+        const auto date = FolderPathMetadata::inferDate(folder.rootName, folder.relativePath);
+        update.addBindValue(FolderPathMetadata::folderName(folder.absolutePath, fallbackName));
+        update.addBindValue(FolderPathMetadata::normalizedPathKey(folder.absolutePath));
+        update.addBindValue(folder.relativePath);
+        update.addBindValue(FolderPathMetadata::parentRelativePath(folder.relativePath));
+        update.addBindValue(FolderPathMetadata::depth(folder.relativePath));
+        update.addBindValue(folder.directFileCount);
+        update.addBindValue(folder.directFileCount);
+        update.addBindValue(folder.recursiveFileCount);
+        update.addBindValue(date.normalizedDate);
+        update.addBindValue(date.anchorRelativePath);
+        update.addBindValue(now);
+        update.addBindValue(folder.id);
+        if (!update.exec()) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("回填项目目录层级失败：%1").arg(update.lastError().text());
+            }
+            return false;
+        }
+        update.finish();
+    }
+    return true;
 }
 
 int DatabaseManager::currentSchemaVersion(QSqlDatabase &db) const

@@ -45,9 +45,17 @@ struct SourceRoot {
 struct FolderNode {
     qint64 id = 0;
     qint64 sourceRootId = 0;
+    QString name;
     QString absolutePath;
+    QString pathKey;
     QString relativePath;
+    QString parentRelativePath;
+    int depth = 0;
     qint64 fileCount = 0;
+    qint64 directFileCount = 0;
+    qint64 recursiveFileCount = 0;
+    QString normalizedDate;
+    QString dateAnchor;
 };
 
 struct AssetFile {
@@ -130,13 +138,25 @@ struct FrameExtractionRequest {
     int frameInterval = 10;
     int maxWidth = 1920;
     int maxHeight = 1080;
+    QVector<int> requestedFrameNumbers;
+    bool preserveExistingFrames = false;
 };
 
 struct FrameExtractionResult {
     qint64 assetId = 0;
     bool success = false;
+    int sourceFrameCount = 0;
+    int frameInterval = 1;
     QVector<ExtractedFrame> frames;
     QString errorMessage;
+};
+
+struct VisionEntityFact {
+    QString category;
+    QString label;
+    QStringList colors;
+    QStringList materials;
+    QStringList attributes;
 };
 
 struct VisionFrameAnalysis {
@@ -145,6 +165,11 @@ struct VisionFrameAnalysis {
     QStringList objects;
     QString actions;
     QString setting;
+    QVector<VisionEntityFact> entities;
+    QString ocrText;
+    QStringList ocrBlocks;
+    int structuredProfileVersion = 1;
+    bool factsComplete = false;
 };
 
 struct VisionVideoSummary {
@@ -185,6 +210,8 @@ struct GlobalVideoAsset {
     QString projectDatabasePath;
     qint64 sourceRootId = 0;
     QString sourceRootName;
+    QString folderKey;
+    bool available = true;
     qint64 assetId = 0;
     QString fileName;
     QString extension;
@@ -193,6 +220,10 @@ struct GlobalVideoAsset {
     AssetType assetType = AssetType::Video;
     qint64 sizeBytes = 0;
     QString modifiedAt;
+    QString captureTime;
+    QString captureDate;
+    QString captureTimeSource;
+    double captureTimeConfidence = 0.0;
     qint64 durationMs = 0;
     QString thumbnailPath;
     ThumbnailStatus thumbnailStatus = ThumbnailStatus::Pending;
@@ -208,6 +239,12 @@ struct GlobalVideoAsset {
     QString updatedAt;
     QString analyzedAt;
     QString confirmedAt;
+    double searchScore = 0.0;
+    double searchConfidence = 0.0;
+    QStringList searchReasons;
+    int matchedFrameNumber = -1;
+    qint64 matchedTimestampMs = -1;
+    QString matchedFrameCaption;
     VideoAnalysisTask analysisTask;
 };
 
@@ -222,11 +259,32 @@ struct FrameAnalysisRecord {
     QStringList objects;
     QString actions;
     QString setting;
+    QVector<VisionEntityFact> entities;
+    QString ocrText;
+    QStringList ocrBlocks;
+    int structuredProfileVersion = 1;
+    bool factsComplete = false;
+    QString modelName;
+    QString promptVersion;
+    QString analyzedAt;
     QString errorMessage;
     FrameAnalysisState analysisState = FrameAnalysisState::Pending;
     int retryCount = 0;
     int lastHttpStatus = 0;
     QString lastAttemptAt;
+};
+
+struct VisualAnalysisPlan {
+    QString videoKey;
+    QString samplingPolicy;
+    int frameInterval = 1;
+    int structuredProfileVersion = 1;
+    int sourceFrameCount = 0;
+    int plannedFrameCount = 0;
+    qint64 assetSizeBytes = 0;
+    QString assetModifiedAt;
+    QString createdAt;
+    QString updatedAt;
 };
 
 struct FeedbackAttachment {

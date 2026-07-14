@@ -21,12 +21,14 @@
 #include "application/MediaTaskService.h"
 #include "application/ProjectService.h"
 #include "application/ReportExportService.h"
+#include "application/SearchDocumentSyncService.h"
 #include "application/UpdateService.h"
 #include "application/VideoAnalysisService.h"
 #include "core/media/MediaProbeEngine.h"
 #include "core/jobs/JobEngine.h"
 #include "core/scan/ScanEngine.h"
 #include "core/search/SearchEngine.h"
+#include "core/search/SemanticSearchIndexService.h"
 #include "core/thumbnail/ThumbnailEngine.h"
 #include "infrastructure/db/DatabaseManager.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
@@ -68,7 +70,9 @@ AppContext::AppContext(QObject *parent)
 #else
     , m_databaseManager(new DatabaseManager(this))
     , m_globalDatabaseManager(new GlobalDatabaseManager(this))
-    , m_searchEngine(new SearchEngine)
+    , m_semanticSearchIndexService(new SemanticSearchIndexService(m_globalDatabaseManager))
+    , m_searchDocumentSyncService(new SearchDocumentSyncService(m_globalDatabaseManager, m_semanticSearchIndexService, this))
+    , m_searchEngine(new SearchEngine(m_globalDatabaseManager, m_semanticSearchIndexService))
     , m_ffmpegAdapter(new FFmpegAdapter)
     , m_jobEngine(new JobEngine(m_databaseManager, this))
     , m_mediaProbeEngine(new MediaProbeEngine(m_ffmpegAdapter, this))
@@ -91,7 +95,7 @@ AppContext::AppContext(QObject *parent)
     , m_projectLibraryViewModel(new ProjectLibraryViewModel(m_projectService, this))
     , m_sourceRailViewModel(new SourceRailViewModel(m_libraryQueryService, this))
     , m_libraryWorkspaceViewModel(new LibraryWorkspaceViewModel(m_libraryQueryService, this))
-    , m_materialCenterViewModel(new MaterialCenterViewModel(m_materialCenterQueryService, m_materialCatalogSyncService, m_videoAnalysisService, m_projectService, &m_settings, this))
+    , m_materialCenterViewModel(new MaterialCenterViewModel(m_materialCenterQueryService, m_materialCatalogSyncService, m_videoAnalysisService, m_projectService, &m_settings, m_visionApiClient, this))
     , m_inspectorViewModel(new InspectorViewModel(m_libraryQueryService, this))
     , m_jobTimelineViewModel(new JobTimelineViewModel(m_jobService, m_videoAnalysisService, this))
     , m_reportWorkspaceViewModel(new ReportWorkspaceViewModel(m_projectService, m_libraryQueryService, m_reportExportService, this))
@@ -100,6 +104,9 @@ AppContext::AppContext(QObject *parent)
 {
     QString globalDbError;
     m_globalDatabaseManager->openDatabase(&globalDbError);
+    if (m_globalDatabaseManager->isOpen()) {
+        m_searchDocumentSyncService->scheduleFullSync();
+    }
 
     connect(m_projectService, &ProjectService::projectChanged, m_shellViewModel, &ShellViewModel::resetProjectUiState);
     connect(m_projectService, &ProjectService::projectChanged, m_jobEngine, &JobEngine::clearJobs);
@@ -121,6 +128,12 @@ AppContext::AppContext(QObject *parent)
     connect(m_libraryQueryService, &LibraryQueryService::dataChanged, m_sourceRailViewModel, &SourceRailViewModel::reload);
     connect(m_libraryQueryService, &LibraryQueryService::dataChanged, m_inspectorViewModel, &InspectorViewModel::reload);
     connect(m_libraryQueryService, &LibraryQueryService::dataChanged, m_materialCatalogSyncService, &MaterialCatalogSyncService::syncCurrentProject);
+    connect(m_materialCatalogSyncService, &MaterialCatalogSyncService::catalogChanged,
+            m_searchDocumentSyncService, &SearchDocumentSyncService::scheduleFullSync);
+    connect(m_videoAnalysisService, &VideoAnalysisService::catalogChanged,
+            m_searchDocumentSyncService, &SearchDocumentSyncService::scheduleFullSync);
+    connect(m_settingsViewModel, &SettingsViewModel::searchSettingsChanged,
+            m_materialCenterViewModel, &MaterialCenterViewModel::reload);
 
     connect(m_shellViewModel, &ShellViewModel::searchRequested, this, [this](const QString &text) {
         if (m_shellViewModel->currentWorkspace() == static_cast<int>(WorkspaceId::ProjectLibrary)) {
@@ -168,3 +181,71 @@ void AppContext::expose(QQmlApplicationEngine &engine)
     context->setContextProperty(QStringLiteral("feedbackVm"), m_feedbackViewModel);
 #endif
 }
+
+#if !CINEVAULT_BUILD_MINIMAL_GUI
+bool AppContext::startAnalysisProbe(const QString &projectPath,
+                                    const QString &videoKey,
+                                    QString *errorMessage)
+{
+    const auto normalizedProjectPath = projectPath.trimmed();
+    const auto normalizedVideoKey = videoKey.trimmed();
+    if (normalizedProjectPath.isEmpty() || normalizedVideoKey.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("端到端解析测试缺少项目路径或素材键");
+        }
+        return false;
+    }
+    if (!m_projectService || !m_materialCatalogSyncService || !m_videoAnalysisService) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("端到端解析测试所需服务未初始化");
+        }
+        return false;
+    }
+
+    m_analysisProbeVideoKey = normalizedVideoKey;
+    m_analysisProbeEnqueued = false;
+    m_analysisProbeFinished = false;
+
+    connect(m_videoAnalysisService,
+            &VideoAnalysisService::analysisProgressChanged,
+            this,
+            [this](const QString &reportedVideoKey,
+                   qint64 progress,
+                   const QString &detail,
+                   int state,
+                   const QString &reportedError) {
+                if (reportedVideoKey != m_analysisProbeVideoKey || m_analysisProbeFinished) {
+                    return;
+                }
+                emit analysisProbeProgress(progress, detail, state, reportedError);
+                if (state == static_cast<int>(JobState::Completed)) {
+                    m_analysisProbeFinished = true;
+                    emit analysisProbeFinished(true, detail);
+                } else if (state == static_cast<int>(JobState::Failed)) {
+                    m_analysisProbeFinished = true;
+                    emit analysisProbeFinished(false,
+                                               reportedError.trimmed().isEmpty() ? detail : reportedError);
+                }
+            });
+
+    connect(m_materialCatalogSyncService,
+            &MaterialCatalogSyncService::catalogChanged,
+            this,
+            [this]() {
+                if (m_analysisProbeEnqueued || m_analysisProbeFinished) {
+                    return;
+                }
+                m_analysisProbeEnqueued = true;
+                QString enqueueError;
+                if (!m_videoAnalysisService->enqueueVideo(m_analysisProbeVideoKey, &enqueueError)) {
+                    m_analysisProbeFinished = true;
+                    emit analysisProbeFinished(false, enqueueError);
+                }
+            });
+
+    if (!m_projectService->openProject(normalizedProjectPath, errorMessage)) {
+        return false;
+    }
+    return true;
+}
+#endif

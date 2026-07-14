@@ -10,6 +10,11 @@ Dialog {
     property string draftVisionBaseUrl: ""
     property string draftVisionApiKey: ""
     property string draftVisionModel: ""
+    property bool draftSearchAssistantEnabled: true
+    property bool draftFrameRerankEnabled: true
+    property bool draftLocalOnlySearch: false
+    property bool draftAllowSearchFrameUpload: true
+    property int draftDailySearchModelCallLimit: 100
     property int draftAnalysisMode: 0
     property int draftFrameInterval: 10
     property int draftThumbnailFrameIndex: 3
@@ -40,6 +45,11 @@ Dialog {
             draftVisionBaseUrl = viewModel.visionBaseUrl
             draftVisionApiKey = viewModel.visionApiKey
             draftVisionModel = viewModel.visionModel
+            draftSearchAssistantEnabled = viewModel.searchAssistantEnabled
+            draftFrameRerankEnabled = viewModel.frameRerankEnabled
+            draftLocalOnlySearch = viewModel.localOnlySearch
+            draftAllowSearchFrameUpload = viewModel.allowSearchFrameUpload
+            draftDailySearchModelCallLimit = viewModel.dailySearchModelCallLimit
             draftAnalysisMode = viewModel.analysisMode
             draftFrameInterval = viewModel.frameInterval
             draftThumbnailFrameIndex = viewModel.thumbnailFrameIndex
@@ -125,6 +135,11 @@ Dialog {
                             root.draftVisionBaseUrl,
                             root.draftVisionApiKey,
                             root.draftVisionModel,
+                            root.draftSearchAssistantEnabled,
+                            root.draftFrameRerankEnabled,
+                            root.draftLocalOnlySearch,
+                            root.draftAllowSearchFrameUpload,
+                            root.draftDailySearchModelCallLimit,
                             root.draftAnalysisMode,
                             root.draftFrameInterval,
                             root.draftThumbnailFrameIndex,
@@ -444,6 +459,103 @@ Dialog {
                                 to: 600
                                 value: root.draftAnalysisTimeoutSec
                                 onValueModified: root.draftAnalysisTimeoutSec = value
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            radius: 14
+                            color: Qt.rgba(0.22, 0.48, 0.84, 0.08)
+                            border.width: 1
+                            border.color: Qt.rgba(0.22, 0.48, 0.84, 0.28)
+                            implicitHeight: searchAssistSettings.implicitHeight + 28
+
+                            ColumnLayout {
+                                id: searchAssistSettings
+                                anchors.fill: parent
+                                anchors.margins: 14
+                                spacing: 8
+
+                                Text {
+                                    text: "模型辅助搜索与隐私"
+                                    color: Theme.text
+                                    font.pixelSize: 16
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Switch {
+                                    checked: root.draftLocalOnlySearch
+                                    text: "仅本地搜索（不发起任何搜索模型网络请求）"
+                                    palette.text: Theme.text
+                                    onToggled: root.draftLocalOnlySearch = checked
+                                }
+
+                                Switch {
+                                    enabled: !root.draftLocalOnlySearch
+                                    checked: root.draftSearchAssistantEnabled
+                                    text: "使用视觉语言模型辅助理解自然语言查询"
+                                    palette.text: enabled ? Theme.text : Theme.weak
+                                    onToggled: root.draftSearchAssistantEnabled = checked
+                                }
+
+                                Switch {
+                                    enabled: !root.draftLocalOnlySearch
+                                    checked: root.draftFrameRerankEnabled
+                                    text: "使用视觉语言模型复核前 8 个候选帧"
+                                    palette.text: enabled ? Theme.text : Theme.weak
+                                    onToggled: root.draftFrameRerankEnabled = checked
+                                }
+
+                                Switch {
+                                    enabled: !root.draftLocalOnlySearch && root.draftFrameRerankEnabled
+                                    checked: root.draftAllowSearchFrameUpload
+                                    text: "允许将候选帧缩略图发送到已配置的模型接口"
+                                    palette.text: enabled ? Theme.text : Theme.weak
+                                    onToggled: root.draftAllowSearchFrameUpload = checked
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    enabled: !root.draftLocalOnlySearch
+                                    spacing: 10
+
+                                    Text {
+                                        text: "每日搜索模型调用上限"
+                                        color: parent.enabled ? Theme.muted : Theme.weak
+                                        font.pixelSize: root.bodyFontSize
+                                    }
+
+                                    ThemedSpinBox {
+                                        Layout.preferredWidth: 150
+                                        Layout.preferredHeight: root.controlHeight
+                                        from: 0
+                                        to: 10000
+                                        value: root.draftDailySearchModelCallLimit
+                                        onValueModified: root.draftDailySearchModelCallLimit = value
+                                    }
+
+                                    Text {
+                                        text: root.draftDailySearchModelCallLimit === 0 ? "不限额" : "次/日"
+                                        color: Theme.muted
+                                        font.pixelSize: root.bodyFontSize
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    Text {
+                                        text: viewModel ? viewModel.searchModelBudgetLabel : ""
+                                        color: Theme.blue
+                                        font.pixelSize: 13
+                                    }
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "查询理解只发送搜索文字；候选帧复核会发送最多 8 张缩略图和对应候选 ID。关闭缩略图授权后仍保留本地帧搜索与中央帧卡片。"
+                                    color: Theme.muted
+                                    font.pixelSize: 12
+                                    wrapMode: Text.Wrap
+                                }
                             }
                         }
 

@@ -1,4 +1,5 @@
 #include "infrastructure/network/VisionResponseParser.h"
+#include "shared/SearchConfiguration.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -36,6 +37,18 @@ QJsonValue firstValue(const QJsonObject &object, const QStringList &keys)
     return {};
 }
 
+bool containsAnyKey(const QJsonObject &object, const QStringList &keys)
+{
+    for (auto it = object.constBegin(); it != object.constEnd(); ++it) {
+        for (const auto &key : keys) {
+            if (it.key().compare(key, Qt::CaseInsensitive) == 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 QStringList textListFromValue(const QJsonValue &value);
 
 QString textFromScalarOrObject(const QJsonValue &value)
@@ -47,7 +60,7 @@ QString textFromScalarOrObject(const QJsonValue &value)
         return value.toVariant().toString().trimmed();
     }
     if (!value.isObject()) {
-        return {};
+        return QStringLiteral("");
     }
 
     const auto object = value.toObject();
@@ -133,6 +146,54 @@ QString firstText(const QJsonObject &payload, const QStringList &keys)
 QStringList firstTextList(const QJsonObject &payload, const QStringList &keys)
 {
     return textListFromValue(firstValue(payload, keys));
+}
+
+QStringList textBlocksFromValue(const QJsonValue &value)
+{
+    QStringList blocks;
+    if (value.isArray()) {
+        for (const auto &entry : value.toArray()) {
+            appendUnique(&blocks, textFromScalarOrObject(entry));
+        }
+        return blocks;
+    }
+    appendUnique(&blocks, textFromScalarOrObject(value));
+    return blocks;
+}
+
+QVector<VisionEntityFact> entityFactsFromValue(const QJsonValue &value)
+{
+    QVector<VisionEntityFact> facts;
+    if (!value.isArray()) {
+        return facts;
+    }
+    for (const auto &entry : value.toArray()) {
+        if (!entry.isObject()) {
+            continue;
+        }
+        const auto object = entry.toObject();
+        VisionEntityFact fact;
+        fact.category = firstText(object, {
+            QStringLiteral("category"), QStringLiteral("type"), QStringLiteral("class")
+        }).simplified();
+        fact.label = firstText(object, {
+            QStringLiteral("label"), QStringLiteral("name"), QStringLiteral("object"),
+            QStringLiteral("item"), QStringLiteral("subject")
+        }).simplified();
+        fact.colors = firstTextList(object, {
+            QStringLiteral("colors"), QStringLiteral("color"), QStringLiteral("colours"), QStringLiteral("colour")
+        });
+        fact.materials = firstTextList(object, {
+            QStringLiteral("materials"), QStringLiteral("material"), QStringLiteral("textures"), QStringLiteral("texture")
+        });
+        fact.attributes = firstTextList(object, {
+            QStringLiteral("attributes"), QStringLiteral("attribute"), QStringLiteral("traits"), QStringLiteral("details")
+        });
+        if (!fact.label.isEmpty()) {
+            facts.append(fact);
+        }
+    }
+    return facts;
 }
 
 QString extractMessageContent(const QJsonValue &contentValue)
@@ -353,12 +414,49 @@ std::optional<VisionFrameAnalysis> VisionResponseParser::normalizeFrameAnalysis(
         QStringLiteral("环境"),
         QStringLiteral("地点")
     });
+    const QStringList entityKeys{
+        QStringLiteral("entities"), QStringLiteral("visual_entities"), QStringLiteral("entity_facts")
+    };
+    const QStringList ocrTextKeys{
+        QStringLiteral("ocr_text"), QStringLiteral("visible_text"), QStringLiteral("recognized_text")
+    };
+    const QStringList ocrBlockKeys{
+        QStringLiteral("ocr_blocks"), QStringLiteral("text_blocks"), QStringLiteral("visible_text_blocks")
+    };
+    const auto entityValue = firstValue(payload, entityKeys);
+    const auto ocrTextValue = firstValue(payload, ocrTextKeys);
+    const auto ocrBlockValue = firstValue(payload, ocrBlockKeys);
+    analysis.entities = entityFactsFromValue(entityValue);
+    analysis.ocrText = textFromValue(ocrTextValue);
+    analysis.ocrBlocks = textBlocksFromValue(ocrBlockValue);
+    if (analysis.ocrText.isEmpty() && !analysis.ocrBlocks.isEmpty()) {
+        analysis.ocrText = analysis.ocrBlocks.join(QStringLiteral("\n"));
+    }
+    if (analysis.ocrBlocks.isEmpty() && !analysis.ocrText.isEmpty()) {
+        analysis.ocrBlocks = QStringList{analysis.ocrText};
+    }
+    const auto hasStructuredEntities = containsAnyKey(payload, entityKeys) && entityValue.isArray();
+    const auto hasStructuredOcr = containsAnyKey(payload, ocrTextKeys)
+        && containsAnyKey(payload, ocrBlockKeys)
+        && ocrTextValue.isString()
+        && ocrBlockValue.isArray();
+    analysis.factsComplete = hasStructuredEntities && hasStructuredOcr;
+    analysis.structuredProfileVersion = analysis.factsComplete
+        ? cinevault::searchconfig::kStructuredVisionProfileVersion
+        : 1;
+    if (analysis.objects.isEmpty()) {
+        for (const auto &entity : analysis.entities) {
+            appendUnique(&analysis.objects, entity.label);
+        }
+    }
 
     if (analysis.caption.isEmpty()
         && analysis.tags.isEmpty()
         && analysis.objects.isEmpty()
         && analysis.actions.isEmpty()
-        && analysis.setting.isEmpty()) {
+        && analysis.setting.isEmpty()
+        && analysis.entities.isEmpty()
+        && analysis.ocrText.isEmpty()) {
         if (errorMessage) {
             *errorMessage = QStringLiteral("视觉接口返回帧解析字段为空");
         }

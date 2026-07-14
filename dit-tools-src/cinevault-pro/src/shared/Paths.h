@@ -11,6 +11,8 @@ public:
     static QString fallbackDataRoot();
     static QString resolvedDataRoot();
     static QString frameCacheRoot();
+    static QString semanticSearchRoot();
+    static QString semanticSearchIndexPath();
     static QString frameCacheDirectory(const QString &videoKey);
     static bool clearFrameCache(QString *errorMessage);
     static QString projectRootFromDatabasePath(const QString &databasePath);

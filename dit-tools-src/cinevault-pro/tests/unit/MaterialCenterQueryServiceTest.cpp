@@ -199,9 +199,54 @@ private:
 
         if (!execSql(db,
                      QStringLiteral("INSERT INTO video_frame_analysis "
-                                    "(video_key, frame_number, timestamp_ms, caption, tags_json, objects_json, actions, setting_text, analysis_state) "
+                                    "(video_key, frame_number, timestamp_ms, caption, tags_json, objects_json, actions, setting_text, "
+                                    "entities_json, structured_profile_version, facts_complete, analysis_state) "
                                     "VALUES ('video-1', 1, 1000, '特写镜头里有场记板', '[\"场记板\"]', '[\"摄影机\"]', "
-                                    "'记录镜头信息', '棚内', 1)"),
+                                    "'记录镜头信息', '棚内', "
+                                    "'[{\"label\":\"短裤\",\"colors\":[\"红色\"],\"materials\":[\"牛仔\"],\"attributes\":[]}]', "
+                                    "2, 1, 1)"),
+                     &errorMessage)) {
+            return false;
+        }
+
+        if (!execSql(db,
+                     QStringLiteral(
+                         "INSERT INTO video_frame_analysis "
+                         "(video_key, frame_number, timestamp_ms, image_path, caption, tags_json, objects_json, "
+                         "actions, setting_text, entities_json, structured_profile_version, facts_complete, analysis_state) "
+                         "VALUES ('video-1', 61, 2000, 'G:/projects/alpha/cache/frame-61.jpg', "
+                         "'模特穿着深蓝色牛仔裤坐在窗边', '[\"蓝色\",\"牛仔\",\"室内\"]', "
+                         "'[\"牛仔裤\",\"藤编椅\",\"窗户\"]', '坐在藤编椅上', '室内窗边', "
+                         "'[{\"label\":\"长裤\",\"colors\":[\"蓝色\"],\"materials\":[\"牛仔\"],\"attributes\":[]}]', "
+                         "2, 1, 1)"),
+                     &errorMessage)) {
+            return false;
+        }
+
+        if (!execSql(db,
+                     QStringLiteral(
+                         "INSERT INTO video_frame_analysis "
+                         "(video_key, frame_number, timestamp_ms, caption, entities_json, structured_profile_version, "
+                         "facts_complete, analysis_state) VALUES "
+                         "('other-1', 1, 1000, '红色上衣和蓝色牛仔短裤', "
+                         "'[{\"label\":\"上衣\",\"colors\":[\"红色\"],\"materials\":[],\"attributes\":[]},"
+                         "{\"label\":\"短裤\",\"colors\":[\"蓝色\"],\"materials\":[\"牛仔\"],\"attributes\":[]}]', "
+                         "2, 1, 1), "
+                         "('image-1', 1, 1000, '紫色帽子', "
+                         "'[{\"label\":\"帽子\",\"colors\":[\"紫色\"],\"materials\":[],\"attributes\":[]}]', "
+                         "2, 0, 1)"),
+                     &errorMessage)) {
+            return false;
+        }
+
+        if (!execSql(db,
+                     QStringLiteral(
+                         "INSERT INTO global_folder_node("
+                         "folder_key, project_uuid, project_name, project_database_path, source_root_id, source_root_name, "
+                         "name, absolute_path, path_key, relative_path, normalized_date, is_available) VALUES "
+                         "('folder-camera', 'project-alpha', 'Project Alpha', "
+                         "'G:/projects/alpha/project.cinevault.sqlite', 7, 'Camera A', 'Camera A', "
+                         "'G:/projects/alpha/camera', 'g:/projects/alpha/camera', 'camera', '2026-07-04', 1)"),
                      &errorMessage)) {
             return false;
         }
@@ -490,6 +535,93 @@ private slots:
         QCOMPARE(detail.dimensionAnalyses.size(), 1);
         QCOMPARE(detail.dimensionAnalyses.first().name, QStringLiteral("色彩风格"));
         QVERIFY(detail.dimensionAnalyses.first().detail.contains(QStringLiteral("冷蓝色调")));
+    }
+
+    void searchMaterials_partitionsFolderAndAssetResults()
+    {
+        GlobalDbFixture fixture;
+        QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
+        SearchEngine searchEngine(&fixture.manager);
+        MaterialCenterQueryService service(&fixture.manager, &searchEngine);
+
+        const auto result = service.searchMaterials(
+            QStringLiteral("2026年7月4日 Camera A 文件夹"),
+            {},
+            QDate(2026, 7, 14));
+
+        QCOMPARE(result.folders.size(), 1);
+        QCOMPARE(result.folders.first().folderKey, QStringLiteral("folder-camera"));
+        QCOMPARE(result.folders.first().normalizedDate, QStringLiteral("2026-07-04"));
+        QVERIFY(result.folders.first().score > 0.0);
+    }
+
+    void searchMaterials_requiresPropertiesOnTheSameEntity()
+    {
+        GlobalDbFixture fixture;
+        QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
+        SearchEngine searchEngine(&fixture.manager);
+        MaterialCenterQueryService service(&fixture.manager, &searchEngine);
+
+        const auto result = service.searchMaterials(QStringLiteral("红色牛仔短裤"));
+
+        QCOMPARE(keysFor(result.assets), QStringList{QStringLiteral("video-1")});
+        QVERIFY(!keysFor(result.assets).contains(QStringLiteral("other-1")));
+        QCOMPARE(result.excludedPartialCount, 0);
+    }
+
+    void searchMaterials_excludesAndCountsIncompleteStructuredFacts()
+    {
+        GlobalDbFixture fixture;
+        QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
+        SearchEngine searchEngine(&fixture.manager);
+        MaterialCenterQueryService service(&fixture.manager, &searchEngine);
+
+        const auto result = service.searchMaterials(QStringLiteral("紫色帽子"));
+
+        QVERIFY(result.assets.isEmpty());
+        QCOMPARE(result.excludedPartialCount, 1);
+    }
+
+    void searchMaterials_returnsDetailedFrameCardsForFrameIntent()
+    {
+        GlobalDbFixture fixture;
+        QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
+        SearchEngine searchEngine(&fixture.manager);
+        MaterialCenterQueryService service(&fixture.manager, &searchEngine);
+
+        const auto result = service.searchMaterials(QStringLiteral("包含了蓝色牛仔裤的帧"));
+
+        QCOMPARE(result.parsedQuery.resultTarget, SearchResultTarget::Frames);
+        QVERIFY(result.assets.isEmpty());
+        QVERIFY(result.folders.isEmpty());
+        QCOMPARE(result.frames.size(), 1);
+        const auto &frame = result.frames.first();
+        QCOMPARE(frame.frameKey, QStringLiteral("frame:video-1:61"));
+        QCOMPARE(frame.videoKey, QStringLiteral("video-1"));
+        QCOMPARE(frame.fileName, QStringLiteral("interview.mov"));
+        QCOMPARE(frame.frameNumber, 61);
+        QCOMPARE(frame.timestampMs, qint64{2000});
+        QCOMPARE(frame.imagePath, QStringLiteral("G:/projects/alpha/cache/frame-61.jpg"));
+        QVERIFY(frame.caption.contains(QStringLiteral("深蓝色牛仔裤")));
+        QVERIFY(frame.tags.contains(QStringLiteral("牛仔")));
+        QVERIFY(frame.objects.contains(QStringLiteral("牛仔裤")));
+        QVERIFY(frame.reasons.contains(QStringLiteral("同一帧、同一视觉对象属性已验证")));
+    }
+
+    void searchMaterials_usesSameFrameTextFallbackForLegacyFrameFacts()
+    {
+        GlobalDbFixture fixture;
+        QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
+        SearchEngine searchEngine(&fixture.manager);
+        MaterialCenterQueryService service(&fixture.manager, &searchEngine);
+
+        const auto result = service.searchMaterials(QStringLiteral("紫色帽子的帧"));
+
+        QCOMPARE(result.frames.size(), 1);
+        QCOMPARE(result.frames.first().frameKey, QStringLiteral("frame:image-1:1"));
+        QVERIFY(!result.frames.first().factsComplete);
+        QVERIFY(result.frames.first().reasons.contains(
+            QStringLiteral("同一帧文本证据命中（结构化事实不完整）")));
     }
 };
 

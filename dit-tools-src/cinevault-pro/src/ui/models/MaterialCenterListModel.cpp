@@ -25,6 +25,26 @@ bool canAnalyzeAsset(const GlobalVideoAsset &asset)
         || asset.assetType == AssetType::Image
         || isSupportedTextAsset(asset.assetType, asset.extension);
 }
+
+QString captureTimeSourceLabel(const QString &source)
+{
+    if (source == QStringLiteral("quicktime_creation_date")) return QStringLiteral("QuickTime 拍摄时间");
+    if (source == QStringLiteral("exif_datetime_original")) return QStringLiteral("EXIF 原始拍摄时间");
+    if (source == QStringLiteral("media_creation_time")) return QStringLiteral("媒体创建时间");
+    if (source == QStringLiteral("folder_date")) return QStringLiteral("目录日期推断");
+    if (source == QStringLiteral("file_modified_time")) return QStringLiteral("文件修改时间兜底");
+    return {};
+}
+
+QString timestampLabel(qint64 timestampMs)
+{
+    if (timestampMs < 0) return {};
+    const auto seconds = timestampMs / 1000;
+    return QStringLiteral("%1:%2:%3")
+        .arg(seconds / 3600, 2, 10, QLatin1Char('0'))
+        .arg((seconds % 3600) / 60, 2, 10, QLatin1Char('0'))
+        .arg(seconds % 60, 2, 10, QLatin1Char('0'));
+}
 }
 
 MaterialCenterListModel::MaterialCenterListModel(QObject *parent)
@@ -65,10 +85,19 @@ QVariant MaterialCenterListModel::data(const QModelIndex &index, int role) const
     case ThumbnailLoadingRole: return item.thumbnailStatus == ThumbnailStatus::Running && item.thumbnailPath.isEmpty();
     case UpdatedAtRole: return item.updatedAt;
     case DurationMsRole: return item.durationMs;
+    case CaptureDateRole: return item.captureDate;
+    case CaptureTimeSourceLabelRole: return captureTimeSourceLabel(item.captureTimeSource);
+    case SearchScoreRole: return item.searchScore;
+    case SearchConfidenceRole: return item.searchConfidence;
+    case SearchReasonsRole: return item.searchReasons.join(QStringLiteral(" · "));
+    case MatchedTimestampMsRole: return item.matchedTimestampMs;
+    case MatchedTimestampLabelRole: return timestampLabel(item.matchedTimestampMs);
+    case MatchedFrameCaptionRole: return item.matchedFrameCaption;
     case ErrorMessageRole: return item.errorMessage;
     case CanAnalyzeRole: return canAnalyzeAsset(item);
     case CanConfirmRole: return item.analysisStatus == VideoAnalysisStatus::Ready
             && item.confirmationStatus != ConfirmationStatus::Confirmed;
+    case ResultRankRole: return index.row() + 1;
     default: return {};
     }
 }
@@ -96,9 +125,18 @@ QHash<int, QByteArray> MaterialCenterListModel::roleNames() const
         {ThumbnailLoadingRole, "thumbnailLoading"},
         {UpdatedAtRole, "updatedAt"},
         {DurationMsRole, "durationMs"},
+        {CaptureDateRole, "captureDate"},
+        {CaptureTimeSourceLabelRole, "captureTimeSourceLabel"},
+        {SearchScoreRole, "searchScore"},
+        {SearchConfidenceRole, "searchConfidence"},
+        {SearchReasonsRole, "searchReasons"},
+        {MatchedTimestampMsRole, "matchedTimestampMs"},
+        {MatchedTimestampLabelRole, "matchedTimestampLabel"},
+        {MatchedFrameCaptionRole, "matchedFrameCaption"},
         {ErrorMessageRole, "errorMessage"},
         {CanAnalyzeRole, "canAnalyze"},
-        {CanConfirmRole, "canConfirm"}
+        {CanConfirmRole, "canConfirm"},
+        {ResultRankRole, "resultRank"}
     };
 }
 

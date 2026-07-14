@@ -15,8 +15,10 @@
         "CMAKE_BUILD_TYPE": "Release",
         "QT_ROOT": "$env{QT_ROOT}",
         "FFMPEG_DEV_ROOT": "$env{FFMPEG_DEV_ROOT}",
+        "CINEVAULT_LOCAL_SEARCH_CACHE_ROOT": "$env{LOCALAPPDATA}/CineVault/BuildCache/local-search-v1",
         "CINEVAULT_BUILD_MINIMAL_GUI": "ON",
-        "CINEVAULT_ENABLE_FFMPEG": "OFF"
+        "CINEVAULT_ENABLE_FFMPEG": "OFF",
+        "CINEVAULT_ENABLE_LOCAL_SEARCH": "OFF"
       }
     },
     {
@@ -42,7 +44,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CINEVAULT_BUILD_MINIMAL_GUI": "OFF",
-        "CINEVAULT_ENABLE_FFMPEG": "OFF"
+        "CINEVAULT_ENABLE_FFMPEG": "OFF",
+        "CINEVAULT_ENABLE_LOCAL_SEARCH": "ON"
       }
     },
     {
@@ -52,7 +55,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CINEVAULT_BUILD_MINIMAL_GUI": "OFF",
-        "CINEVAULT_ENABLE_FFMPEG": "OFF"
+        "CINEVAULT_ENABLE_FFMPEG": "OFF",
+        "CINEVAULT_ENABLE_LOCAL_SEARCH": "ON"
       }
     },
     {
@@ -62,7 +66,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CINEVAULT_BUILD_MINIMAL_GUI": "OFF",
-        "CINEVAULT_ENABLE_FFMPEG": "ON"
+        "CINEVAULT_ENABLE_FFMPEG": "ON",
+        "CINEVAULT_ENABLE_LOCAL_SEARCH": "ON"
       }
     },
     {
@@ -72,7 +77,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CINEVAULT_BUILD_MINIMAL_GUI": "OFF",
-        "CINEVAULT_ENABLE_FFMPEG": "ON"
+        "CINEVAULT_ENABLE_FFMPEG": "ON",
+        "CINEVAULT_ENABLE_LOCAL_SEARCH": "ON"
       }
     }
   ],

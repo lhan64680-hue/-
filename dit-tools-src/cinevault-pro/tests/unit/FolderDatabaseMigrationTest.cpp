@@ -1,0 +1,618 @@
+#include "infrastructure/db/DatabaseManager.h"
+#include "infrastructure/db/DatabaseMigration.h"
+#include "infrastructure/db/GlobalDatabaseManager.h"
+
+#include <QtTest>
+
+#include <QDir>
+#include <QFile>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QTemporaryDir>
+
+namespace {
+QString globalDatabasePath()
+{
+    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data/material-center.sqlite"));
+}
+
+void removeGlobalDatabaseFiles()
+{
+    const auto path = globalDatabasePath();
+    QFile::remove(path);
+    QFile::remove(path + QStringLiteral("-wal"));
+    QFile::remove(path + QStringLiteral("-shm"));
+    QFile::remove(DatabaseMigration::backupFilePath(path, 8));
+    QFile::remove(DatabaseMigration::backupFilePath(path, 9));
+    QFile::remove(DatabaseMigration::backupFilePath(path, 11));
+}
+
+bool executeStatements(QSqlDatabase &db, const QStringList &statements, QString *errorMessage)
+{
+    QSqlQuery query(db);
+    for (const auto &statement : statements) {
+        if (!query.exec(statement)) {
+            if (errorMessage) {
+                *errorMessage = query.lastError().text();
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+bool createLegacyProjectDatabase(const QString &databasePath,
+                                 const QString &sourcePath,
+                                 bool brokenFolderTable,
+                                 QString *errorMessage)
+{
+    const auto connectionName = QStringLiteral("legacy_project_%1").arg(reinterpret_cast<quintptr>(&databasePath));
+    auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+    db.setDatabaseName(databasePath);
+    if (!db.open()) {
+        if (errorMessage) {
+            *errorMessage = db.lastError().text();
+        }
+        return false;
+    }
+
+    QStringList statements = {
+        QStringLiteral("CREATE TABLE schema_version (version INTEGER NOT NULL)"),
+        QStringLiteral("INSERT INTO schema_version VALUES (2)")
+    };
+    if (brokenFolderTable) {
+        statements.append(QStringLiteral("CREATE TABLE folder_node (id INTEGER PRIMARY KEY)"));
+    } else {
+        statements.append({
+            QStringLiteral("CREATE TABLE source_root ("
+                           "id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, status TEXT NOT NULL, "
+                           "total_files INTEGER NOT NULL DEFAULT 0, total_folders INTEGER NOT NULL DEFAULT 0, total_size_bytes INTEGER NOT NULL DEFAULT 0, "
+                           "video_count INTEGER NOT NULL DEFAULT 0, audio_count INTEGER NOT NULL DEFAULT 0, image_count INTEGER NOT NULL DEFAULT 0, "
+                           "other_count INTEGER NOT NULL DEFAULT 0, warning_count INTEGER NOT NULL DEFAULT 0, scan_version INTEGER NOT NULL DEFAULT 0, "
+                           "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"),
+            QStringLiteral("CREATE TABLE folder_node ("
+                           "id INTEGER PRIMARY KEY AUTOINCREMENT, source_root_id INTEGER NOT NULL, absolute_path TEXT NOT NULL, "
+                           "relative_path TEXT NOT NULL, file_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)"),
+            QStringLiteral("CREATE TABLE asset_file ("
+                           "id INTEGER PRIMARY KEY AUTOINCREMENT, source_root_id INTEGER NOT NULL, name TEXT NOT NULL, extension TEXT, "
+                           "absolute_path TEXT NOT NULL, relative_path TEXT NOT NULL, parent_path TEXT NOT NULL, asset_type INTEGER NOT NULL, "
+                           "size_bytes INTEGER NOT NULL DEFAULT 0, modified_at TEXT NOT NULL, is_readable INTEGER NOT NULL DEFAULT 0, "
+                           "is_favorite INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)"),
+            QStringLiteral("INSERT INTO source_root "
+                           "(id, name, path, status, total_files, total_folders, total_size_bytes, video_count, audio_count, image_count, "
+                           "other_count, warning_count, scan_version, created_at, updated_at) "
+                           "VALUES (1, 'Card', '%1', 'ok', 3, 2, 30, 3, 0, 0, 0, 0, 2, '2026-07-14T10:00:00', '2026-07-14T10:00:00')")
+                .arg(QString(sourcePath).replace(QLatin1Char('\''), QStringLiteral("''"))),
+            QStringLiteral("INSERT INTO folder_node (source_root_id, absolute_path, relative_path, file_count, created_at) VALUES "
+                           "(1, '%1', '2026-07-14', 0, '2026-07-14T10:00:00'), "
+                           "(1, '%2', '2026-07-14/CameraA', 0, '2026-07-14T10:00:00')")
+                .arg(QDir(sourcePath).filePath(QStringLiteral("2026-07-14")).replace(QLatin1Char('\''), QStringLiteral("''")),
+                     QDir(sourcePath).filePath(QStringLiteral("2026-07-14/CameraA")).replace(QLatin1Char('\''), QStringLiteral("''"))),
+            QStringLiteral("INSERT INTO asset_file "
+                           "(source_root_id, name, extension, absolute_path, relative_path, parent_path, asset_type, size_bytes, modified_at, is_readable, created_at) VALUES "
+                           "(1, 'root.mov', 'mov', 'root.mov', 'root.mov', '%1', 1, 10, '2026-07-14T10:00:00', 1, '2026-07-14T10:00:00'), "
+                           "(1, 'day.mov', 'mov', 'day.mov', '2026-07-14/day.mov', '%2', 1, 10, '2026-07-14T10:00:00', 1, '2026-07-14T10:00:00'), "
+                           "(1, 'cam.mov', 'mov', 'cam.mov', '2026-07-14/CameraA/cam.mov', '%3', 1, 10, '2026-07-14T10:00:00', 1, '2026-07-14T10:00:00')")
+                .arg(QString(sourcePath).replace(QLatin1Char('\''), QStringLiteral("''")),
+                     QDir(sourcePath).filePath(QStringLiteral("2026-07-14")).replace(QLatin1Char('\''), QStringLiteral("''")),
+                     QDir(sourcePath).filePath(QStringLiteral("2026-07-14/CameraA")).replace(QLatin1Char('\''), QStringLiteral("''")))
+        });
+    }
+
+    const auto success = executeStatements(db, statements, errorMessage);
+    db.close();
+    db = QSqlDatabase();
+    QSqlDatabase::removeDatabase(connectionName);
+    return success;
+}
+
+int schemaVersionFromFile(const QString &databasePath, QString *errorMessage)
+{
+    const auto connectionName = QStringLiteral("read_version_%1").arg(reinterpret_cast<quintptr>(&databasePath));
+    auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+    db.setDatabaseName(databasePath);
+    int version = -1;
+    if (!db.open()) {
+        if (errorMessage) {
+            *errorMessage = db.lastError().text();
+        }
+    } else {
+        QSqlQuery query(db);
+        if (query.exec(QStringLiteral("SELECT version FROM schema_version")) && query.next()) {
+            version = query.value(0).toInt();
+        } else if (errorMessage) {
+            *errorMessage = query.lastError().text();
+        }
+    }
+    db.close();
+    db = QSqlDatabase();
+    QSqlDatabase::removeDatabase(connectionName);
+    return version;
+}
+}
+
+class FolderDatabaseMigrationTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void cleanup()
+    {
+        removeGlobalDatabaseFiles();
+    }
+
+    void projectV2ToV3_createsBackupAndBackfillsHierarchy()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto databasePath = QDir(temp.path()).filePath(QStringLiteral("project.cvdb"));
+        const auto sourcePath = QDir(temp.path()).filePath(QStringLiteral("Card"));
+        QVERIFY(QDir().mkpath(QDir(sourcePath).filePath(QStringLiteral("2026-07-14/CameraA"))));
+
+        QString errorMessage;
+        QVERIFY2(createLegacyProjectDatabase(databasePath, sourcePath, false, &errorMessage), qPrintable(errorMessage));
+
+        DatabaseManager manager;
+        QVERIFY2(manager.openProjectDatabase(databasePath, &errorMessage), qPrintable(errorMessage));
+        QCOMPARE(manager.schemaVersion(), 3);
+
+        const auto backupPath = DatabaseMigration::backupFilePath(databasePath, 3);
+        QVERIFY(QFileInfo(backupPath).isFile());
+        QVERIFY(QFileInfo(backupPath).size() > 0);
+        QCOMPARE(schemaVersionFromFile(backupPath, &errorMessage), 2);
+
+        QSqlQuery folders(manager.database());
+        QVERIFY2(folders.exec(QStringLiteral(
+                     "SELECT relative_path, parent_relative_path, depth, direct_file_count, recursive_file_count, "
+                     "normalized_date, date_anchor, path_key FROM folder_node ORDER BY depth, relative_path")),
+                 qPrintable(folders.lastError().text()));
+
+        QVERIFY(folders.next());
+        QCOMPARE(folders.value(0).toString(), QString());
+        QCOMPARE(folders.value(1).toString(), QString());
+        QCOMPARE(folders.value(2).toInt(), 0);
+        QCOMPARE(folders.value(3).toLongLong(), qint64{1});
+        QCOMPARE(folders.value(4).toLongLong(), qint64{3});
+        QVERIFY(!folders.value(7).toString().isEmpty());
+
+        QVERIFY(folders.next());
+        QCOMPARE(folders.value(0).toString(), QStringLiteral("2026-07-14"));
+        QCOMPARE(folders.value(2).toInt(), 1);
+        QCOMPARE(folders.value(3).toLongLong(), qint64{1});
+        QCOMPARE(folders.value(4).toLongLong(), qint64{2});
+        QCOMPARE(folders.value(5).toString(), QStringLiteral("2026-07-14"));
+        QCOMPARE(folders.value(6).toString(), QStringLiteral("2026-07-14"));
+
+        QVERIFY(folders.next());
+        QCOMPARE(folders.value(0).toString(), QStringLiteral("2026-07-14/CameraA"));
+        QCOMPARE(folders.value(1).toString(), QStringLiteral("2026-07-14"));
+        QCOMPARE(folders.value(2).toInt(), 2);
+        QCOMPARE(folders.value(3).toLongLong(), qint64{1});
+        QCOMPARE(folders.value(4).toLongLong(), qint64{1});
+        QCOMPARE(folders.value(5).toString(), QStringLiteral("2026-07-14"));
+        QCOMPARE(folders.value(6).toString(), QStringLiteral("2026-07-14"));
+        QVERIFY(!folders.next());
+
+        manager.closeProjectDatabase();
+    }
+
+    void projectV2ToV3_rollsBackAllSchemaChangesOnFailure()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto databasePath = QDir(temp.path()).filePath(QStringLiteral("broken.cvdb"));
+        QString errorMessage;
+        QVERIFY2(createLegacyProjectDatabase(databasePath, temp.path(), true, &errorMessage), qPrintable(errorMessage));
+
+        DatabaseManager manager;
+        QVERIFY(!manager.openProjectDatabase(databasePath, &errorMessage));
+        QVERIFY(!errorMessage.isEmpty());
+        QCOMPARE(schemaVersionFromFile(databasePath, &errorMessage), 2);
+        QCOMPARE(schemaVersionFromFile(DatabaseMigration::backupFilePath(databasePath, 3), &errorMessage), 2);
+    }
+
+    void globalV7ToV10_createsBackupAndFolderSchema()
+    {
+        removeGlobalDatabaseFiles();
+        QString errorMessage;
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY2(manager.openDatabase(&errorMessage), qPrintable(errorMessage));
+            auto db = manager.database();
+            QSqlQuery dropFolder(db);
+            QVERIFY2(dropFolder.exec(QStringLiteral("DROP TABLE global_folder_node")),
+                     qPrintable(dropFolder.lastError().text()));
+            QSqlQuery downgrade(db);
+            QVERIFY2(downgrade.exec(QStringLiteral("UPDATE schema_version SET version = 7")),
+                     qPrintable(downgrade.lastError().text()));
+            manager.closeDatabase();
+        }
+
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY2(manager.openDatabase(&errorMessage), qPrintable(errorMessage));
+            auto db = manager.database();
+
+            QSqlQuery version(db);
+            QVERIFY2(version.exec(QStringLiteral("SELECT version FROM schema_version")),
+                     qPrintable(version.lastError().text()));
+            QVERIFY(version.next());
+            QCOMPARE(version.value(0).toInt(), 11);
+
+            QSqlQuery columns(db);
+            QVERIFY2(columns.exec(QStringLiteral("PRAGMA table_info(global_folder_node)")),
+                     qPrintable(columns.lastError().text()));
+            QStringList names;
+            while (columns.next()) {
+                names.append(columns.value(1).toString());
+            }
+            QVERIFY(names.contains(QStringLiteral("folder_key")));
+            QVERIFY(names.contains(QStringLiteral("parent_relative_path")));
+            QVERIFY(names.contains(QStringLiteral("recursive_file_count")));
+            QVERIFY(names.contains(QStringLiteral("normalized_date")));
+            QVERIFY(names.contains(QStringLiteral("is_available")));
+
+            QSqlQuery assetColumns(db);
+            QVERIFY2(assetColumns.exec(QStringLiteral("PRAGMA table_info(global_video_asset)")),
+                     qPrintable(assetColumns.lastError().text()));
+            QStringList assetColumnNames;
+            while (assetColumns.next()) {
+                assetColumnNames.append(assetColumns.value(1).toString());
+            }
+            QVERIFY(assetColumnNames.contains(QStringLiteral("capture_time")));
+            QVERIFY(assetColumnNames.contains(QStringLiteral("capture_date")));
+            QVERIFY(assetColumnNames.contains(QStringLiteral("capture_time_source")));
+            QVERIFY(assetColumnNames.contains(QStringLiteral("capture_time_confidence")));
+
+            const auto backupPath = DatabaseMigration::backupFilePath(globalDatabasePath(), 11);
+            QVERIFY(QFileInfo(backupPath).isFile());
+            QCOMPARE(schemaVersionFromFile(backupPath, &errorMessage), 7);
+            manager.closeDatabase();
+        }
+    }
+
+    void globalV8ToV10_addsStructuredFactsPlanAndMarksLegacyRowsIncomplete()
+    {
+        removeGlobalDatabaseFiles();
+        QString errorMessage;
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY2(manager.openDatabase(&errorMessage), qPrintable(errorMessage));
+            auto db = manager.database();
+            const QStringList downgradeStatements{
+                QStringLiteral("DROP TABLE video_analysis_plan"),
+                QStringLiteral("ALTER TABLE video_frame_analysis RENAME TO video_frame_analysis_v9"),
+                QStringLiteral("CREATE TABLE video_frame_analysis ("
+                               "id INTEGER PRIMARY KEY AUTOINCREMENT, video_key TEXT NOT NULL, "
+                               "frame_number INTEGER NOT NULL DEFAULT 0, timestamp_ms INTEGER NOT NULL DEFAULT 0, "
+                               "image_path TEXT, caption TEXT, tags_json TEXT, objects_json TEXT, actions TEXT, setting_text TEXT, "
+                               "error_message TEXT, analysis_state INTEGER NOT NULL DEFAULT 0, retry_count INTEGER NOT NULL DEFAULT 0, "
+                               "last_http_status INTEGER NOT NULL DEFAULT 0, last_attempt_at TEXT NOT NULL DEFAULT '', "
+                               "FOREIGN KEY(video_key) REFERENCES global_video_asset(video_key) ON DELETE CASCADE)"),
+                QStringLiteral("DROP TABLE video_frame_analysis_v9"),
+                QStringLiteral("INSERT INTO project_registry "
+                               "(project_uuid, project_name, project_database_path, last_synced_at, sync_status, error_message) "
+                               "VALUES ('visual-v8', 'Visual V8', 'visual-v8.cvdb', '', 'ok', '')"),
+                QStringLiteral("INSERT INTO global_video_asset "
+                               "(video_key, project_uuid, project_name, project_database_path, asset_id, file_name, absolute_path, relative_path) "
+                               "VALUES ('legacy-frame', 'visual-v8', 'Visual V8', 'visual-v8.cvdb', 1, 'clip.mov', 'C:/clip.mov', 'clip.mov')"),
+                QStringLiteral("INSERT INTO video_frame_analysis "
+                               "(video_key, frame_number, timestamp_ms, image_path, caption, tags_json, objects_json, actions, setting_text, "
+                               "error_message, analysis_state) "
+                               "VALUES ('legacy-frame', 1, 0, 'frame.jpg', '旧版描述', '[]', '[]', '', '', '', 1)"),
+                QStringLiteral("UPDATE schema_version SET version = 8")
+            };
+            QVERIFY2(executeStatements(db, downgradeStatements, &errorMessage), qPrintable(errorMessage));
+            manager.closeDatabase();
+        }
+
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY2(manager.openDatabase(&errorMessage), qPrintable(errorMessage));
+            auto db = manager.database();
+
+            QSqlQuery version(db);
+            QVERIFY2(version.exec(QStringLiteral("SELECT version FROM schema_version")),
+                     qPrintable(version.lastError().text()));
+            QVERIFY(version.next());
+            QCOMPARE(version.value(0).toInt(), 11);
+
+            QSqlQuery legacy(db);
+            QVERIFY2(legacy.exec(QStringLiteral(
+                         "SELECT entities_json, ocr_text, structured_profile_version, facts_complete, model_name, prompt_version "
+                         "FROM video_frame_analysis WHERE video_key = 'legacy-frame'")),
+                     qPrintable(legacy.lastError().text()));
+            QVERIFY(legacy.next());
+            QCOMPARE(legacy.value(0).toString(), QStringLiteral("[]"));
+            QCOMPARE(legacy.value(1).toString(), QString());
+            QCOMPARE(legacy.value(2).toInt(), 1);
+            QCOMPARE(legacy.value(3).toInt(), 0);
+            QCOMPARE(legacy.value(4).toString(), QString());
+            QCOMPARE(legacy.value(5).toString(), QString());
+
+            QSqlQuery planTable(db);
+            QVERIFY2(planTable.exec(QStringLiteral(
+                         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'video_analysis_plan'")),
+                     qPrintable(planTable.lastError().text()));
+            QVERIFY(planTable.next());
+
+            const auto backupPath = DatabaseMigration::backupFilePath(globalDatabasePath(), 11);
+            QVERIFY(QFileInfo(backupPath).isFile());
+            QCOMPARE(schemaVersionFromFile(backupPath, &errorMessage), 8);
+            manager.closeDatabase();
+        }
+    }
+
+    void globalV9ToV10_createsBackupAndSemanticSearchSchema()
+    {
+        removeGlobalDatabaseFiles();
+        QString errorMessage;
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY2(manager.openDatabase(&errorMessage), qPrintable(errorMessage));
+            auto db = manager.database();
+            const QStringList downgradeStatements{
+                QStringLiteral("DROP INDEX IF EXISTS idx_search_document_key"),
+                QStringLiteral("DROP INDEX IF EXISTS idx_search_document_type"),
+                QStringLiteral("DROP INDEX IF EXISTS idx_search_index_state_singleton"),
+                QStringLiteral("DROP TABLE search_index_state"),
+                QStringLiteral("DROP TABLE search_document"),
+                QStringLiteral("UPDATE schema_version SET version = 9")
+            };
+            QVERIFY2(executeStatements(db, downgradeStatements, &errorMessage), qPrintable(errorMessage));
+            manager.closeDatabase();
+        }
+
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY2(manager.openDatabase(&errorMessage), qPrintable(errorMessage));
+            auto db = manager.database();
+
+            QSqlQuery version(db);
+            QVERIFY2(version.exec(QStringLiteral("SELECT version FROM schema_version")),
+                     qPrintable(version.lastError().text()));
+            QVERIFY(version.next());
+            QCOMPARE(version.value(0).toInt(), 11);
+
+            QSqlQuery documentColumns(db);
+            QVERIFY2(documentColumns.exec(QStringLiteral("PRAGMA table_info(search_document)")),
+                     qPrintable(documentColumns.lastError().text()));
+            QStringList documentColumnNames;
+            while (documentColumns.next()) {
+                documentColumnNames.append(documentColumns.value(1).toString());
+            }
+            const QStringList requiredDocumentColumns{
+                QStringLiteral("id"),
+                QStringLiteral("document_key"),
+                QStringLiteral("document_type"),
+                QStringLiteral("entity_key"),
+                QStringLiteral("content_hash"),
+                QStringLiteral("content_text"),
+                QStringLiteral("source_updated_at"),
+                QStringLiteral("model_id"),
+                QStringLiteral("index_schema_version"),
+                QStringLiteral("indexed_at")
+            };
+            for (const auto &column : requiredDocumentColumns) {
+                QVERIFY2(documentColumnNames.contains(column), qPrintable(column));
+            }
+
+            QSqlQuery state(db);
+            QVERIFY2(state.exec(QStringLiteral(
+                         "SELECT singleton, schema_version, model_id, dimensions, generation, status, "
+                         "document_count, updated_at, last_error FROM search_index_state")),
+                     qPrintable(state.lastError().text()));
+            QVERIFY(state.next());
+            QCOMPARE(state.value(0).toInt(), 1);
+            QCOMPARE(state.value(1).toInt(), 0);
+            QCOMPARE(state.value(2).toString(), QString());
+            QCOMPARE(state.value(3).toInt(), 0);
+            QCOMPARE(state.value(4).toInt(), 0);
+            QCOMPARE(state.value(5).toString(), QStringLiteral("dirty"));
+            QCOMPARE(state.value(6).toInt(), 0);
+            QVERIFY(!state.next());
+
+            QSqlQuery indexes(db);
+            QVERIFY2(indexes.exec(QStringLiteral(
+                         "SELECT name FROM sqlite_master WHERE type = 'index' "
+                         "AND name IN ('idx_search_document_key', 'idx_search_document_type', "
+                         "'idx_search_index_state_singleton') ORDER BY name")),
+                     qPrintable(indexes.lastError().text()));
+            QStringList indexNames;
+            while (indexes.next()) {
+                indexNames.append(indexes.value(0).toString());
+            }
+            QCOMPARE(indexNames.size(), 3);
+
+            const auto backupPath = DatabaseMigration::backupFilePath(globalDatabasePath(), 11);
+            QVERIFY(QFileInfo(backupPath).isFile());
+            QVERIFY(QFileInfo(backupPath).size() > 0);
+            QCOMPARE(schemaVersionFromFile(backupPath, &errorMessage), 9);
+            manager.closeDatabase();
+        }
+    }
+
+    void globalV10_repairsPartialSemanticSchemaAndInvalidatesIndex()
+    {
+        removeGlobalDatabaseFiles();
+        QString errorMessage;
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY2(manager.openDatabase(&errorMessage), qPrintable(errorMessage));
+            auto db = manager.database();
+            const QStringList partialSchemaStatements{
+                QStringLiteral("DROP INDEX IF EXISTS idx_search_document_key"),
+                QStringLiteral("DROP INDEX IF EXISTS idx_search_document_type"),
+                QStringLiteral("DROP INDEX IF EXISTS idx_search_index_state_singleton"),
+                QStringLiteral("DROP TABLE search_document"),
+                QStringLiteral("CREATE TABLE search_document ("
+                               "id INTEGER PRIMARY KEY AUTOINCREMENT, document_key TEXT, content_text TEXT)"),
+                QStringLiteral("INSERT INTO search_document(document_key, content_text) VALUES "
+                               "('duplicate', 'first'), ('duplicate', 'second'), ('', 'empty')"),
+                QStringLiteral("DROP TABLE search_index_state"),
+                QStringLiteral("CREATE TABLE search_index_state(singleton INTEGER, status TEXT)"),
+                QStringLiteral("INSERT INTO search_index_state(singleton, status) VALUES "
+                               "(1, 'ready'), (1, 'ready'), (2, 'ready')")
+            };
+            QVERIFY2(executeStatements(db, partialSchemaStatements, &errorMessage), qPrintable(errorMessage));
+            manager.closeDatabase();
+        }
+
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY2(manager.openDatabase(&errorMessage), qPrintable(errorMessage));
+            auto db = manager.database();
+
+            QSqlQuery documents(db);
+            QVERIFY2(documents.exec(QStringLiteral(
+                         "SELECT document_key, content_text, document_type, entity_key, content_hash, "
+                         "source_updated_at, model_id, index_schema_version, indexed_at "
+                         "FROM search_document ORDER BY id")),
+                     qPrintable(documents.lastError().text()));
+            QVERIFY(documents.next());
+            QCOMPARE(documents.value(0).toString(), QStringLiteral("duplicate"));
+            QCOMPARE(documents.value(1).toString(), QStringLiteral("first"));
+            QCOMPARE(documents.value(2).toInt(), 0);
+            QCOMPARE(documents.value(3).toString(), QString());
+            QVERIFY(documents.next());
+            QVERIFY(documents.value(0).toString().startsWith(QStringLiteral("legacy:")));
+            QCOMPARE(documents.value(1).toString(), QStringLiteral("empty"));
+            QVERIFY(!documents.next());
+
+            QSqlQuery state(db);
+            QVERIFY2(state.exec(QStringLiteral(
+                         "SELECT singleton, schema_version, model_id, dimensions, generation, status, "
+                         "document_count, updated_at, last_error FROM search_index_state")),
+                     qPrintable(state.lastError().text()));
+            QVERIFY(state.next());
+            QCOMPARE(state.value(0).toInt(), 1);
+            QCOMPARE(state.value(1).toInt(), 0);
+            QCOMPARE(state.value(2).toString(), QString());
+            QCOMPARE(state.value(3).toInt(), 0);
+            QCOMPARE(state.value(4).toInt(), 0);
+            QCOMPARE(state.value(5).toString(), QStringLiteral("dirty"));
+            QCOMPARE(state.value(6).toInt(), 2);
+            QCOMPARE(state.value(7).toString(), QString());
+            QCOMPARE(state.value(8).toString(), QString());
+            QVERIFY(!state.next());
+            manager.closeDatabase();
+        }
+    }
+
+    void globalV9ToV10_rollsBackAllSemanticSchemaChangesOnFailure()
+    {
+        removeGlobalDatabaseFiles();
+        QString errorMessage;
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY2(manager.openDatabase(&errorMessage), qPrintable(errorMessage));
+            auto db = manager.database();
+            const QStringList downgradeStatements{
+                QStringLiteral("DROP INDEX IF EXISTS idx_search_document_key"),
+                QStringLiteral("DROP INDEX IF EXISTS idx_search_document_type"),
+                QStringLiteral("DROP INDEX IF EXISTS idx_search_index_state_singleton"),
+                QStringLiteral("DROP TABLE search_index_state"),
+                QStringLiteral("DROP TABLE search_document"),
+                QStringLiteral("CREATE TABLE idx_search_document_key(blocker INTEGER)"),
+                QStringLiteral("UPDATE schema_version SET version = 9")
+            };
+            QVERIFY2(executeStatements(db, downgradeStatements, &errorMessage), qPrintable(errorMessage));
+            manager.closeDatabase();
+        }
+
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY(!manager.openDatabase(&errorMessage));
+            QVERIFY(!errorMessage.trimmed().isEmpty());
+        }
+
+        QCOMPARE(schemaVersionFromFile(globalDatabasePath(), &errorMessage), 9);
+        QCOMPARE(schemaVersionFromFile(DatabaseMigration::backupFilePath(globalDatabasePath(), 11),
+                                       &errorMessage),
+                 9);
+
+        const auto connectionName = QStringLiteral("verify_semantic_rollback");
+        auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+        db.setDatabaseName(globalDatabasePath());
+        QVERIFY2(db.open(), qPrintable(db.lastError().text()));
+        QSqlQuery tables(db);
+        QVERIFY2(tables.exec(QStringLiteral(
+                     "SELECT name FROM sqlite_master WHERE type = 'table' "
+                     "AND name IN ('search_document', 'search_index_state', 'idx_search_document_key') "
+                     "ORDER BY name")),
+                 qPrintable(tables.lastError().text()));
+        QStringList tableNames;
+        while (tables.next()) {
+            tableNames.append(tables.value(0).toString());
+        }
+        QCOMPARE(tableNames, QStringList{QStringLiteral("idx_search_document_key")});
+        db.close();
+        db = QSqlDatabase();
+        QSqlDatabase::removeDatabase(connectionName);
+    }
+
+    void globalV8ToV10_rollsBackAllVisualSchemaChangesOnFailure()
+    {
+        removeGlobalDatabaseFiles();
+        QString errorMessage;
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY2(manager.openDatabase(&errorMessage), qPrintable(errorMessage));
+            auto db = manager.database();
+            const QStringList downgradeStatements{
+                QStringLiteral("DROP TABLE video_analysis_plan"),
+                QStringLiteral("DROP INDEX idx_frame_visual_completeness"),
+                QStringLiteral("ALTER TABLE video_frame_analysis RENAME TO video_frame_analysis_v9"),
+                QStringLiteral("CREATE TABLE video_frame_analysis ("
+                               "id INTEGER PRIMARY KEY AUTOINCREMENT, video_key TEXT NOT NULL, "
+                               "frame_number INTEGER NOT NULL DEFAULT 0, timestamp_ms INTEGER NOT NULL DEFAULT 0, "
+                               "image_path TEXT, caption TEXT, tags_json TEXT, objects_json TEXT, actions TEXT, setting_text TEXT, "
+                               "error_message TEXT, analysis_state INTEGER NOT NULL DEFAULT 0, retry_count INTEGER NOT NULL DEFAULT 0, "
+                               "last_http_status INTEGER NOT NULL DEFAULT 0, last_attempt_at TEXT NOT NULL DEFAULT '')"),
+                QStringLiteral("DROP TABLE video_frame_analysis_v9"),
+                QStringLiteral("CREATE TABLE idx_frame_visual_completeness (blocker INTEGER)"),
+                QStringLiteral("UPDATE schema_version SET version = 8")
+            };
+            QVERIFY2(executeStatements(db, downgradeStatements, &errorMessage), qPrintable(errorMessage));
+            manager.closeDatabase();
+        }
+
+        {
+            GlobalDatabaseManager manager;
+            QVERIFY(!manager.openDatabase(&errorMessage));
+            QVERIFY(!errorMessage.trimmed().isEmpty());
+        }
+
+        QCOMPARE(schemaVersionFromFile(globalDatabasePath(), &errorMessage), 8);
+        QCOMPARE(schemaVersionFromFile(DatabaseMigration::backupFilePath(globalDatabasePath(), 11), &errorMessage), 8);
+
+        const auto connectionName = QStringLiteral("verify_visual_rollback");
+        auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+        db.setDatabaseName(globalDatabasePath());
+        QVERIFY2(db.open(), qPrintable(db.lastError().text()));
+
+        QSqlQuery columns(db);
+        QVERIFY2(columns.exec(QStringLiteral("PRAGMA table_info(video_frame_analysis)")),
+                 qPrintable(columns.lastError().text()));
+        QStringList columnNames;
+        while (columns.next()) {
+            columnNames.append(columns.value(1).toString());
+        }
+        QVERIFY(!columnNames.contains(QStringLiteral("entities_json")));
+        QVERIFY(!columnNames.contains(QStringLiteral("facts_complete")));
+
+        QSqlQuery planTable(db);
+        QVERIFY2(planTable.exec(QStringLiteral(
+                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'video_analysis_plan'")),
+                 qPrintable(planTable.lastError().text()));
+        QVERIFY(planTable.next());
+        QCOMPARE(planTable.value(0).toInt(), 0);
+        db.close();
+        db = QSqlDatabase();
+        QSqlDatabase::removeDatabase(connectionName);
+    }
+};
+
+QTEST_GUILESS_MAIN(FolderDatabaseMigrationTest)
+
+#include "FolderDatabaseMigrationTest.moc"

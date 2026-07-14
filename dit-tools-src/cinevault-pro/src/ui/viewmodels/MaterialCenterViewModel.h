@@ -1,29 +1,56 @@
 #pragma once
 
 #include "domain/Entities.h"
+#include "domain/SearchTypes.h"
 
 #include <QHash>
+#include <QDate>
 #include <QObject>
+#include <QSet>
 #include <QTimer>
 #include <QUrl>
 #include <QVariantList>
 
 class MaterialCatalogSyncService;
+class MaterialCenterFolderListModel;
+class MaterialCenterFrameListModel;
 class MaterialCenterListModel;
 class MaterialCenterQueryService;
 class ProjectService;
 class VideoAnalysisService;
 class AppSettings;
+class VisionApiClient;
 
 class MaterialCenterViewModel : public QObject {
     Q_OBJECT
     Q_PROPERTY(MaterialCenterListModel* model READ model CONSTANT)
+    Q_PROPERTY(MaterialCenterListModel* assetModel READ model CONSTANT)
+    Q_PROPERTY(MaterialCenterFolderListModel* folderModel READ folderModel CONSTANT)
+    Q_PROPERTY(MaterialCenterFrameListModel* frameModel READ frameModel CONSTANT)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
     Q_PROPERTY(QString message READ message NOTIFY statusChanged)
+    Q_PROPERTY(int folderCount READ folderCount NOTIFY searchStateChanged)
+    Q_PROPERTY(int assetCount READ assetCount NOTIFY searchStateChanged)
+    Q_PROPERTY(int frameCount READ frameCount NOTIFY searchStateChanged)
+    Q_PROPERTY(bool frameSearchMode READ frameSearchMode NOTIFY searchStateChanged)
+    Q_PROPERTY(bool hasActiveSearch READ hasActiveSearch NOTIFY searchStateChanged)
+    Q_PROPERTY(bool semanticSearchAvailable READ semanticSearchAvailable NOTIFY searchStateChanged)
+    Q_PROPERTY(QString semanticSearchStatusText READ semanticSearchStatusText NOTIFY searchStateChanged)
+    Q_PROPERTY(QString searchAssistantStatusText READ searchAssistantStatusText NOTIFY searchStateChanged)
+    Q_PROPERTY(bool searchAssistantBusy READ searchAssistantBusy NOTIFY searchStateChanged)
+    Q_PROPERTY(bool searchAssistantUsed READ searchAssistantUsed NOTIFY searchStateChanged)
+    Q_PROPERTY(QString searchWarningMessage READ searchWarningMessage NOTIFY searchStateChanged)
+    Q_PROPERTY(QString searchInterpretationText READ searchInterpretationText NOTIFY searchStateChanged)
+    Q_PROPERTY(QString searchEmptyReason READ searchEmptyReason NOTIFY searchStateChanged)
+    Q_PROPERTY(int excludedPartialCount READ excludedPartialCount NOTIFY searchStateChanged)
     Q_PROPERTY(QVariantList projectOptions READ projectOptions NOTIFY filtersChanged)
     Q_PROPERTY(QVariantList sourceOptions READ sourceOptions NOTIFY filtersChanged)
     Q_PROPERTY(QVariantList assetTypeOptions READ assetTypeOptions NOTIFY filtersChanged)
+    Q_PROPERTY(QString projectFilter READ projectFilter NOTIFY filtersChanged)
+    Q_PROPERTY(QString sourceFilter READ sourceFilter NOTIFY filtersChanged)
     Q_PROPERTY(int assetTypeFilter READ assetTypeFilter NOTIFY filtersChanged)
+    Q_PROPERTY(int analysisStatusFilter READ analysisStatusFilter NOTIFY filtersChanged)
+    Q_PROPERTY(int confirmationStatusFilter READ confirmationStatusFilter NOTIFY filtersChanged)
     Q_PROPERTY(QVariantList analysisStatusOptions READ analysisStatusOptions CONSTANT)
     Q_PROPERTY(QVariantList confirmationStatusOptions READ confirmationStatusOptions CONSTANT)
     Q_PROPERTY(QString selectedVideoKey READ selectedVideoKey NOTIFY selectionChanged)
@@ -79,15 +106,36 @@ public:
                                      VideoAnalysisService *analysisService,
                                      ProjectService *projectService,
                                      AppSettings *settings,
+                                     VisionApiClient *visionApiClient,
                                      QObject *parent = nullptr);
 
     MaterialCenterListModel *model() const;
+    MaterialCenterFolderListModel *folderModel() const;
+    MaterialCenterFrameListModel *frameModel() const;
     QString statusText() const;
     QString message() const;
+    int folderCount() const;
+    int assetCount() const;
+    int frameCount() const;
+    bool frameSearchMode() const;
+    bool hasActiveSearch() const;
+    bool semanticSearchAvailable() const;
+    QString semanticSearchStatusText() const;
+    QString searchAssistantStatusText() const;
+    bool searchAssistantBusy() const;
+    bool searchAssistantUsed() const;
+    QString searchWarningMessage() const;
+    QString searchInterpretationText() const;
+    QString searchEmptyReason() const;
+    int excludedPartialCount() const;
     QVariantList projectOptions() const;
     QVariantList sourceOptions() const;
     QVariantList assetTypeOptions() const;
+    QString projectFilter() const;
+    QString sourceFilter() const;
     int assetTypeFilter() const;
+    int analysisStatusFilter() const;
+    int confirmationStatusFilter() const;
     QVariantList analysisStatusOptions() const;
     QVariantList confirmationStatusOptions() const;
     QString selectedVideoKey() const;
@@ -159,6 +207,8 @@ public:
     Q_INVOKABLE void confirmSelected();
     Q_INVOKABLE void openSelectedProject();
     Q_INVOKABLE void locateSelectedSource();
+    Q_INVOKABLE void openFolderProject(const QString &folderKey);
+    Q_INVOKABLE void locateFolder(const QString &folderKey);
     Q_INVOKABLE void toggleSelectedFramesExpanded();
     Q_INVOKABLE void loadMoreSelectedFrames();
     Q_INVOKABLE void showAllSelectedFrames();
@@ -168,6 +218,7 @@ public:
 signals:
     void statusChanged();
     void filtersChanged();
+    void searchStateChanged();
     void selectionChanged();
     void analysisProgressChanged();
     void dimensionAnalysisChanged();
@@ -187,6 +238,7 @@ private:
     };
 
     GlobalVideoAsset assetByVideoKey(const QString &videoKey) const;
+    FolderSearchHit folderByKey(const QString &folderKey) const;
     void prepareSelection(const QString &videoKey);
     void loadPendingDetail();
     void refreshSelectedCaches();
@@ -195,6 +247,12 @@ private:
     void buildPendingContactSheet();
     void refreshDetail();
     void setMessage(const QString &message);
+    void executeSearch(const ModelSearchUnderstanding *modelUnderstanding = nullptr);
+    void applySearchResult(const MaterialSearchResult &result);
+    void startSearchUnderstanding(const ParsedMaterialQuery &localQuery);
+    void startFrameRerank(const ParsedMaterialQuery &query);
+    void applyFrameRerank(const QVector<ModelFrameRerankScore> &scores);
+    QString searchUnderstandingCacheKey(const QString &queryText, const QDate &referenceDate) const;
     AnalysisProgressState selectedProgressState() const;
     DimensionProgressState selectedDimensionProgressState() const;
 
@@ -203,10 +261,16 @@ private:
     VideoAnalysisService *m_analysisService = nullptr;
     ProjectService *m_projectService = nullptr;
     AppSettings *m_settings = nullptr;
+    VisionApiClient *m_visionApiClient = nullptr;
     MaterialCenterListModel *m_model = nullptr;
+    MaterialCenterFolderListModel *m_folderModel = nullptr;
+    MaterialCenterFrameListModel *m_frameModel = nullptr;
+    QVector<FolderSearchHit> m_folders;
     QVector<GlobalVideoAsset> m_assets;
+    QVector<FrameSearchHit> m_frames;
     VideoAnalysisDetail m_detail;
     QString m_searchText;
+    ParsedMaterialQuery m_lastParsedQuery;
     QString m_projectFilter;
     QString m_sourceFilter;
     int m_assetTypeFilter = -1;
@@ -216,6 +280,19 @@ private:
     QVariantList m_sourceOptions;
     QVariantList m_assetTypeOptions;
     QString m_message;
+    bool m_semanticSearchAvailable = false;
+    QString m_searchWarningMessage;
+    QString m_searchInterpretationText;
+    QString m_searchEmptyReason;
+    int m_excludedPartialCount = 0;
+    QString m_searchAssistantStatusText;
+    bool m_searchAssistantBusy = false;
+    bool m_searchAssistantUsed = false;
+    int m_searchGeneration = 0;
+    QHash<QString, ModelSearchUnderstanding> m_searchUnderstandingCache;
+    QSet<QString> m_searchUnderstandingInFlight;
+    QHash<QString, QVector<ModelFrameRerankScore>> m_frameRerankCache;
+    QSet<QString> m_frameRerankInFlight;
     QHash<QString, AnalysisProgressState> m_analysisProgressByVideoKey;
     QHash<QString, DimensionProgressState> m_dimensionProgressByVideoKey;
     QHash<QString, VideoAnalysisDetail> m_detailCache;
@@ -227,6 +304,7 @@ private:
     QString m_pendingContactSheetVideoKey;
     QTimer *m_detailRefreshTimer = nullptr;
     QTimer *m_contactSheetBuildTimer = nullptr;
+    QTimer *m_searchRefreshTimer = nullptr;
     int m_selectedVisibleFrameLimit = 24;
     bool m_selectedFramesLoading = false;
     QString m_currentAnalysisVideoKey;

@@ -45,6 +45,40 @@ QByteArray summaryChatResponse()
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
+QByteArray structuredFrameChatResponse()
+{
+    const QJsonObject frame{
+        {QStringLiteral("caption"), QStringLiteral("红色牛仔短裤旁有促销文字")},
+        {QStringLiteral("tags"), QJsonArray{QStringLiteral("服装"), QStringLiteral("促销")}},
+        {QStringLiteral("objects"), QJsonArray{QStringLiteral("短裤")}},
+        {QStringLiteral("actions"), QString()},
+        {QStringLiteral("setting"), QStringLiteral("商店")},
+        {QStringLiteral("entities"), QJsonArray{
+             QJsonObject{
+                 {QStringLiteral("category"), QStringLiteral("clothing")},
+                 {QStringLiteral("label"), QStringLiteral("短裤")},
+                 {QStringLiteral("colors"), QJsonArray{QStringLiteral("红色")}},
+                 {QStringLiteral("materials"), QJsonArray{QStringLiteral("牛仔")}},
+                 {QStringLiteral("attributes"), QJsonArray{}}
+             }
+         }},
+        {QStringLiteral("ocr_text"), QStringLiteral("SALE")},
+        {QStringLiteral("ocr_blocks"), QJsonArray{QStringLiteral("SALE")}}
+    };
+    const QJsonObject root{
+        {QStringLiteral("choices"),
+         QJsonArray{
+             QJsonObject{
+                 {QStringLiteral("message"),
+                  QJsonObject{
+                      {QStringLiteral("content"), QString::fromUtf8(QJsonDocument(frame).toJson(QJsonDocument::Compact))}
+                  }}
+             }
+         }}
+    };
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
 QByteArray dimensionChatResponse()
 {
     const QJsonObject payload{
@@ -68,6 +102,17 @@ QByteArray dimensionChatResponse()
          }}
     };
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
+QByteArray chatResponseForPayload(const QJsonObject &payload)
+{
+    return QJsonDocument(QJsonObject{
+        {QStringLiteral("choices"), QJsonArray{QJsonObject{
+            {QStringLiteral("message"), QJsonObject{
+                {QStringLiteral("content"), QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact))}
+            }}
+        }}}
+    }).toJson(QJsonDocument::Compact);
 }
 
 qsizetype contentLengthFromHeader(const QByteArray &header)
@@ -190,11 +235,61 @@ class VisionApiClientImageTest : public QObject {
 
 private slots:
     void analyzeImage_decodesWebpToJpegDataUrl();
+    void analyzeFrame_requestsBoundEntitiesAndOcr();
     void analyzeFrameDimensions_postsSingleFrameImage();
     void analyzeDimensions_postsRequestedDimensions();
     void analyzeDimensions_retriesWithShorterContextOnContextLimit();
     void analyzeDimensions_fallsBackToTextWhenResponseFormatRejected();
+    void understandSearchQuery_postsBoundedSchema();
+    void rerankFrameCandidates_filtersInventedIds();
 };
+
+void VisionApiClientImageTest::analyzeFrame_requestsBoundEntitiesAndOcr()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const auto imagePath = QDir(tempDir.path()).filePath(QStringLiteral("frame.webp"));
+    QFile imageFile(imagePath);
+    QVERIFY(imageFile.open(QIODevice::WriteOnly));
+    QCOMPARE(imageFile.write(sampleWebp()), sampleWebp().size());
+    imageFile.close();
+
+    QTcpServer server;
+    QVERIFY2(server.listen(QHostAddress::LocalHost), qPrintable(server.errorString()));
+    QByteArray capturedBody;
+    installChatCompletionResponder(&server, &capturedBody, structuredFrameChatResponse());
+
+    VisionApiClient client;
+    QString error;
+    int httpStatusCode = 0;
+    const auto frame = client.analyzeFrame(imagePath,
+                                           QStringLiteral("shop.mov"),
+                                           QStringLiteral("http://127.0.0.1:%1/v1").arg(server.serverPort()),
+                                           QStringLiteral("test-key"),
+                                           QStringLiteral("test-model"),
+                                           5,
+                                           &error,
+                                           &httpStatusCode);
+
+    QVERIFY2(frame.has_value(), qPrintable(error));
+    QCOMPARE(httpStatusCode, 200);
+    QVERIFY(frame->factsComplete);
+    QCOMPARE(frame->entities.size(), 1);
+    QCOMPARE(frame->entities.first().colors, QStringList{QStringLiteral("红色")});
+    QCOMPARE(frame->entities.first().materials, QStringList{QStringLiteral("牛仔")});
+    QCOMPARE(frame->ocrText, QStringLiteral("SALE"));
+
+    const auto responseFormat = responseFormatFromRequestBody(capturedBody);
+    const auto schema = responseFormat.value(QStringLiteral("json_schema")).toObject()
+                            .value(QStringLiteral("schema")).toObject();
+    const auto required = schema.value(QStringLiteral("required")).toArray();
+    QVERIFY(required.contains(QStringLiteral("entities")));
+    QVERIFY(required.contains(QStringLiteral("ocr_text")));
+    QVERIFY(required.contains(QStringLiteral("ocr_blocks")));
+    const auto prompt = promptTextFromRequestBody(capturedBody);
+    QVERIFY(prompt.contains(QStringLiteral("同一个实体对象内")));
+    QVERIFY(prompt.contains(QStringLiteral("ocr_text")));
+}
 
 void VisionApiClientImageTest::analyzeImage_decodesWebpToJpegDataUrl()
 {
@@ -422,6 +517,96 @@ void VisionApiClientImageTest::analyzeDimensions_fallsBackToTextWhenResponseForm
 
     const auto secondResponseFormat = responseFormatFromRequestBody(capturedBodies.at(1));
     QCOMPARE(secondResponseFormat.value(QStringLiteral("type")).toString(), QStringLiteral("text"));
+}
+
+void VisionApiClientImageTest::understandSearchQuery_postsBoundedSchema()
+{
+    const QJsonObject payload{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("result_target"), QStringLiteral("frames")},
+        {QStringLiteral("semantic_text"), QStringLiteral("蓝色牛仔裤")},
+        {QStringLiteral("lexical_terms"), QJsonArray{QStringLiteral("蓝色"), QStringLiteral("牛仔裤")}},
+        {QStringLiteral("asset_types"), QJsonArray{QStringLiteral("video")}},
+        {QStringLiteral("date"), QJsonObject{{QStringLiteral("start"), QString()}, {QStringLiteral("end"), QString()}, {QStringLiteral("matched_text"), QString()}, {QStringLiteral("preferred_field"), QStringLiteral("any")}}},
+        {QStringLiteral("folder_by_asset_criteria"), false},
+        {QStringLiteral("ocr_text"), QString()},
+        {QStringLiteral("entities"), QJsonArray{}},
+        {QStringLiteral("confidence"), 0.88},
+        {QStringLiteral("explanation"), QStringLiteral("画面内容查询")}
+    };
+    QTcpServer server;
+    QVERIFY2(server.listen(QHostAddress::LocalHost), qPrintable(server.errorString()));
+    QByteArray capturedBody;
+    installChatCompletionResponder(&server, &capturedBody, chatResponseForPayload(payload));
+
+    VisionApiClient client;
+    QString error;
+    const auto result = client.understandSearchQuery(
+        QStringLiteral("找包含蓝色牛仔裤的帧"),
+        QDate(2026, 7, 14),
+        QStringLiteral("http://127.0.0.1:%1/v1").arg(server.serverPort()),
+        QStringLiteral("test-key"), QStringLiteral("test-model"), 5, &error);
+    QVERIFY2(result.has_value(), qPrintable(error));
+    QCOMPARE(result->resultTarget, SearchResultTarget::Frames);
+    QCOMPARE(result->semanticText, QStringLiteral("蓝色牛仔裤"));
+    const auto prompt = promptTextFromRequestBody(capturedBody);
+    QVERIFY(prompt.contains(QStringLiteral("2026-07-14")));
+    QVERIFY(prompt.contains(QStringLiteral("不得创造")) || prompt.contains(QStringLiteral("不要生成")));
+    const auto schema = responseFormatFromRequestBody(capturedBody)
+                            .value(QStringLiteral("json_schema")).toObject()
+                            .value(QStringLiteral("schema")).toObject();
+    QVERIFY(schema.value(QStringLiteral("required")).toArray().contains(QStringLiteral("confidence")));
+}
+
+void VisionApiClientImageTest::rerankFrameCandidates_filtersInventedIds()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVector<FrameSearchHit> candidates;
+    for (int index = 1; index <= 2; ++index) {
+        const auto path = QDir(tempDir.path()).filePath(QStringLiteral("frame-%1.webp").arg(index));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(sampleWebp()), sampleWebp().size());
+        file.close();
+        FrameSearchHit frame;
+        frame.frameKey = QStringLiteral("frame:asset:%1").arg(index);
+        frame.imagePath = path;
+        frame.caption = index == 1 ? QStringLiteral("蓝色牛仔裤") : QStringLiteral("蓝色上衣");
+        candidates.append(frame);
+    }
+    const QJsonObject payload{
+        {QStringLiteral("version"), 1},
+        {QStringLiteral("matches"), QJsonArray{
+            QJsonObject{{QStringLiteral("candidate_id"), QStringLiteral("frame:asset:1")}, {QStringLiteral("relevant"), true}, {QStringLiteral("score"), 0.95}, {QStringLiteral("reason"), QStringLiteral("同一人物穿蓝色牛仔裤")}},
+            QJsonObject{{QStringLiteral("candidate_id"), QStringLiteral("frame:invented:99")}, {QStringLiteral("relevant"), true}, {QStringLiteral("score"), 1.0}, {QStringLiteral("reason"), QStringLiteral("虚构")}},
+            QJsonObject{{QStringLiteral("candidate_id"), QStringLiteral("frame:asset:2")}, {QStringLiteral("relevant"), false}, {QStringLiteral("score"), 0.2}, {QStringLiteral("reason"), QStringLiteral("裤子不是蓝色")}}
+        }}
+    };
+    QTcpServer server;
+    QVERIFY2(server.listen(QHostAddress::LocalHost), qPrintable(server.errorString()));
+    QByteArray capturedBody;
+    installChatCompletionResponder(&server, &capturedBody, chatResponseForPayload(payload));
+
+    VisionApiClient client;
+    QString error;
+    const auto result = client.rerankFrameCandidates(
+        QStringLiteral("包含蓝色牛仔裤的帧"), candidates,
+        QStringLiteral("http://127.0.0.1:%1/v1").arg(server.serverPort()),
+        QStringLiteral("test-key"), QStringLiteral("test-model"), 5, &error);
+    QVERIFY2(result.has_value(), qPrintable(error));
+    QCOMPARE(result->size(), 2);
+    QCOMPARE(result->first().frameKey, QStringLiteral("frame:asset:1"));
+    const auto request = QJsonDocument::fromJson(capturedBody).object();
+    const auto content = request.value(QStringLiteral("messages")).toArray().first().toObject()
+                             .value(QStringLiteral("content")).toArray();
+    int imageCount = 0;
+    for (const auto &item : content) {
+        if (item.toObject().value(QStringLiteral("type")).toString() == QStringLiteral("image_url")) {
+            ++imageCount;
+        }
+    }
+    QCOMPARE(imageCount, 2);
 }
 
 QTEST_MAIN(VisionApiClientImageTest)

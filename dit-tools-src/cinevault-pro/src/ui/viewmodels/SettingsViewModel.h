@@ -12,6 +12,13 @@ class SettingsViewModel : public QObject {
     Q_PROPERTY(QString visionBaseUrl READ visionBaseUrl WRITE setVisionBaseUrl NOTIFY settingsChanged)
     Q_PROPERTY(QString visionApiKey READ visionApiKey WRITE setVisionApiKey NOTIFY settingsChanged)
     Q_PROPERTY(QString visionModel READ visionModel WRITE setVisionModel NOTIFY settingsChanged)
+    Q_PROPERTY(bool searchAssistantEnabled READ searchAssistantEnabled WRITE setSearchAssistantEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(bool frameRerankEnabled READ frameRerankEnabled WRITE setFrameRerankEnabled NOTIFY settingsChanged)
+    Q_PROPERTY(bool localOnlySearch READ localOnlySearch WRITE setLocalOnlySearch NOTIFY settingsChanged)
+    Q_PROPERTY(bool allowSearchFrameUpload READ allowSearchFrameUpload WRITE setAllowSearchFrameUpload NOTIFY settingsChanged)
+    Q_PROPERTY(int dailySearchModelCallLimit READ dailySearchModelCallLimit WRITE setDailySearchModelCallLimit NOTIFY settingsChanged)
+    Q_PROPERTY(int searchModelCallsToday READ searchModelCallsToday NOTIFY settingsChanged)
+    Q_PROPERTY(QString searchModelBudgetLabel READ searchModelBudgetLabel NOTIFY settingsChanged)
     Q_PROPERTY(int analysisMode READ analysisMode WRITE setAnalysisMode NOTIFY settingsChanged)
     Q_PROPERTY(int frameInterval READ frameInterval WRITE setFrameInterval NOTIFY settingsChanged)
     Q_PROPERTY(int thumbnailFrameIndex READ thumbnailFrameIndex WRITE setThumbnailFrameIndex NOTIFY settingsChanged)
@@ -40,6 +47,18 @@ public:
     void setVisionApiKey(const QString &value);
     QString visionModel() const;
     void setVisionModel(const QString &value);
+    bool searchAssistantEnabled() const;
+    void setSearchAssistantEnabled(bool enabled);
+    bool frameRerankEnabled() const;
+    void setFrameRerankEnabled(bool enabled);
+    bool localOnlySearch() const;
+    void setLocalOnlySearch(bool enabled);
+    bool allowSearchFrameUpload() const;
+    void setAllowSearchFrameUpload(bool enabled);
+    int dailySearchModelCallLimit() const;
+    void setDailySearchModelCallLimit(int value);
+    int searchModelCallsToday() const;
+    QString searchModelBudgetLabel() const;
     int analysisMode() const;
     void setAnalysisMode(int value);
     int frameInterval() const;
@@ -77,6 +96,11 @@ public:
     Q_INVOKABLE void saveAndApply(const QString &visionBaseUrl,
                                   const QString &visionApiKey,
                                   const QString &visionModel,
+                                  bool searchAssistantEnabled,
+                                  bool frameRerankEnabled,
+                                  bool localOnlySearch,
+                                  bool allowSearchFrameUpload,
+                                  int dailySearchModelCallLimit,
                                   int analysisMode,
                                   int frameInterval,
                                   int thumbnailFrameIndex,
@@ -87,6 +111,7 @@ public:
 
 signals:
     void settingsChanged();
+    void searchSettingsChanged();
 
 private:
     void setLastMessage(const QString &message);

@@ -105,6 +105,81 @@ void SettingsViewModel::setVisionModel(const QString &value)
     emit settingsChanged();
 }
 
+bool SettingsViewModel::searchAssistantEnabled() const
+{
+    return m_settings && m_settings->searchAssistantEnabled();
+}
+
+void SettingsViewModel::setSearchAssistantEnabled(bool enabled)
+{
+    if (!m_settings || m_settings->searchAssistantEnabled() == enabled) return;
+    m_settings->setSearchAssistantEnabled(enabled);
+    emit settingsChanged();
+}
+
+bool SettingsViewModel::frameRerankEnabled() const
+{
+    return m_settings && m_settings->frameRerankEnabled();
+}
+
+void SettingsViewModel::setFrameRerankEnabled(bool enabled)
+{
+    if (!m_settings || m_settings->frameRerankEnabled() == enabled) return;
+    m_settings->setFrameRerankEnabled(enabled);
+    emit settingsChanged();
+}
+
+bool SettingsViewModel::localOnlySearch() const
+{
+    return m_settings && m_settings->localOnlySearch();
+}
+
+void SettingsViewModel::setLocalOnlySearch(bool enabled)
+{
+    if (!m_settings || m_settings->localOnlySearch() == enabled) return;
+    m_settings->setLocalOnlySearch(enabled);
+    emit settingsChanged();
+}
+
+bool SettingsViewModel::allowSearchFrameUpload() const
+{
+    return m_settings && m_settings->allowSearchFrameUpload();
+}
+
+void SettingsViewModel::setAllowSearchFrameUpload(bool enabled)
+{
+    if (!m_settings || m_settings->allowSearchFrameUpload() == enabled) return;
+    m_settings->setAllowSearchFrameUpload(enabled);
+    emit settingsChanged();
+}
+
+int SettingsViewModel::dailySearchModelCallLimit() const
+{
+    return m_settings ? m_settings->dailySearchModelCallLimit() : 100;
+}
+
+void SettingsViewModel::setDailySearchModelCallLimit(int value)
+{
+    const auto normalized = qBound(0, value, 10000);
+    if (!m_settings || m_settings->dailySearchModelCallLimit() == normalized) return;
+    m_settings->setDailySearchModelCallLimit(normalized);
+    emit settingsChanged();
+}
+
+int SettingsViewModel::searchModelCallsToday() const
+{
+    return m_settings ? m_settings->searchModelCallsForDate() : 0;
+}
+
+QString SettingsViewModel::searchModelBudgetLabel() const
+{
+    const auto used = searchModelCallsToday();
+    const auto limit = dailySearchModelCallLimit();
+    return limit == 0
+        ? QStringLiteral("今日搜索模型已调用 %1 次 · 不限额").arg(used)
+        : QStringLiteral("今日搜索模型已调用 %1 / %2 次").arg(used).arg(limit);
+}
+
 int SettingsViewModel::analysisMode() const
 {
     return m_settings ? static_cast<int>(m_settings->analysisMode()) : 0;
@@ -349,6 +424,11 @@ void SettingsViewModel::testConnectionWith(const QString &visionBaseUrl,
 void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
                                      const QString &visionApiKey,
                                      const QString &visionModel,
+                                     bool searchAssistantEnabled,
+                                     bool frameRerankEnabled,
+                                     bool localOnlySearch,
+                                     bool allowSearchFrameUpload,
+                                     int dailySearchModelCallLimit,
                                      int analysisMode,
                                      int frameInterval,
                                      int thumbnailFrameIndex,
@@ -364,6 +444,11 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
     m_settings->setVisionBaseUrl(visionBaseUrl);
     m_settings->setVisionApiKey(visionApiKey);
     m_settings->setVisionModel(visionModel);
+    m_settings->setSearchAssistantEnabled(searchAssistantEnabled);
+    m_settings->setFrameRerankEnabled(frameRerankEnabled);
+    m_settings->setLocalOnlySearch(localOnlySearch);
+    m_settings->setAllowSearchFrameUpload(allowSearchFrameUpload);
+    m_settings->setDailySearchModelCallLimit(dailySearchModelCallLimit);
     AnalysisMode resolvedMode = AnalysisMode::Every10Frames;
     if (analysisMode == static_cast<int>(AnalysisMode::EveryFrame)) {
         resolvedMode = AnalysisMode::EveryFrame;
@@ -379,8 +464,9 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
     m_settings->setUpdateManualProxyUrl(updateManualProxyUrl);
     m_settings->sync();
 
-    setLastMessage(QStringLiteral("设置已保存并应用，下一次解析将使用新参数。"));
+    setLastMessage(QStringLiteral("设置已保存并应用，素材解析与搜索将使用新参数。"));
     emit settingsChanged();
+    emit searchSettingsChanged();
 }
 
 void SettingsViewModel::setLastMessage(const QString &message)

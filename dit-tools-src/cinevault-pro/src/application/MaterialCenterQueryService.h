@@ -1,7 +1,9 @@
 #pragma once
 
 #include "domain/Entities.h"
+#include "domain/SearchTypes.h"
 
+#include <QDate>
 #include <QObject>
 #include <QVariantList>
 
@@ -25,6 +27,10 @@ public:
                                           int analysisStatusFilter,
                                           int confirmationStatusFilter,
                                           int assetTypeFilter = -1) const;
+    MaterialSearchResult searchMaterials(const QString &naturalLanguageQuery,
+                                         const MaterialSearchScope &scope = {},
+                                         const QDate &referenceDate = QDate::currentDate(),
+                                         const ModelSearchUnderstanding *modelUnderstanding = nullptr) const;
     VideoAnalysisDetail fetchDetail(const QString &videoKey) const;
 
 private:

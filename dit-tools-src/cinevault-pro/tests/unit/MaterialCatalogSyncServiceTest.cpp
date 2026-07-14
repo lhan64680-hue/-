@@ -2,6 +2,7 @@
 #include "domain/Enums.h"
 #include "infrastructure/db/DatabaseManager.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
+#include "shared/FolderPathMetadata.h"
 
 #include <QtTest>
 
@@ -26,6 +27,9 @@ void removeGlobalDatabaseFiles()
     QFile::remove(path);
     QFile::remove(path + QStringLiteral("-wal"));
     QFile::remove(path + QStringLiteral("-shm"));
+    QFile::remove(path + QStringLiteral(".pre-v8.bak"));
+    QFile::remove(path + QStringLiteral(".pre-v9.bak"));
+    QFile::remove(path + QStringLiteral(".pre-v11.bak"));
 }
 
 bool insertProjectRecord(QSqlDatabase db, const Project &project, QString *errorMessage)
@@ -62,6 +66,90 @@ bool insertSourceRoot(QSqlDatabase db, const QString &sourcePath, qint64 *source
     }
     if (sourceRootId) {
         *sourceRootId = query.lastInsertId().toLongLong();
+    }
+    return true;
+}
+
+bool insertFolderNode(QSqlDatabase db,
+                      qint64 sourceRootId,
+                      const QString &sourcePath,
+                      const QString &relativePath,
+                      qint64 directFileCount,
+                      qint64 recursiveFileCount,
+                      QString *errorMessage)
+{
+    const auto normalizedRelativePath = FolderPathMetadata::normalizeRelativePath(relativePath);
+    const auto absolutePath = normalizedRelativePath.isEmpty()
+        ? sourcePath
+        : QDir(sourcePath).filePath(normalizedRelativePath);
+    const auto date = FolderPathMetadata::inferDate(QStringLiteral("Source"), normalizedRelativePath);
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "INSERT INTO folder_node "
+        "(source_root_id, name, absolute_path, path_key, relative_path, parent_relative_path, depth, file_count, "
+        "direct_file_count, recursive_file_count, normalized_date, date_anchor, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-07-05T10:00:00', '2026-07-05T10:00:00')"));
+    query.addBindValue(sourceRootId);
+    query.addBindValue(FolderPathMetadata::folderName(absolutePath, QStringLiteral("Source")));
+    query.addBindValue(absolutePath);
+    query.addBindValue(FolderPathMetadata::normalizedPathKey(absolutePath));
+    query.addBindValue(normalizedRelativePath);
+    query.addBindValue(FolderPathMetadata::parentRelativePath(normalizedRelativePath));
+    query.addBindValue(FolderPathMetadata::depth(normalizedRelativePath));
+    query.addBindValue(directFileCount);
+    query.addBindValue(directFileCount);
+    query.addBindValue(recursiveFileCount);
+    query.addBindValue(date.normalizedDate);
+    query.addBindValue(date.anchorRelativePath);
+    if (!query.exec()) {
+        if (errorMessage) {
+            *errorMessage = query.lastError().text();
+        }
+        return false;
+    }
+    return true;
+}
+
+bool insertVideoAssetAt(QSqlDatabase db,
+                        qint64 sourceRootId,
+                        const QString &sourcePath,
+                        const QString &relativePath,
+                        QString *errorMessage)
+{
+    const auto normalizedRelativePath = FolderPathMetadata::normalizeRelativePath(relativePath);
+    const auto filePath = QDir(sourcePath).filePath(normalizedRelativePath);
+    if (!QDir().mkpath(QFileInfo(filePath).absolutePath())) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("无法创建测试目录：%1").arg(QFileInfo(filePath).absolutePath());
+        }
+        return false;
+    }
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("无法创建测试文件：%1").arg(filePath);
+        }
+        return false;
+    }
+    file.write("video");
+    file.close();
+
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "INSERT INTO asset_file "
+        "(source_root_id, name, extension, absolute_path, relative_path, parent_path, asset_type, size_bytes, modified_at, "
+        "is_readable, created_at) VALUES (?, ?, 'mov', ?, ?, ?, ?, 12, '2026-07-05T10:00:00', 1, '2026-07-05T10:00:00')"));
+    query.addBindValue(sourceRootId);
+    query.addBindValue(QFileInfo(filePath).fileName());
+    query.addBindValue(filePath);
+    query.addBindValue(normalizedRelativePath);
+    query.addBindValue(QFileInfo(filePath).absolutePath());
+    query.addBindValue(static_cast<int>(AssetType::Video));
+    if (!query.exec()) {
+        if (errorMessage) {
+            *errorMessage = query.lastError().text();
+        }
+        return false;
     }
     return true;
 }
@@ -181,6 +269,21 @@ bool insertLegacyGlobalAnalysis(QSqlDatabase db,
     if (!frame.exec()) {
         if (errorMessage) {
             *errorMessage = frame.lastError().text();
+        }
+        return false;
+    }
+
+    QSqlQuery plan(db);
+    plan.prepare(QStringLiteral(
+        "INSERT INTO video_analysis_plan "
+        "(video_key, sampling_policy, frame_interval, structured_profile_version, source_frame_count, planned_frame_count, "
+        "asset_size_bytes, asset_modified_at, created_at, updated_at) "
+        "VALUES (?, 'fixed_interval', 10, 2, 25, 3, 12, '2026-07-05T10:00:00', "
+        "'2026-07-05T09:00:00', '2026-07-05T09:00:00')"));
+    plan.addBindValue(oldVideoKey);
+    if (!plan.exec()) {
+        if (errorMessage) {
+            *errorMessage = plan.lastError().text();
         }
         return false;
     }
@@ -324,6 +427,71 @@ private slots:
         globalDatabaseManager.closeDatabase();
     }
 
+    void syncCurrentProject_resolvesRealCaptureTimeFromProbeMetadata()
+    {
+        removeGlobalDatabaseFiles();
+
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+
+        DatabaseManager databaseManager;
+        GlobalDatabaseManager globalDatabaseManager;
+        QString errorMessage;
+        QVERIFY2(globalDatabaseManager.openDatabase(&errorMessage), qPrintable(errorMessage));
+
+        Project project;
+        project.id = QStringLiteral("project-capture-time");
+        project.name = QStringLiteral("CaptureTimeProject");
+        project.rootPath = QDir(temp.path()).filePath(project.name);
+        project.databasePath = QDir(project.rootPath).filePath(QStringLiteral("project.cvdb"));
+        project.createdAt = QStringLiteral("2026-07-15T10:00:00");
+        QVERIFY(QDir().mkpath(project.rootPath));
+        QVERIFY2(databaseManager.openProjectDatabase(project.databasePath, &errorMessage),
+                 qPrintable(errorMessage));
+        QVERIFY2(insertProjectRecord(databaseManager.database(), project, &errorMessage),
+                 qPrintable(errorMessage));
+
+        const auto sourcePath = QDir(project.rootPath).filePath(QStringLiteral("Source"));
+        QVERIFY(QDir().mkpath(sourcePath));
+        qint64 sourceRootId = 0;
+        QVERIFY2(insertSourceRoot(databaseManager.database(), sourcePath, &sourceRootId, &errorMessage),
+                 qPrintable(errorMessage));
+        QVERIFY2(insertBareVideoAsset(databaseManager.database(), sourceRootId, sourcePath, &errorMessage),
+                 qPrintable(errorMessage));
+        const auto assetId = firstAssetId(databaseManager.database(), &errorMessage);
+        QVERIFY2(assetId > 0, qPrintable(errorMessage));
+
+        QSqlQuery metadata(databaseManager.database());
+        metadata.prepare(QStringLiteral(
+            "INSERT OR REPLACE INTO media_metadata "
+            "(asset_id, probe_status, media_type, container, duration_ms, bit_rate, raw_json, error_message, updated_at) "
+            "VALUES (?, 2, 1, 'mov', 1000, 1000000, ?, '', '2026-07-15T10:01:00')"));
+        metadata.addBindValue(assetId);
+        metadata.addBindValue(QStringLiteral(
+            R"({"format":{"tags":{"creation_time":"2026-07-12T01:00:00Z","com.apple.quicktime.creationdate":"2026-07-13T23:30:00+08:00"}}})"));
+        QVERIFY2(metadata.exec(), qPrintable(metadata.lastError().text()));
+
+        auto globalDb = globalDatabaseManager.database();
+        QVERIFY2(syncProjectIntoGlobalForTest(globalDb,
+                                              project,
+                                              globalDatabaseManager.hasFts5(),
+                                              &errorMessage),
+                 qPrintable(errorMessage));
+
+        QSqlQuery capture(globalDb);
+        QVERIFY2(capture.exec(QStringLiteral(
+                     "SELECT capture_time, capture_date, capture_time_source, capture_time_confidence "
+                     "FROM global_video_asset WHERE project_uuid = 'project-capture-time'")),
+                 qPrintable(capture.lastError().text()));
+        QVERIFY(capture.next());
+        QCOMPARE(capture.value(1).toString(), QStringLiteral("2026-07-13"));
+        QCOMPARE(capture.value(2).toString(), QStringLiteral("quicktime_creation_date"));
+        QCOMPARE(capture.value(3).toDouble(), 1.0);
+        QVERIFY(capture.value(0).toString().startsWith(QStringLiteral("2026-07-13T23:30:00")));
+
+        globalDatabaseManager.closeDatabase();
+    }
+
     void syncCurrentProject_migratesAnalysisWhenAssetIdChangesForSamePath()
     {
         removeGlobalDatabaseFiles();
@@ -393,6 +561,18 @@ private slots:
         QVERIFY(frame.next());
         QCOMPARE(frame.value(0).toString(), QStringLiteral("旧帧描述"));
 
+        QSqlQuery plan(globalDb);
+        plan.prepare(QStringLiteral(
+            "SELECT sampling_policy, frame_interval, source_frame_count, planned_frame_count "
+            "FROM video_analysis_plan WHERE video_key = ?"));
+        plan.addBindValue(newVideoKey);
+        QVERIFY2(plan.exec(), qPrintable(plan.lastError().text()));
+        QVERIFY(plan.next());
+        QCOMPARE(plan.value(0).toString(), QStringLiteral("fixed_interval"));
+        QCOMPARE(plan.value(1).toInt(), 10);
+        QCOMPARE(plan.value(2).toInt(), 25);
+        QCOMPARE(plan.value(3).toInt(), 3);
+
         QSqlQuery dimension(globalDb);
         dimension.prepare(QStringLiteral("SELECT detail FROM material_dimension_analysis WHERE video_key = ?"));
         dimension.addBindValue(newVideoKey);
@@ -423,6 +603,200 @@ private slots:
             QCOMPARE(fts.value(0).toString(), QStringLiteral("旧解析摘要"));
             QVERIFY(fts.value(1).toString().contains(QStringLiteral("旧帧描述")));
         }
+
+        globalDatabaseManager.closeDatabase();
+    }
+
+    void syncFolders_handlesRenameDeleteAndOrphanCleanup()
+    {
+        removeGlobalDatabaseFiles();
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+
+        DatabaseManager databaseManager;
+        GlobalDatabaseManager globalDatabaseManager;
+        QString errorMessage;
+        QVERIFY2(globalDatabaseManager.openDatabase(&errorMessage), qPrintable(errorMessage));
+
+        Project project;
+        project.id = QStringLiteral("project-folders");
+        project.name = QStringLiteral("FolderProject");
+        project.rootPath = QDir(temp.path()).filePath(project.name);
+        project.databasePath = QDir(project.rootPath).filePath(QStringLiteral("project.cvdb"));
+        project.createdAt = QStringLiteral("2026-07-05T10:00:00");
+        QVERIFY(QDir().mkpath(project.rootPath));
+        QVERIFY2(databaseManager.openProjectDatabase(project.databasePath, &errorMessage), qPrintable(errorMessage));
+        QVERIFY2(insertProjectRecord(databaseManager.database(), project, &errorMessage), qPrintable(errorMessage));
+
+        const auto sourcePath = QDir(project.rootPath).filePath(QStringLiteral("Source"));
+        QVERIFY(QDir().mkpath(QDir(sourcePath).filePath(QStringLiteral("2026-07-14/CameraA"))));
+        qint64 sourceRootId = 0;
+        QVERIFY2(insertSourceRoot(databaseManager.database(), sourcePath, &sourceRootId, &errorMessage),
+                 qPrintable(errorMessage));
+        QVERIFY2(insertFolderNode(databaseManager.database(), sourceRootId, sourcePath, QString(), 0, 1, &errorMessage),
+                 qPrintable(errorMessage));
+        QVERIFY2(insertFolderNode(databaseManager.database(), sourceRootId, sourcePath, QStringLiteral("2026-07-14"), 0, 1, &errorMessage),
+                 qPrintable(errorMessage));
+        QVERIFY2(insertFolderNode(databaseManager.database(), sourceRootId, sourcePath, QStringLiteral("2026-07-14/CameraA"), 1, 1, &errorMessage),
+                 qPrintable(errorMessage));
+        QVERIFY2(insertVideoAssetAt(databaseManager.database(), sourceRootId, sourcePath,
+                                    QStringLiteral("2026-07-14/CameraA/clip.mov"), &errorMessage),
+                 qPrintable(errorMessage));
+
+        auto globalDb = globalDatabaseManager.database();
+        QVERIFY2(syncProjectIntoGlobalForTest(globalDb, project, globalDatabaseManager.hasFts5(), &errorMessage),
+                 qPrintable(errorMessage));
+
+        const auto oldFolderKey = FolderPathMetadata::globalFolderKey(project.id,
+                                                                      sourceRootId,
+                                                                      QStringLiteral("2026-07-14/CameraA"));
+        QSqlQuery initialFolders(globalDb);
+        initialFolders.prepare(QStringLiteral(
+            "SELECT COUNT(*), SUM(CASE WHEN normalized_date = '2026-07-14' THEN 1 ELSE 0 END) "
+            "FROM global_folder_node WHERE project_uuid = ?"));
+        initialFolders.addBindValue(project.id);
+        QVERIFY2(initialFolders.exec(), qPrintable(initialFolders.lastError().text()));
+        QVERIFY(initialFolders.next());
+        QCOMPARE(initialFolders.value(0).toInt(), 3);
+        QCOMPARE(initialFolders.value(1).toInt(), 2);
+
+        QSqlQuery initialAsset(globalDb);
+        initialAsset.prepare(QStringLiteral("SELECT folder_key, is_available FROM global_video_asset WHERE project_uuid = ?"));
+        initialAsset.addBindValue(project.id);
+        QVERIFY2(initialAsset.exec(), qPrintable(initialAsset.lastError().text()));
+        QVERIFY(initialAsset.next());
+        QCOMPARE(initialAsset.value(0).toString(), oldFolderKey);
+        QCOMPARE(initialAsset.value(1).toInt(), 1);
+
+        const auto renamedRelativePath = QStringLiteral("2026-07-14/CameraB");
+        const auto renamedAbsolutePath = QDir(sourcePath).filePath(renamedRelativePath);
+        QVERIFY(QDir().rename(QDir(sourcePath).filePath(QStringLiteral("2026-07-14/CameraA")), renamedAbsolutePath));
+        QSqlQuery renameFolder(databaseManager.database());
+        renameFolder.prepare(QStringLiteral(
+            "UPDATE folder_node SET name = 'CameraB', absolute_path = ?, path_key = ?, relative_path = ? "
+            "WHERE source_root_id = ? AND relative_path = '2026-07-14/CameraA'"));
+        renameFolder.addBindValue(renamedAbsolutePath);
+        renameFolder.addBindValue(FolderPathMetadata::normalizedPathKey(renamedAbsolutePath));
+        renameFolder.addBindValue(renamedRelativePath);
+        renameFolder.addBindValue(sourceRootId);
+        QVERIFY2(renameFolder.exec(), qPrintable(renameFolder.lastError().text()));
+
+        const auto renamedAssetPath = QDir(renamedAbsolutePath).filePath(QStringLiteral("clip.mov"));
+        QSqlQuery renameAsset(databaseManager.database());
+        renameAsset.prepare(QStringLiteral(
+            "UPDATE asset_file SET absolute_path = ?, relative_path = ?, parent_path = ? WHERE source_root_id = ?"));
+        renameAsset.addBindValue(renamedAssetPath);
+        renameAsset.addBindValue(QStringLiteral("2026-07-14/CameraB/clip.mov"));
+        renameAsset.addBindValue(renamedAbsolutePath);
+        renameAsset.addBindValue(sourceRootId);
+        QVERIFY2(renameAsset.exec(), qPrintable(renameAsset.lastError().text()));
+
+        QVERIFY2(syncProjectIntoGlobalForTest(globalDb, project, globalDatabaseManager.hasFts5(), &errorMessage),
+                 qPrintable(errorMessage));
+        const auto newFolderKey = FolderPathMetadata::globalFolderKey(project.id, sourceRootId, renamedRelativePath);
+
+        QSqlQuery renamedFolders(globalDb);
+        renamedFolders.prepare(QStringLiteral(
+            "SELECT SUM(CASE WHEN folder_key = ? THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN folder_key = ? THEN 1 ELSE 0 END) FROM global_folder_node WHERE project_uuid = ?"));
+        renamedFolders.addBindValue(oldFolderKey);
+        renamedFolders.addBindValue(newFolderKey);
+        renamedFolders.addBindValue(project.id);
+        QVERIFY2(renamedFolders.exec(), qPrintable(renamedFolders.lastError().text()));
+        QVERIFY(renamedFolders.next());
+        QCOMPARE(renamedFolders.value(0).toInt(), 0);
+        QCOMPARE(renamedFolders.value(1).toInt(), 1);
+
+        QSqlQuery renamedAsset(globalDb);
+        renamedAsset.prepare(QStringLiteral("SELECT folder_key FROM global_video_asset WHERE project_uuid = ?"));
+        renamedAsset.addBindValue(project.id);
+        QVERIFY2(renamedAsset.exec(), qPrintable(renamedAsset.lastError().text()));
+        QVERIFY(renamedAsset.next());
+        QCOMPARE(renamedAsset.value(0).toString(), newFolderKey);
+
+        QSqlQuery deleteProjectRows(databaseManager.database());
+        QVERIFY2(deleteProjectRows.exec(QStringLiteral("DELETE FROM asset_file")), qPrintable(deleteProjectRows.lastError().text()));
+        deleteProjectRows.prepare(QStringLiteral("DELETE FROM folder_node WHERE relative_path = ?"));
+        deleteProjectRows.addBindValue(renamedRelativePath);
+        QVERIFY2(deleteProjectRows.exec(), qPrintable(deleteProjectRows.lastError().text()));
+
+        QVERIFY2(syncProjectIntoGlobalForTest(globalDb, project, globalDatabaseManager.hasFts5(), &errorMessage),
+                 qPrintable(errorMessage));
+        QSqlQuery cleanup(globalDb);
+        cleanup.prepare(QStringLiteral(
+            "SELECT (SELECT COUNT(*) FROM global_video_asset WHERE project_uuid = ?), "
+            "(SELECT COUNT(*) FROM global_folder_node WHERE project_uuid = ?), "
+            "(SELECT COUNT(*) FROM global_video_asset ga WHERE ga.project_uuid = ? AND ga.folder_key <> '' "
+            "AND NOT EXISTS (SELECT 1 FROM global_folder_node gf WHERE gf.folder_key = ga.folder_key))"));
+        cleanup.addBindValue(project.id);
+        cleanup.addBindValue(project.id);
+        cleanup.addBindValue(project.id);
+        QVERIFY2(cleanup.exec(), qPrintable(cleanup.lastError().text()));
+        QVERIFY(cleanup.next());
+        QCOMPARE(cleanup.value(0).toInt(), 0);
+        QCOMPARE(cleanup.value(1).toInt(), 2);
+        QCOMPARE(cleanup.value(2).toInt(), 0);
+
+        globalDatabaseManager.closeDatabase();
+    }
+
+    void syncFolders_preservesRowsWhenProjectDatabaseIsOffline()
+    {
+        removeGlobalDatabaseFiles();
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+
+        DatabaseManager databaseManager;
+        GlobalDatabaseManager globalDatabaseManager;
+        QString errorMessage;
+        QVERIFY2(globalDatabaseManager.openDatabase(&errorMessage), qPrintable(errorMessage));
+
+        Project project;
+        project.id = QStringLiteral("project-offline");
+        project.name = QStringLiteral("OfflineProject");
+        project.rootPath = QDir(temp.path()).filePath(project.name);
+        project.databasePath = QDir(project.rootPath).filePath(QStringLiteral("project.cvdb"));
+        project.createdAt = QStringLiteral("2026-07-05T10:00:00");
+        QVERIFY(QDir().mkpath(project.rootPath));
+        QVERIFY2(databaseManager.openProjectDatabase(project.databasePath, &errorMessage), qPrintable(errorMessage));
+        QVERIFY2(insertProjectRecord(databaseManager.database(), project, &errorMessage), qPrintable(errorMessage));
+
+        const auto sourcePath = QDir(project.rootPath).filePath(QStringLiteral("Source"));
+        QVERIFY(QDir().mkpath(sourcePath));
+        qint64 sourceRootId = 0;
+        QVERIFY2(insertSourceRoot(databaseManager.database(), sourcePath, &sourceRootId, &errorMessage),
+                 qPrintable(errorMessage));
+        QVERIFY2(insertFolderNode(databaseManager.database(), sourceRootId, sourcePath, QString(), 1, 1, &errorMessage),
+                 qPrintable(errorMessage));
+        QVERIFY2(insertVideoAssetAt(databaseManager.database(), sourceRootId, sourcePath, QStringLiteral("clip.mov"), &errorMessage),
+                 qPrintable(errorMessage));
+
+        auto globalDb = globalDatabaseManager.database();
+        QVERIFY2(syncProjectIntoGlobalForTest(globalDb, project, globalDatabaseManager.hasFts5(), &errorMessage),
+                 qPrintable(errorMessage));
+
+        databaseManager.closeProjectDatabase();
+        const auto offlinePath = project.databasePath + QStringLiteral(".offline");
+        QVERIFY(QFile::rename(project.databasePath, offlinePath));
+        QVERIFY(!syncProjectIntoGlobalForTest(globalDb, project, globalDatabaseManager.hasFts5(), &errorMessage));
+        QVERIFY(errorMessage.contains(QStringLiteral("离线")));
+
+        QSqlQuery state(globalDb);
+        state.prepare(QStringLiteral(
+            "SELECT pr.sync_status, "
+            "(SELECT COUNT(*) FROM global_folder_node gf WHERE gf.project_uuid = pr.project_uuid), "
+            "(SELECT SUM(is_available) FROM global_folder_node gf WHERE gf.project_uuid = pr.project_uuid), "
+            "(SELECT COUNT(*) FROM global_video_asset ga WHERE ga.project_uuid = pr.project_uuid), "
+            "(SELECT SUM(is_available) FROM global_video_asset ga WHERE ga.project_uuid = pr.project_uuid) "
+            "FROM project_registry pr WHERE pr.project_uuid = ?"));
+        state.addBindValue(project.id);
+        QVERIFY2(state.exec(), qPrintable(state.lastError().text()));
+        QVERIFY(state.next());
+        QCOMPARE(state.value(0).toString(), QStringLiteral("offline"));
+        QCOMPARE(state.value(1).toInt(), 1);
+        QCOMPARE(state.value(2).toInt(), 0);
+        QCOMPARE(state.value(3).toInt(), 1);
+        QCOMPARE(state.value(4).toInt(), 0);
 
         globalDatabaseManager.closeDatabase();
     }
@@ -482,7 +856,7 @@ private slots:
             QVERIFY2(version.exec(QStringLiteral("SELECT version FROM schema_version")),
                      qPrintable(version.lastError().text()));
             QVERIFY(version.next());
-            QCOMPARE(version.value(0).toInt(), 7);
+            QCOMPARE(version.value(0).toInt(), 11);
 
             QSqlQuery states(db);
             QVERIFY2(states.exec(QStringLiteral(

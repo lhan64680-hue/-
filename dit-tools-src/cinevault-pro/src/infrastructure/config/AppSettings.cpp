@@ -9,6 +9,13 @@ constexpr auto kKnownProjectsKey = "knownProjects";
 constexpr auto kVisionBaseUrlKey = "materialCenter/visionBaseUrl";
 constexpr auto kVisionApiKeyKey = "materialCenter/visionApiKey";
 constexpr auto kVisionModelKey = "materialCenter/visionModel";
+constexpr auto kSearchAssistantEnabledKey = "materialCenter/searchAssistantEnabled";
+constexpr auto kFrameRerankEnabledKey = "materialCenter/frameRerankEnabled";
+constexpr auto kLocalOnlySearchKey = "materialCenter/localOnlySearch";
+constexpr auto kAllowSearchFrameUploadKey = "materialCenter/allowSearchFrameUpload";
+constexpr auto kDailySearchModelCallLimitKey = "materialCenter/dailySearchModelCallLimit";
+constexpr auto kSearchModelCallDateKey = "materialCenter/searchModelCallDate";
+constexpr auto kSearchModelCallCountKey = "materialCenter/searchModelCallCount";
 constexpr auto kAnalysisModeKey = "materialCenter/analysisMode";
 constexpr auto kFrameIntervalKey = "materialCenter/frameInterval";
 constexpr auto kThumbnailFrameIndexKey = "materialCenter/thumbnailFrameIndex";
@@ -161,6 +168,86 @@ void AppSettings::setVisionModel(const QString &value)
 {
     const auto normalized = value.trimmed();
     m_settings->setValue(QLatin1String(kVisionModelKey), normalized.isEmpty() ? QStringLiteral("gpt-4.1-mini") : normalized);
+}
+
+bool AppSettings::searchAssistantEnabled() const
+{
+    return m_settings->value(QLatin1String(kSearchAssistantEnabledKey), true).toBool();
+}
+
+void AppSettings::setSearchAssistantEnabled(bool enabled)
+{
+    m_settings->setValue(QLatin1String(kSearchAssistantEnabledKey), enabled);
+}
+
+bool AppSettings::frameRerankEnabled() const
+{
+    return m_settings->value(QLatin1String(kFrameRerankEnabledKey), true).toBool();
+}
+
+void AppSettings::setFrameRerankEnabled(bool enabled)
+{
+    m_settings->setValue(QLatin1String(kFrameRerankEnabledKey), enabled);
+}
+
+bool AppSettings::localOnlySearch() const
+{
+    return m_settings->value(QLatin1String(kLocalOnlySearchKey), false).toBool();
+}
+
+void AppSettings::setLocalOnlySearch(bool enabled)
+{
+    m_settings->setValue(QLatin1String(kLocalOnlySearchKey), enabled);
+}
+
+bool AppSettings::allowSearchFrameUpload() const
+{
+    return m_settings->value(QLatin1String(kAllowSearchFrameUploadKey), true).toBool();
+}
+
+void AppSettings::setAllowSearchFrameUpload(bool enabled)
+{
+    m_settings->setValue(QLatin1String(kAllowSearchFrameUploadKey), enabled);
+}
+
+int AppSettings::dailySearchModelCallLimit() const
+{
+    return qBound(0, m_settings->value(QLatin1String(kDailySearchModelCallLimitKey), 100).toInt(), 10000);
+}
+
+void AppSettings::setDailySearchModelCallLimit(int value)
+{
+    m_settings->setValue(QLatin1String(kDailySearchModelCallLimitKey), qBound(0, value, 10000));
+}
+
+int AppSettings::searchModelCallsForDate(const QDate &date) const
+{
+    if (!date.isValid()
+        || m_settings->value(QLatin1String(kSearchModelCallDateKey)).toString()
+               != date.toString(Qt::ISODate)) {
+        return 0;
+    }
+    return qMax(0, m_settings->value(QLatin1String(kSearchModelCallCountKey), 0).toInt());
+}
+
+bool AppSettings::canUseSearchModel(const QDate &date) const
+{
+    if (!date.isValid()) {
+        return false;
+    }
+    const auto limit = dailySearchModelCallLimit();
+    return limit == 0 || searchModelCallsForDate(date) < limit;
+}
+
+bool AppSettings::tryConsumeSearchModelCall(const QDate &date)
+{
+    if (!canUseSearchModel(date)) {
+        return false;
+    }
+    const auto count = searchModelCallsForDate(date);
+    m_settings->setValue(QLatin1String(kSearchModelCallDateKey), date.toString(Qt::ISODate));
+    m_settings->setValue(QLatin1String(kSearchModelCallCountKey), count + 1);
+    return true;
 }
 
 AnalysisMode AppSettings::analysisMode() const

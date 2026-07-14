@@ -87,6 +87,16 @@ QString Paths::frameCacheRoot()
     return QDir(resolvedDataRoot()).filePath(QStringLiteral("frame-cache"));
 }
 
+QString Paths::semanticSearchRoot()
+{
+    return QDir(resolvedDataRoot()).filePath(QStringLiteral("semantic-search"));
+}
+
+QString Paths::semanticSearchIndexPath()
+{
+    return QDir(semanticSearchRoot()).filePath(QStringLiteral("materials-v1.usearch"));
+}
+
 QString Paths::frameCacheDirectory(const QString &videoKey)
 {
     return QDir(frameCacheRoot()).filePath(sanitizedVideoKey(videoKey));
@@ -172,5 +182,6 @@ bool Paths::ensureBaseDirectories(QString *errorMessage)
         && !ensureDir(configRoot(), errorMessage).isEmpty()
         && !ensureDir(logsRoot(), errorMessage).isEmpty()
         && !ensureDir(resolvedDataRoot(), errorMessage).isEmpty()
-        && !ensureDir(frameCacheRoot(), errorMessage).isEmpty();
+        && !ensureDir(frameCacheRoot(), errorMessage).isEmpty()
+        && !ensureDir(semanticSearchRoot(), errorMessage).isEmpty();
 }

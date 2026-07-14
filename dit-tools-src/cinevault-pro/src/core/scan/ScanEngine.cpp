@@ -5,12 +5,14 @@
 #include "core/scan/FileTypeService.h"
 #include "core/thumbnail/ThumbnailEngine.h"
 #include "infrastructure/db/DatabaseManager.h"
+#include "shared/FolderPathMetadata.h"
 
 #include <QtConcurrent>
 
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QHash>
 #include <QMetaObject>
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -69,6 +71,25 @@ JobProgressContext scanProgressContext(const ScanBatch &batch)
     context.extraLabel = QStringLiteral("%1个文件夹").arg(batch.totalFolders);
     return context;
 }
+
+FolderNode makeFolderNode(const SourceRoot &sourceRoot,
+                          const QString &rootFolderName,
+                          const QString &absolutePath,
+                          const QString &relativePath)
+{
+    FolderNode folder;
+    folder.sourceRootId = sourceRoot.id;
+    folder.name = FolderPathMetadata::folderName(absolutePath, sourceRoot.name);
+    folder.absolutePath = absolutePath;
+    folder.pathKey = FolderPathMetadata::normalizedPathKey(absolutePath);
+    folder.relativePath = FolderPathMetadata::normalizeRelativePath(relativePath);
+    folder.parentRelativePath = FolderPathMetadata::parentRelativePath(folder.relativePath);
+    folder.depth = FolderPathMetadata::depth(folder.relativePath);
+    const auto date = FolderPathMetadata::inferDate(rootFolderName, folder.relativePath);
+    folder.normalizedDate = date.normalizedDate;
+    folder.dateAnchor = date.anchorRelativePath;
+    return folder;
+}
 }
 
 ScanEngine::ScanEngine(DatabaseManager *databaseManager, JobEngine *jobEngine, MediaProbeEngine *mediaProbeEngine, ThumbnailEngine *thumbnailEngine, QObject *parent)
@@ -103,6 +124,8 @@ void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
             m_jobEngine->failJob(jobId, errorMessage);
             emit scanFailed(sourceRoot.id, errorMessage);
         }, Qt::QueuedConnection);
+        db = QSqlDatabase();
+        m_databaseManager->closeThreadConnection(connectionName);
         return;
     }
 
@@ -127,6 +150,10 @@ void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
             m_jobEngine->failJob(jobId, message);
             emit scanFailed(sourceRoot.id, message);
         }, Qt::QueuedConnection);
+        clearFolders = QSqlQuery();
+        clearAssets = QSqlQuery();
+        db.close();
+        db = QSqlDatabase();
         m_databaseManager->closeThreadConnection(connectionName);
         return;
     }
@@ -138,15 +165,27 @@ void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
 
         QSqlQuery folderQuery(db);
         folderQuery.prepare(QStringLiteral(
-            "INSERT INTO folder_node (source_root_id, absolute_path, relative_path, file_count, created_at) "
-            "VALUES (?, ?, ?, ?, ?)"));
+            "INSERT INTO folder_node "
+            "(source_root_id, name, absolute_path, path_key, relative_path, parent_relative_path, depth, file_count, "
+            "direct_file_count, recursive_file_count, normalized_date, date_anchor, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
 
         for (const auto &folder : folders) {
             folderQuery.addBindValue(folder.sourceRootId);
+            folderQuery.addBindValue(folder.name);
             folderQuery.addBindValue(folder.absolutePath);
+            folderQuery.addBindValue(folder.pathKey);
             folderQuery.addBindValue(folder.relativePath);
+            folderQuery.addBindValue(folder.parentRelativePath);
+            folderQuery.addBindValue(folder.depth);
             folderQuery.addBindValue(folder.fileCount);
-            folderQuery.addBindValue(QDateTime::currentDateTime().toString(Qt::ISODate));
+            folderQuery.addBindValue(folder.directFileCount);
+            folderQuery.addBindValue(folder.recursiveFileCount);
+            folderQuery.addBindValue(folder.normalizedDate);
+            folderQuery.addBindValue(folder.dateAnchor);
+            const auto now = QDateTime::currentDateTime().toString(Qt::ISODate);
+            folderQuery.addBindValue(now);
+            folderQuery.addBindValue(now);
             if (!folderQuery.exec()) {
                 db.rollback();
                 return false;
@@ -204,23 +243,32 @@ void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
     };
 
     QList<FolderNode> folders;
+    QHash<QString, int> folderIndexes;
     QList<AssetFile> files;
     constexpr qint64 kBatchSize = 500;
 
     try {
+        const auto rootFolderName = FolderPathMetadata::folderName(sourceRoot.path, sourceRoot.name);
+        folders.append(makeFolderNode(sourceRoot, rootFolderName, sourceRoot.path, QStringLiteral("")));
+        folderIndexes.insert(QStringLiteral(""), 0);
+
         const std::filesystem::path rootPath = sourceRoot.path.toStdWString();
         for (std::filesystem::recursive_directory_iterator it(rootPath, std::filesystem::directory_options::skip_permission_denied), end; it != end; ++it) {
             const auto path = it->path();
             const auto absolutePath = QString::fromStdWString(path.wstring());
-            const auto relativePath = QDir(sourceRoot.path).relativeFilePath(absolutePath);
+            const auto relativePath = FolderPathMetadata::relativePathFromRoot(sourceRoot.path, absolutePath);
             ++batch.processedEntries;
 
             if (it->is_directory()) {
-                FolderNode folder;
-                folder.sourceRootId = sourceRoot.id;
-                folder.absolutePath = absolutePath;
-                folder.relativePath = relativePath;
-                folders.append(folder);
+                const auto normalizedRelativePath = FolderPathMetadata::normalizeRelativePath(relativePath);
+                const auto key = normalizedRelativePath.toCaseFolded();
+                if (!folderIndexes.contains(key)) {
+                    folderIndexes.insert(key, folders.size());
+                    folders.append(makeFolderNode(sourceRoot,
+                                                  rootFolderName,
+                                                  absolutePath,
+                                                  normalizedRelativePath));
+                }
                 ++batch.totalFolders;
             } else if (it->is_regular_file()) {
                 AssetFile file;
@@ -228,13 +276,26 @@ void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
                 file.name = QFileInfo(absolutePath).fileName();
                 file.extension = QFileInfo(absolutePath).suffix().toLower();
                 file.absolutePath = absolutePath;
-                file.relativePath = relativePath;
+                file.relativePath = FolderPathMetadata::normalizeRelativePath(relativePath);
                 file.parentPath = QFileInfo(absolutePath).absolutePath();
                 file.assetType = FileTypeService::classify(file.name);
                 file.sizeBytes = static_cast<qint64>(it->file_size());
                 file.modifiedAt = toIsoString(it->last_write_time());
                 file.readable = QFileInfo(absolutePath).isReadable();
                 files.append(file);
+
+                const auto parentRelativePath = FolderPathMetadata::parentRelativePath(file.relativePath);
+                const auto directIndex = folderIndexes.value(parentRelativePath.toCaseFolded(), -1);
+                if (directIndex >= 0) {
+                    ++folders[directIndex].directFileCount;
+                    folders[directIndex].fileCount = folders[directIndex].directFileCount;
+                }
+                for (const auto &ancestor : FolderPathMetadata::ancestorRelativePaths(parentRelativePath)) {
+                    const auto ancestorIndex = folderIndexes.value(ancestor.toCaseFolded(), -1);
+                    if (ancestorIndex >= 0) {
+                        ++folders[ancestorIndex].recursiveFileCount;
+                    }
+                }
 
                 ++batch.totalFiles;
                 batch.totalSizeBytes += file.sizeBytes;
@@ -250,20 +311,17 @@ void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
                 }
             }
 
-            if ((folders.size() + files.size()) >= kBatchSize) {
+            if (files.size() >= kBatchSize) {
                 const auto progress = std::min<qint64>(95, 5 + (batch.totalFiles / 20));
-                if (!flush(folders, files, progress)) {
+                if (!flush({}, files, progress)) {
                     throw std::runtime_error("数据库批量写入失败");
                 }
-                folders.clear();
                 files.clear();
             }
         }
 
-        if (!folders.isEmpty() || !files.isEmpty()) {
-            if (!flush(folders, files, 98)) {
-                throw std::runtime_error("数据库收尾写入失败");
-            }
+        if (!flush(folders, files, 98)) {
+            throw std::runtime_error("数据库收尾写入失败");
         }
 
         QSqlQuery finalUpdate(db);
@@ -278,7 +336,9 @@ void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
                         imageCount,
                         otherCount,
                         ScanEngine::CurrentScanVersion);
-        finalUpdate.exec();
+        if (!finalUpdate.exec()) {
+            throw std::runtime_error("更新扫描汇总失败");
+        }
 
         QMetaObject::invokeMethod(this, [this, sourceRoot, batch, jobId]() {
             m_jobEngine->completeJob(jobId, QStringLiteral("%1 扫描完成，发现 %2 个文件").arg(sourceRoot.name).arg(batch.totalFiles));
@@ -300,5 +360,9 @@ void ScanEngine::runScan(SourceRoot sourceRoot, qint64 jobId)
         }, Qt::QueuedConnection);
     }
 
+    clearFolders = QSqlQuery();
+    clearAssets = QSqlQuery();
+    db.close();
+    db = QSqlDatabase();
     m_databaseManager->closeThreadConnection(connectionName);
 }

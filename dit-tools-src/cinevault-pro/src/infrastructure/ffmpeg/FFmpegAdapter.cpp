@@ -1,4 +1,5 @@
 #include "infrastructure/ffmpeg/FFmpegAdapter.h"
+#include "shared/VisualAnalysisMetadata.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -9,6 +10,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QProcess>
+#include <QSet>
 #include <QStringList>
 
 namespace {
@@ -263,7 +265,7 @@ FrameExtractionResult FFmpegAdapter::extractFrames(const FrameExtractionRequest 
     }
 
     QDir outputDir(request.outputDirectory);
-    if (outputDir.exists() && !outputDir.removeRecursively()) {
+    if (outputDir.exists() && !request.preserveExistingFrames && !outputDir.removeRecursively()) {
         result.errorMessage = QStringLiteral("无法清理抽帧目录：%1").arg(outputDir.absolutePath());
         return result;
     }
@@ -298,13 +300,23 @@ FrameExtractionResult FFmpegAdapter::extractFrames(const FrameExtractionRequest 
         return result;
     }
 
+    result.sourceFrameCount = frames.size();
+    result.frameInterval = VisualAnalysisMetadata::fixedFrameInterval(request.mode, request.frameInterval);
+
+    QSet<int> requestedFrameNumbers;
+    for (const auto frameNumber : request.requestedFrameNumbers) {
+        if (frameNumber > 0) {
+            requestedFrameNumbers.insert(frameNumber);
+        }
+    }
+
     QVector<ExtractedFrame> selectedFrames;
     selectedFrames.reserve(frames.size());
-    const int interval = request.mode == AnalysisMode::EveryFrame
-        ? 1
-        : (request.mode == AnalysisMode::Every10Frames ? 10 : qMax(1, request.frameInterval));
+    const int interval = result.frameInterval;
     for (int index = 0; index < frames.size(); ++index) {
-        if (request.mode != AnalysisMode::EveryFrame && (index % interval) != 0) {
+        const auto frameNumber = index + 1;
+        if ((index % interval) != 0
+            || (!requestedFrameNumbers.isEmpty() && !requestedFrameNumbers.contains(frameNumber))) {
             continue;
         }
 
@@ -312,7 +324,7 @@ FrameExtractionResult FFmpegAdapter::extractFrames(const FrameExtractionRequest 
         bool ok = false;
         const auto timestampSec = frameObject.value(QStringLiteral("best_effort_timestamp_time")).toString().toDouble(&ok);
         ExtractedFrame frame;
-        frame.frameNumber = index + 1;
+        frame.frameNumber = frameNumber;
         frame.timestampMs = ok ? static_cast<qint64>(timestampSec * 1000.0) : 0;
         frame.imagePath = QDir(request.outputDirectory).filePath(
             QStringLiteral("frame_%1.jpg").arg(frame.frameNumber, 6, 10, QLatin1Char('0')));
@@ -326,6 +338,12 @@ FrameExtractionResult FFmpegAdapter::extractFrames(const FrameExtractionRequest 
 
     const auto filter = scaleFilter(request.maxWidth, request.maxHeight);
     for (auto &frame : selectedFrames) {
+        if (request.preserveExistingFrames) {
+            const QFileInfo existing(frame.imagePath);
+            if (existing.isFile() && existing.size() > 0) {
+                continue;
+            }
+        }
         QFile::remove(frame.imagePath);
         const auto secondsText = QString::number(qMax<qint64>(0, frame.timestampMs) / 1000.0, 'f', 3);
         const QStringList arguments = {

@@ -30,9 +30,18 @@ public:
         ThumbnailLoadingRole,
         UpdatedAtRole,
         DurationMsRole,
+        CaptureDateRole,
+        CaptureTimeSourceLabelRole,
+        SearchScoreRole,
+        SearchConfidenceRole,
+        SearchReasonsRole,
+        MatchedTimestampMsRole,
+        MatchedTimestampLabelRole,
+        MatchedFrameCaptionRole,
         ErrorMessageRole,
         CanAnalyzeRole,
-        CanConfirmRole
+        CanConfirmRole,
+        ResultRankRole
     };
 
     explicit MaterialCenterListModel(QObject *parent = nullptr);

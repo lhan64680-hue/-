@@ -38,11 +38,31 @@ Rectangle {
 
     function optionIndex(options, value) {
         for (var index = 0; index < options.length; ++index) {
-            if (Number(options[index].value) === Number(value)) {
+            if (String(options[index].value) === String(value)) {
                 return index
             }
         }
         return 0
+    }
+
+    function searchNoticeText() {
+        if (!viewModel) {
+            return ""
+        }
+        var notices = []
+        if (viewModel.searchInterpretationText.length > 0) {
+            notices.push("已理解：" + viewModel.searchInterpretationText)
+        }
+        if (viewModel.searchAssistantStatusText.length > 0) {
+            notices.push(viewModel.searchAssistantStatusText)
+        }
+        if (viewModel.searchWarningMessage.length > 0) {
+            notices.push(viewModel.searchWarningMessage)
+        }
+        if (viewModel.excludedPartialCount > 0) {
+            notices.push("另有 " + viewModel.excludedPartialCount + " 条候选因结构化视觉事实不完整而未纳入结果")
+        }
+        return notices.join(" · ")
     }
 
     function resetDimensionDrafts() {
@@ -211,7 +231,7 @@ Rectangle {
                     ThemedTextField {
                         Layout.preferredWidth: 240
                         Layout.fillWidth: true
-                        placeholderText: "搜索文件名、路径、摘要、关键词或文本内容"
+                        placeholderText: "用自然语言搜索文件夹、素材、视觉帧、日期、类型或画面内容"
                         text: shellVm ? shellVm.globalSearchText : ""
                         onTextChanged: if (shellVm) shellVm.globalSearchText = text
                     }
@@ -220,6 +240,7 @@ Rectangle {
                         Layout.preferredWidth: 160
                         model: viewModel ? viewModel.projectOptions : []
                         textRole: "label"
+                        currentIndex: viewModel ? root.optionIndex(viewModel.projectOptions, viewModel.projectFilter) : 0
                         onActivated: if (viewModel) viewModel.setProjectFilter(model[index].value)
                     }
 
@@ -227,6 +248,7 @@ Rectangle {
                         Layout.preferredWidth: 160
                         model: viewModel ? viewModel.sourceOptions : []
                         textRole: "label"
+                        currentIndex: viewModel ? root.optionIndex(viewModel.sourceOptions, viewModel.sourceFilter) : 0
                         onActivated: if (viewModel) viewModel.setSourceFilter(model[index].value)
                     }
 
@@ -242,6 +264,7 @@ Rectangle {
                         Layout.preferredWidth: 120
                         model: viewModel ? viewModel.analysisStatusOptions : []
                         textRole: "label"
+                        currentIndex: viewModel ? root.optionIndex(viewModel.analysisStatusOptions, viewModel.analysisStatusFilter) : 0
                         onActivated: if (viewModel) viewModel.setAnalysisStatusFilter(model[index].value)
                     }
 
@@ -249,10 +272,64 @@ Rectangle {
                         Layout.preferredWidth: 140
                         model: viewModel ? viewModel.confirmationStatusOptions : []
                         textRole: "label"
+                        currentIndex: viewModel ? root.optionIndex(viewModel.confirmationStatusOptions, viewModel.confirmationStatusFilter) : 0
                         onActivated: if (viewModel) viewModel.setConfirmationStatusFilter(model[index].value)
                     }
                 }
             }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: visible ? 42 : 0
+            visible: viewModel && viewModel.hasActiveSearch
+            radius: 14
+            color: viewModel && viewModel.semanticSearchAvailable
+                ? Qt.rgba(0.22, 0.66, 0.46, 0.12)
+                : Qt.rgba(0.94, 0.63, 0.20, 0.12)
+            border.width: 1
+            border.color: viewModel && viewModel.semanticSearchAvailable
+                ? Qt.rgba(0.22, 0.66, 0.46, 0.42)
+                : Qt.rgba(0.94, 0.63, 0.20, 0.42)
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 14
+                anchors.rightMargin: 14
+                spacing: 10
+
+                Text {
+                    text: viewModel ? viewModel.semanticSearchStatusText : ""
+                    color: viewModel && viewModel.semanticSearchAvailable ? Theme.green : Theme.orange
+                    font.pixelSize: 12
+                    font.weight: Font.DemiBold
+                }
+
+                Rectangle {
+                    Layout.preferredWidth: 1
+                    Layout.preferredHeight: 18
+                    visible: root.searchNoticeText().length > 0
+                    color: Theme.line
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.searchNoticeText().length > 0
+                    text: root.searchNoticeText()
+                    color: Theme.muted
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
+                }
+            }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            visible: viewModel && viewModel.searchEmptyReason.length > 0
+            text: viewModel ? viewModel.searchEmptyReason : ""
+            color: Theme.orange
+            font.pixelSize: 13
+            wrapMode: Text.Wrap
         }
 
         Text {
@@ -277,16 +354,425 @@ Rectangle {
                 border.width: 1
                 border.color: Theme.line
 
-                ListView {
-                    id: resultList
+                ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 12
-                    clip: true
-                    spacing: 10
-                    reuseItems: true
-                    cacheBuffer: 720
-                    model: viewModel ? viewModel.model : null
-                    currentIndex: viewModel ? viewModel.selectedVideoIndex : -1
+                    spacing: 8
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: viewModel && viewModel.frameSearchMode
+
+                        Text {
+                            text: "视觉帧命中"
+                            color: Theme.text
+                            font.pixelSize: 16
+                            font.weight: Font.DemiBold
+                        }
+
+                        Text {
+                            text: viewModel ? "· " + viewModel.frameCount : ""
+                            color: Theme.muted
+                            font.pixelSize: 12
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Text {
+                            text: "结果显示在中央操作区 · 按相关度排序"
+                            color: Theme.blue
+                            font.pixelSize: 11
+                        }
+                    }
+
+                    GridView {
+                        id: frameResultGrid
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        visible: viewModel && viewModel.frameSearchMode
+                        clip: true
+                        reuseItems: true
+                        cacheBuffer: 900
+                        property real cardWidth: width >= 1120 ? (width - 10) / 2 : width
+                        cellWidth: cardWidth
+                        cellHeight: 310
+                        model: viewModel ? viewModel.frameModel : null
+
+                        ScrollBar.vertical: ThemedScrollBar {
+                            policy: ScrollBar.AsNeeded
+                        }
+
+                        delegate: Rectangle {
+                            width: frameResultGrid.cardWidth - 10
+                            height: 298
+                            radius: 18
+                            color: Theme.bg
+                            border.width: 1
+                            border.color: Theme.line
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.margins: 14
+                                spacing: 14
+
+                                Rectangle {
+                                    Layout.preferredWidth: 184
+                                    Layout.fillHeight: true
+                                    radius: 14
+                                    color: Theme.mediaSurface
+                                    border.width: 1
+                                    border.color: Theme.line
+                                    clip: true
+
+                                    Image {
+                                        anchors.fill: parent
+                                        fillMode: Image.PreserveAspectFit
+                                        asynchronous: true
+                                        cache: true
+                                        source: root.imageFileSource(imagePath)
+                                    }
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        visible: imagePath.length === 0
+                                        text: "暂无帧缩略图"
+                                        color: Theme.muted
+                                        font.pixelSize: 12
+                                    }
+
+                                    Rectangle {
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.bottom: parent.bottom
+                                        height: 34
+                                        color: Qt.rgba(0.02, 0.03, 0.05, 0.78)
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "第 " + frameNumber + " 帧 · " + timestampLabel
+                                            color: "white"
+                                            font.pixelSize: 12
+                                            font.weight: Font.DemiBold
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        enabled: imagePath.length > 0
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.openImageViewer(root.imageFileSource(imagePath))
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    spacing: 5
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "#" + resultRank + " · 第 " + frameNumber + " 帧 · " + timestampLabel
+                                            color: Theme.text
+                                            font.pixelSize: 16
+                                            font.weight: Font.DemiBold
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Text {
+                                            text: "置信 " + Math.round(confidence * 100) + "%"
+                                            color: Theme.blue
+                                            font.pixelSize: 11
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: fileName + " · " + assetTypeLabel + " · " + projectName + " · " + sourceName
+                                        color: Theme.muted
+                                        font.pixelSize: 11
+                                        elide: Text.ElideMiddle
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: caption.length > 0 ? caption : "该帧暂无画面描述"
+                                        color: Theme.text
+                                        font.pixelSize: 13
+                                        wrapMode: Text.Wrap
+                                        maximumLineCount: 3
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: tags.length > 0
+                                        text: "标签：" + tags
+                                        color: Theme.muted
+                                        font.pixelSize: 11
+                                        maximumLineCount: 1
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: objects.length > 0
+                                        text: "对象：" + objects
+                                        color: Theme.muted
+                                        font.pixelSize: 11
+                                        maximumLineCount: 1
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: entitySummary.length > 0
+                                        text: "实体属性：" + entitySummary
+                                        color: Theme.blue
+                                        font.pixelSize: 11
+                                        maximumLineCount: 1
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: setting.length > 0 || actions.length > 0
+                                        text: "场景/动作：" + setting + (setting.length > 0 && actions.length > 0 ? " · " : "") + actions
+                                        color: Theme.muted
+                                        font.pixelSize: 11
+                                        maximumLineCount: 1
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: ocrText.length > 0
+                                        text: "OCR：" + ocrText
+                                        color: Theme.orange
+                                        font.pixelSize: 11
+                                        maximumLineCount: 1
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Item { Layout.fillHeight: true }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: reasons
+                                        color: Theme.blue
+                                        font.pixelSize: 11
+                                        maximumLineCount: 2
+                                        wrapMode: Text.Wrap
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: relativePath
+                                        color: Theme.muted
+                                        font.pixelSize: 10
+                                        elide: Text.ElideMiddle
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: viewModel && viewModel.folderCount > 0
+
+                        Text {
+                            text: "文件夹命中"
+                            color: Theme.text
+                            font.pixelSize: 14
+                            font.weight: Font.DemiBold
+                        }
+
+                        Text {
+                            text: viewModel ? "· " + viewModel.folderCount : ""
+                            color: Theme.muted
+                            font.pixelSize: 12
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Text {
+                            text: "按混合检索相关度排序"
+                            color: Theme.muted
+                            font.pixelSize: 11
+                        }
+                    }
+
+                    ListView {
+                        id: folderResultList
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: visible ? Math.min(220, contentHeight) : 0
+                        visible: viewModel && viewModel.folderCount > 0
+                        clip: true
+                        spacing: 8
+                        reuseItems: true
+                        cacheBuffer: 360
+                        model: viewModel ? viewModel.folderModel : null
+
+                        ScrollBar.vertical: ThemedScrollBar {
+                            policy: ScrollBar.AsNeeded
+                        }
+
+                        delegate: Rectangle {
+                            width: ListView.view.width
+                            height: reasons.length > 0 ? 100 : 82
+                            radius: 16
+                            color: Theme.bg
+                            border.width: 1
+                            border.color: Theme.line
+
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.rightMargin: 206
+                                cursorShape: available ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                onDoubleClicked: if (viewModel && available) viewModel.locateFolder(folderKey)
+                            }
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 12
+
+                                Rectangle {
+                                    Layout.preferredWidth: 54
+                                    Layout.preferredHeight: 54
+                                    radius: 14
+                                    color: Qt.rgba(0.31, 0.55, 1.0, 0.14)
+                                    border.width: 1
+                                    border.color: Qt.rgba(0.31, 0.55, 1.0, 0.34)
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "目录"
+                                        color: Theme.blue
+                                        font.pixelSize: 12
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 4
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: name
+                                            color: Theme.text
+                                            font.pixelSize: 15
+                                            font.weight: Font.DemiBold
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Text {
+                                            text: "#" + resultRank + " · 理解置信 " + Math.round(confidence * 100) + "%"
+                                            color: Theme.blue
+                                            font.pixelSize: 11
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: projectName + " · " + sourceName
+                                            + " · 直属 " + directFileCount + " / 共 " + recursiveFileCount + " 个文件"
+                                        color: Theme.muted
+                                        font.pixelSize: 12
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: relativePath.length > 0 ? relativePath : absolutePath
+                                        color: available ? Theme.text : Theme.orange
+                                        font.pixelSize: 12
+                                        elide: Text.ElideMiddle
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: reasons.length > 0
+                                        text: reasons
+                                        color: Theme.blue
+                                        font.pixelSize: 11
+                                        elide: Text.ElideRight
+                                    }
+                                }
+
+                                ActionButton {
+                                    Layout.preferredWidth: 88
+                                    Layout.preferredHeight: 32
+                                    text: "打开项目"
+                                    enabled: viewModel
+                                    onClicked: if (viewModel) viewModel.openFolderProject(folderKey)
+                                }
+
+                                ActionButton {
+                                    Layout.preferredWidth: 88
+                                    Layout.preferredHeight: 32
+                                    text: available ? "定位目录" : "目录不可用"
+                                    enabled: viewModel && available
+                                    primary: available
+                                    onClicked: if (viewModel) viewModel.locateFolder(folderKey)
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        visible: viewModel && viewModel.folderCount > 0
+                        color: Theme.line
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: !viewModel || !viewModel.frameSearchMode
+
+                        Text {
+                            text: "素材命中"
+                            color: Theme.text
+                            font.pixelSize: 14
+                            font.weight: Font.DemiBold
+                        }
+
+                        Text {
+                            text: viewModel ? "· " + viewModel.assetCount : ""
+                            color: Theme.muted
+                            font.pixelSize: 12
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Text {
+                            visible: viewModel && viewModel.hasActiveSearch
+                            text: "按混合检索相关度排序"
+                            color: Theme.muted
+                            font.pixelSize: 11
+                        }
+                    }
+
+                    ListView {
+                        id: resultList
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        visible: !viewModel || !viewModel.frameSearchMode
+                        clip: true
+                        spacing: 10
+                        reuseItems: true
+                        cacheBuffer: 720
+                        model: viewModel ? viewModel.assetModel : null
+                        currentIndex: viewModel ? viewModel.selectedVideoIndex : -1
 
                     ScrollBar.vertical: ThemedScrollBar {
                         policy: ScrollBar.AsNeeded
@@ -298,7 +784,7 @@ Rectangle {
 
                     delegate: Rectangle {
                         width: ListView.view.width
-                        height: errorMessage.length > 0 ? 138 : 118
+                        height: 118 + (searchReasons.length > 0 ? 20 : 0) + (errorMessage.length > 0 ? 20 : 0)
                         radius: 18
                         color: viewModel && viewModel.selectedAssetKey === assetKey ? Theme.selectedBg : Theme.bg
                         border.width: 1
@@ -396,7 +882,9 @@ Rectangle {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: assetTypeLabel + (extension.length > 0 ? " · " + extension : "") + " · " + projectName + " · " + sourceName
+                                    text: "#" + resultRank + " · " + assetTypeLabel
+                                        + (extension.length > 0 ? " · " + extension : "")
+                                        + " · " + projectName + " · " + sourceName
                                     color: Theme.muted
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
@@ -409,6 +897,16 @@ Rectangle {
                                     font.pixelSize: 13
                                     wrapMode: Text.Wrap
                                     maximumLineCount: 2
+                                    elide: Text.ElideRight
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: searchReasons.length > 0
+                                    text: "理解置信 " + Math.round(searchConfidence * 100) + "% · " + searchReasons
+                                    color: Theme.blue
+                                    font.pixelSize: 11
+                                    maximumLineCount: 1
                                     elide: Text.ElideRight
                                 }
 
@@ -473,17 +971,19 @@ Rectangle {
 
                     Text {
                         anchors.centerIn: parent
-                        visible: resultList.count === 0
+                        visible: (!viewModel || !viewModel.frameSearchMode) && resultList.count === 0
                         text: "当前筛选条件下没有素材。"
                         color: Theme.muted
                         font.pixelSize: 14
                     }
                 }
             }
+            }
 
             Rectangle {
-                Layout.preferredWidth: 420
+                Layout.preferredWidth: visible ? 420 : 0
                 Layout.fillHeight: true
+                visible: viewModel && !viewModel.frameSearchMode
                 radius: 20
                 color: Theme.panel2
                 border.width: 1

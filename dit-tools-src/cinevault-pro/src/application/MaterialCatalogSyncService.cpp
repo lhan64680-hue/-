@@ -2,13 +2,16 @@
 
 #include "application/ProjectService.h"
 #include "core/jobs/JobEngine.h"
+#include "core/search/CaptureTimeResolver.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
+#include "shared/FolderPathMetadata.h"
 #include "shared/Formatters.h"
 
 #include <QtConcurrent>
 
 #include <QDateTime>
 #include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QMetaObject>
 #include <QSet>
@@ -27,6 +30,28 @@ struct ExistingVideoState {
     ConfirmationStatus confirmationStatus = ConfirmationStatus::Pending;
     QString sourceText;
     QString errorMessage;
+};
+
+struct ProjectFolderState {
+    QString folderKey;
+    QString projectUuid;
+    QString projectName;
+    QString projectDatabasePath;
+    qint64 sourceRootId = 0;
+    QString sourceRootName;
+    QString sourceRootPath;
+    qint64 folderId = 0;
+    QString name;
+    QString absolutePath;
+    QString pathKey;
+    QString relativePath;
+    QString parentRelativePath;
+    int depth = 0;
+    qint64 directFileCount = 0;
+    qint64 recursiveFileCount = 0;
+    QString normalizedDate;
+    QString dateAnchor;
+    bool available = true;
 };
 
 bool isSupportedTextAsset(AssetType assetType, const QString &extension)
@@ -102,9 +127,7 @@ QString emptyIfNull(const QString &value)
 
 QString stablePathKey(QString path)
 {
-    auto normalized = QDir::cleanPath(path.trimmed());
-    normalized.replace(QLatin1Char('\\'), QLatin1Char('/'));
-    return normalized.toCaseFolded();
+    return FolderPathMetadata::normalizedPathKey(path);
 }
 
 bool execQuery(QSqlQuery &query, QString *errorMessage)
@@ -120,8 +143,16 @@ bool execQuery(QSqlQuery &query, QString *errorMessage)
 
 QSqlDatabase openProjectConnection(const QString &databasePath, const QString &connectionName, QString *errorMessage)
 {
+    const QFileInfo databaseInfo(databasePath);
+    if (!databaseInfo.exists() || !databaseInfo.isFile()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("项目数据库当前离线：%1").arg(databasePath);
+        }
+        return {};
+    }
     auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
     db.setDatabaseName(databasePath);
+    db.setConnectOptions(QStringLiteral("QSQLITE_OPEN_READONLY"));
     if (!db.open() && errorMessage) {
         *errorMessage = db.lastError().text();
     }
@@ -140,14 +171,25 @@ void closeProjectConnection(const QString &connectionName)
     QSqlDatabase::removeDatabase(connectionName);
 }
 
+bool hasUnstableSourceRoot(QSqlDatabase &projectDb, QString *errorMessage)
+{
+    QSqlQuery query(projectDb);
+    query.prepare(QStringLiteral(
+        "SELECT 1 FROM source_root WHERE LOWER(TRIM(COALESCE(status, ''))) NOT IN ('ok', 'warning') LIMIT 1"));
+    if (!execQuery(query, errorMessage)) {
+        return false;
+    }
+    return query.next();
+}
+
 QVector<GlobalVideoAsset> fetchProjectAssets(QSqlDatabase &projectDb, const Project &project, QString *errorMessage)
 {
     QVector<GlobalVideoAsset> assets;
     QSqlQuery query(projectDb);
     query.prepare(QStringLiteral(
-        "SELECT af.id, af.source_root_id, COALESCE(sr.name, ''), af.name, COALESCE(af.extension, ''), "
+        "SELECT af.id, af.source_root_id, COALESCE(sr.name, ''), COALESCE(sr.path, ''), af.name, COALESCE(af.extension, ''), "
         "af.absolute_path, af.relative_path, af.asset_type, af.size_bytes, af.modified_at, "
-        "COALESCE(mm.duration_ms, 0), COALESCE(mm.container, ''), COALESCE(mm.bit_rate, 0), "
+        "COALESCE(mm.duration_ms, 0), COALESCE(mm.container, ''), COALESCE(mm.bit_rate, 0), COALESCE(mm.raw_json, ''), "
         "CASE WHEN COALESCE(th.status, 0) = 1 THEN COALESCE(th.image_path, '') ELSE '' END, COALESCE(th.status, 0) "
         "FROM asset_file af "
         "LEFT JOIN source_root sr ON sr.id = af.source_root_id "
@@ -158,6 +200,8 @@ QVector<GlobalVideoAsset> fetchProjectAssets(QSqlDatabase &projectDb, const Proj
         return assets;
     }
 
+    QHash<QString, bool> sourceAvailability;
+    CaptureTimeResolver captureTimeResolver;
     while (query.next()) {
         GlobalVideoAsset asset;
         asset.projectUuid = project.id;
@@ -166,22 +210,97 @@ QVector<GlobalVideoAsset> fetchProjectAssets(QSqlDatabase &projectDb, const Proj
         asset.assetId = query.value(0).toLongLong();
         asset.sourceRootId = query.value(1).toLongLong();
         asset.sourceRootName = query.value(2).toString();
-        asset.fileName = query.value(3).toString();
-        asset.extension = query.value(4).toString();
-        asset.absolutePath = query.value(5).toString();
-        asset.relativePath = query.value(6).toString();
-        asset.assetType = static_cast<AssetType>(query.value(7).toInt());
-        asset.sizeBytes = query.value(8).toLongLong();
-        asset.modifiedAt = query.value(9).toString();
-        asset.durationMs = query.value(10).toLongLong();
-        asset.technicalSummary = buildTechnicalSummary(query.value(11).toString(), asset.durationMs, query.value(12).toLongLong());
-        asset.thumbnailPath = query.value(13).toString();
-        asset.thumbnailStatus = static_cast<ThumbnailStatus>(query.value(14).toInt());
+        const auto sourceRootPath = query.value(3).toString();
+        asset.fileName = query.value(4).toString();
+        asset.extension = query.value(5).toString();
+        asset.absolutePath = query.value(6).toString();
+        asset.relativePath = FolderPathMetadata::normalizeRelativePath(query.value(7).toString());
+        asset.assetType = static_cast<AssetType>(query.value(8).toInt());
+        asset.sizeBytes = query.value(9).toLongLong();
+        asset.modifiedAt = query.value(10).toString();
+        asset.durationMs = query.value(11).toLongLong();
+        asset.technicalSummary = buildTechnicalSummary(query.value(12).toString(), asset.durationMs, query.value(13).toLongLong());
+        asset.thumbnailPath = query.value(15).toString();
+        asset.thumbnailStatus = static_cast<ThumbnailStatus>(query.value(16).toInt());
         asset.videoKey = QStringLiteral("%1:%2").arg(project.id).arg(asset.assetId);
         asset.assetKey = asset.videoKey;
+        const auto parentRelativePath = FolderPathMetadata::parentRelativePath(asset.relativePath);
+        asset.folderKey = FolderPathMetadata::globalFolderKey(
+            project.id,
+            asset.sourceRootId,
+            parentRelativePath);
+        const auto folderDate = FolderPathMetadata::inferDate(
+            FolderPathMetadata::folderName(sourceRootPath, asset.sourceRootName),
+            parentRelativePath);
+        const auto captureTime = captureTimeResolver.resolve(query.value(14).toString(),
+                                                             folderDate.normalizedDate,
+                                                             asset.modifiedAt);
+        asset.captureTime = captureTime.captureTime;
+        asset.captureDate = captureTime.captureDate;
+        asset.captureTimeSource = captureTime.source;
+        asset.captureTimeConfidence = captureTime.confidence;
+        const auto sourceKey = FolderPathMetadata::normalizedPathKey(sourceRootPath);
+        if (!sourceAvailability.contains(sourceKey)) {
+            sourceAvailability.insert(sourceKey, QFileInfo(sourceRootPath).isDir());
+        }
+        asset.available = sourceAvailability.value(sourceKey);
         assets.append(asset);
     }
     return assets;
+}
+
+QVector<ProjectFolderState> fetchProjectFolders(QSqlDatabase &projectDb,
+                                                const Project &project,
+                                                QString *errorMessage)
+{
+    QVector<ProjectFolderState> folders;
+    QSqlQuery query(projectDb);
+    query.prepare(QStringLiteral(
+        "SELECT fn.id, fn.source_root_id, COALESCE(sr.name, ''), COALESCE(sr.path, ''), "
+        "COALESCE(fn.name, ''), fn.absolute_path, COALESCE(fn.path_key, ''), fn.relative_path, "
+        "COALESCE(fn.parent_relative_path, ''), COALESCE(fn.depth, 0), "
+        "COALESCE(fn.direct_file_count, fn.file_count, 0), COALESCE(fn.recursive_file_count, fn.file_count, 0), "
+        "COALESCE(fn.normalized_date, ''), COALESCE(fn.date_anchor, '') "
+        "FROM folder_node fn LEFT JOIN source_root sr ON sr.id = fn.source_root_id "
+        "ORDER BY fn.source_root_id, fn.depth, fn.relative_path"));
+    if (!execQuery(query, errorMessage)) {
+        return folders;
+    }
+
+    QHash<QString, bool> sourceAvailability;
+    while (query.next()) {
+        ProjectFolderState folder;
+        folder.folderId = query.value(0).toLongLong();
+        folder.sourceRootId = query.value(1).toLongLong();
+        folder.sourceRootName = query.value(2).toString();
+        folder.sourceRootPath = query.value(3).toString();
+        folder.name = query.value(4).toString();
+        folder.absolutePath = query.value(5).toString();
+        folder.pathKey = query.value(6).toString();
+        folder.relativePath = FolderPathMetadata::normalizeRelativePath(query.value(7).toString());
+        folder.parentRelativePath = FolderPathMetadata::normalizeRelativePath(query.value(8).toString());
+        folder.depth = query.value(9).toInt();
+        folder.directFileCount = query.value(10).toLongLong();
+        folder.recursiveFileCount = query.value(11).toLongLong();
+        folder.normalizedDate = query.value(12).toString();
+        folder.dateAnchor = query.value(13).toString();
+        folder.projectUuid = project.id;
+        folder.projectName = project.name;
+        folder.projectDatabasePath = project.databasePath;
+        folder.folderKey = FolderPathMetadata::globalFolderKey(project.id,
+                                                                folder.sourceRootId,
+                                                                folder.relativePath);
+        if (folder.pathKey.isEmpty()) {
+            folder.pathKey = FolderPathMetadata::normalizedPathKey(folder.absolutePath);
+        }
+        const auto sourceKey = FolderPathMetadata::normalizedPathKey(folder.sourceRootPath);
+        if (!sourceAvailability.contains(sourceKey)) {
+            sourceAvailability.insert(sourceKey, QFileInfo(folder.sourceRootPath).isDir());
+        }
+        folder.available = sourceAvailability.value(sourceKey);
+        folders.append(folder);
+    }
+    return folders;
 }
 
 QHash<QString, ExistingVideoState> loadExistingStates(QSqlDatabase &globalDb, const QString &projectUuid, QString *errorMessage)
@@ -237,6 +356,66 @@ bool updateProjectRegistry(QSqlDatabase &globalDb,
     return execQuery(query, errorMessage);
 }
 
+bool markProjectOffline(QSqlDatabase &globalDb,
+                        const Project &project,
+                        const QString &reason,
+                        QString *errorMessage)
+{
+    if (!globalDb.transaction()) {
+        if (errorMessage) {
+            *errorMessage = globalDb.lastError().text();
+        }
+        return false;
+    }
+
+    QString failure;
+    if (!updateProjectRegistry(globalDb, project, QStringLiteral("offline"), reason, &failure)) {
+        globalDb.rollback();
+        if (errorMessage) {
+            *errorMessage = failure;
+        }
+        return false;
+    }
+
+    const auto now = QDateTime::currentDateTime().toString(Qt::ISODate);
+    QSqlQuery folders(globalDb);
+    folders.prepare(QStringLiteral(
+        "UPDATE global_folder_node SET is_available = 0, last_synced_at = ?, updated_at = ? WHERE project_uuid = ?"));
+    folders.addBindValue(now);
+    folders.addBindValue(now);
+    folders.addBindValue(project.id);
+    if (!execQuery(folders, &failure)) {
+        globalDb.rollback();
+        if (errorMessage) {
+            *errorMessage = failure;
+        }
+        return false;
+    }
+
+    QSqlQuery assets(globalDb);
+    assets.prepare(QStringLiteral(
+        "UPDATE global_video_asset SET is_available = 0, last_synced_at = ?, updated_at = ? WHERE project_uuid = ?"));
+    assets.addBindValue(now);
+    assets.addBindValue(now);
+    assets.addBindValue(project.id);
+    if (!execQuery(assets, &failure)) {
+        globalDb.rollback();
+        if (errorMessage) {
+            *errorMessage = failure;
+        }
+        return false;
+    }
+
+    if (!globalDb.commit()) {
+        if (errorMessage) {
+            *errorMessage = globalDb.lastError().text();
+        }
+        globalDb.rollback();
+        return false;
+    }
+    return true;
+}
+
 bool deleteFtsRow(QSqlDatabase &globalDb, const QString &videoKey, bool hasFts5, QString *errorMessage)
 {
     if (!hasFts5) {
@@ -290,6 +469,7 @@ bool migrateAnalysisArtifacts(QSqlDatabase &globalDb,
     }
 
     const QStringList deleteStatements = {
+        QStringLiteral("DELETE FROM video_analysis_plan WHERE video_key = ?"),
         QStringLiteral("DELETE FROM material_dimension_frame_analysis WHERE video_key = ?"),
         QStringLiteral("DELETE FROM video_frame_analysis WHERE video_key = ?"),
         QStringLiteral("DELETE FROM video_analysis_result WHERE video_key = ?"),
@@ -315,6 +495,7 @@ bool migrateAnalysisArtifacts(QSqlDatabase &globalDb,
     }
 
     const QStringList updateStatements = {
+        QStringLiteral("UPDATE video_analysis_plan SET video_key = ? WHERE video_key = ?"),
         QStringLiteral("UPDATE material_dimension_frame_analysis SET video_key = ? WHERE video_key = ?"),
         QStringLiteral("UPDATE video_frame_analysis SET video_key = ? WHERE video_key = ?"),
         QStringLiteral("UPDATE video_analysis_result SET video_key = ? WHERE video_key = ?"),
@@ -349,21 +530,52 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
                            bool hasFts5,
                            QString *errorMessage)
 {
+    if (errorMessage) {
+        errorMessage->clear();
+    }
     const auto projectConnectionName = QStringLiteral("sync_project_%1_%2")
         .arg(project.id)
         .arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
     QString openError;
     auto projectDb = openProjectConnection(project.databasePath, projectConnectionName, &openError);
     if (!projectDb.isOpen()) {
+        QString offlineError;
+        markProjectOffline(globalDb, project, openError, &offlineError);
         if (errorMessage) {
-            *errorMessage = openError;
+            *errorMessage = offlineError.isEmpty()
+                ? openError
+                : QStringLiteral("%1；更新离线状态失败：%2").arg(openError, offlineError);
         }
+        projectDb = QSqlDatabase();
         closeProjectConnection(projectConnectionName);
         return false;
     }
 
+    QString sourceStateError;
+    const bool unstableSourceRoot = hasUnstableSourceRoot(projectDb, &sourceStateError);
+    if (!sourceStateError.isEmpty()) {
+        projectDb.close();
+        projectDb = QSqlDatabase();
+        closeProjectConnection(projectConnectionName);
+        if (errorMessage) {
+            *errorMessage = sourceStateError;
+        }
+        return false;
+    }
+    if (unstableSourceRoot) {
+        projectDb.close();
+        projectDb = QSqlDatabase();
+        closeProjectConnection(projectConnectionName);
+        return true;
+    }
+
     QString fetchError;
-    const auto assets = fetchProjectAssets(projectDb, project, &fetchError);
+    const auto folders = fetchProjectFolders(projectDb, project, &fetchError);
+    const auto assets = fetchError.isEmpty()
+        ? fetchProjectAssets(projectDb, project, &fetchError)
+        : QVector<GlobalVideoAsset>();
+    projectDb.close();
+    projectDb = QSqlDatabase();
     closeProjectConnection(projectConnectionName);
     if (!fetchError.isEmpty()) {
         if (errorMessage) {
@@ -397,11 +609,77 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         return false;
     }
 
+    QSet<QString> existingFolderKeys;
+    QSqlQuery readExistingFolders(globalDb);
+    readExistingFolders.prepare(QStringLiteral("SELECT folder_key FROM global_folder_node WHERE project_uuid = ?"));
+    readExistingFolders.addBindValue(project.id);
+    if (!execQuery(readExistingFolders, errorMessage)) {
+        globalDb.rollback();
+        return false;
+    }
+    while (readExistingFolders.next()) {
+        existingFolderKeys.insert(readExistingFolders.value(0).toString());
+    }
+
+    QSet<QString> currentFolderKeys;
+    QSqlQuery upsertFolder(globalDb);
+    upsertFolder.prepare(QStringLiteral(
+        "INSERT INTO global_folder_node "
+        "(folder_key, project_uuid, project_name, project_database_path, source_root_id, source_root_name, "
+        "source_root_path, source_root_path_key, folder_id, name, absolute_path, path_key, relative_path, "
+        "parent_relative_path, depth, direct_file_count, recursive_file_count, normalized_date, date_anchor, "
+        "is_available, last_synced_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(folder_key) DO UPDATE SET "
+        "project_uuid = excluded.project_uuid, project_name = excluded.project_name, "
+        "project_database_path = excluded.project_database_path, source_root_id = excluded.source_root_id, "
+        "source_root_name = excluded.source_root_name, source_root_path = excluded.source_root_path, "
+        "source_root_path_key = excluded.source_root_path_key, folder_id = excluded.folder_id, name = excluded.name, "
+        "absolute_path = excluded.absolute_path, path_key = excluded.path_key, relative_path = excluded.relative_path, "
+        "parent_relative_path = excluded.parent_relative_path, depth = excluded.depth, "
+        "direct_file_count = excluded.direct_file_count, recursive_file_count = excluded.recursive_file_count, "
+        "normalized_date = excluded.normalized_date, date_anchor = excluded.date_anchor, "
+        "is_available = excluded.is_available, last_synced_at = excluded.last_synced_at, updated_at = excluded.updated_at"));
+    for (const auto &folder : folders) {
+        currentFolderKeys.insert(folder.folderKey);
+        upsertFolder.addBindValue(folder.folderKey);
+        upsertFolder.addBindValue(folder.projectUuid);
+        upsertFolder.addBindValue(folder.projectName);
+        upsertFolder.addBindValue(folder.projectDatabasePath);
+        upsertFolder.addBindValue(folder.sourceRootId);
+        upsertFolder.addBindValue(folder.sourceRootName);
+        upsertFolder.addBindValue(folder.sourceRootPath);
+        upsertFolder.addBindValue(FolderPathMetadata::normalizedPathKey(folder.sourceRootPath));
+        upsertFolder.addBindValue(folder.folderId);
+        upsertFolder.addBindValue(folder.name);
+        upsertFolder.addBindValue(folder.absolutePath);
+        upsertFolder.addBindValue(folder.pathKey);
+        upsertFolder.addBindValue(folder.relativePath);
+        upsertFolder.addBindValue(folder.parentRelativePath);
+        upsertFolder.addBindValue(folder.depth);
+        upsertFolder.addBindValue(folder.directFileCount);
+        upsertFolder.addBindValue(folder.recursiveFileCount);
+        upsertFolder.addBindValue(emptyIfNull(folder.normalizedDate));
+        upsertFolder.addBindValue(emptyIfNull(folder.dateAnchor));
+        upsertFolder.addBindValue(folder.available ? 1 : 0);
+        upsertFolder.addBindValue(now);
+        upsertFolder.addBindValue(now);
+        if (!execQuery(upsertFolder, errorMessage)) {
+            globalDb.rollback();
+            return false;
+        }
+        upsertFolder.finish();
+    }
+
     QSet<QString> currentKeys;
     QSqlQuery clearFrames(globalDb);
     clearFrames.prepare(QStringLiteral("DELETE FROM video_frame_analysis WHERE video_key = ?"));
+    QSqlQuery clearPlan(globalDb);
+    clearPlan.prepare(QStringLiteral("DELETE FROM video_analysis_plan WHERE video_key = ?"));
     QSqlQuery clearResult(globalDb);
     clearResult.prepare(QStringLiteral("DELETE FROM video_analysis_result WHERE video_key = ?"));
+    QSqlQuery clearTask(globalDb);
+    clearTask.prepare(QStringLiteral("DELETE FROM video_analysis_task WHERE video_key = ?"));
     QSqlQuery clearDimensions(globalDb);
     clearDimensions.prepare(QStringLiteral("DELETE FROM material_dimension_analysis WHERE video_key = ?"));
     QSqlQuery clearDimensionFrames(globalDb);
@@ -409,17 +687,20 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
     QSqlQuery upsert(globalDb);
     upsert.prepare(QStringLiteral(
         "INSERT INTO global_video_asset "
-        "(video_key, project_uuid, project_name, project_database_path, source_root_id, source_root_name, asset_id, "
-        "file_name, extension, absolute_path, relative_path, asset_type, size_bytes, modified_at, duration_ms, "
+        "(video_key, project_uuid, project_name, project_database_path, source_root_id, source_root_name, folder_key, is_available, asset_id, "
+        "file_name, extension, absolute_path, relative_path, asset_type, size_bytes, modified_at, "
+        "capture_time, capture_date, capture_time_source, capture_time_confidence, duration_ms, "
         "thumbnail_path, thumbnail_status, analysis_status, confirmation_status, technical_summary, source_text, "
         "error_message, last_synced_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(video_key) DO UPDATE SET "
         "project_uuid = excluded.project_uuid, "
         "project_name = excluded.project_name, "
         "project_database_path = excluded.project_database_path, "
         "source_root_id = excluded.source_root_id, "
         "source_root_name = excluded.source_root_name, "
+        "folder_key = excluded.folder_key, "
+        "is_available = excluded.is_available, "
         "asset_id = excluded.asset_id, "
         "file_name = excluded.file_name, "
         "extension = excluded.extension, "
@@ -428,6 +709,10 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         "asset_type = excluded.asset_type, "
         "size_bytes = excluded.size_bytes, "
         "modified_at = excluded.modified_at, "
+        "capture_time = excluded.capture_time, "
+        "capture_date = excluded.capture_date, "
+        "capture_time_source = excluded.capture_time_source, "
+        "capture_time_confidence = excluded.capture_time_confidence, "
         "duration_ms = excluded.duration_ms, "
         "thumbnail_path = excluded.thumbnail_path, "
         "thumbnail_status = excluded.thumbnail_status, "
@@ -462,10 +747,20 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
             || existing.sizeBytes != asset.sizeBytes
             || existing.modifiedAt != asset.modifiedAt;
         asset.technicalSummary = emptyIfNull(asset.technicalSummary);
+        asset.captureTime = emptyIfNull(asset.captureTime);
+        asset.captureDate = emptyIfNull(asset.captureDate);
+        asset.captureTimeSource = emptyIfNull(asset.captureTimeSource);
         asset.sourceText = changed ? QStringLiteral("") : emptyIfNull(existing.sourceText);
         const auto errorMessageText = changed ? QStringLiteral("") : emptyIfNull(existing.errorMessage);
 
         if (changed) {
+            clearPlan.addBindValue(asset.videoKey);
+            if (!execQuery(clearPlan, errorMessage)) {
+                globalDb.rollback();
+                return false;
+            }
+            clearPlan.finish();
+
             clearFrames.addBindValue(asset.videoKey);
             if (!execQuery(clearFrames, errorMessage)) {
                 globalDb.rollback();
@@ -479,6 +774,13 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
                 return false;
             }
             clearResult.finish();
+
+            clearTask.addBindValue(asset.videoKey);
+            if (!execQuery(clearTask, errorMessage)) {
+                globalDb.rollback();
+                return false;
+            }
+            clearTask.finish();
 
             clearDimensions.addBindValue(asset.videoKey);
             if (!execQuery(clearDimensions, errorMessage)) {
@@ -506,6 +808,8 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         upsert.addBindValue(project.databasePath);
         upsert.addBindValue(asset.sourceRootId);
         upsert.addBindValue(asset.sourceRootName);
+        upsert.addBindValue(asset.folderKey);
+        upsert.addBindValue(asset.available ? 1 : 0);
         upsert.addBindValue(asset.assetId);
         upsert.addBindValue(asset.fileName);
         upsert.addBindValue(asset.extension);
@@ -514,6 +818,10 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         upsert.addBindValue(static_cast<int>(asset.assetType));
         upsert.addBindValue(asset.sizeBytes);
         upsert.addBindValue(asset.modifiedAt);
+        upsert.addBindValue(asset.captureTime);
+        upsert.addBindValue(asset.captureDate);
+        upsert.addBindValue(asset.captureTimeSource);
+        upsert.addBindValue(asset.captureTimeConfidence);
         upsert.addBindValue(asset.durationMs);
         upsert.addBindValue(asset.thumbnailPath);
         upsert.addBindValue(static_cast<int>(asset.thumbnailStatus));
@@ -558,6 +866,30 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
             globalDb.rollback();
             return false;
         }
+    }
+
+    for (const auto &folderKey : existingFolderKeys) {
+        if (currentFolderKeys.contains(folderKey)) {
+            continue;
+        }
+        QSqlQuery deleteFolder(globalDb);
+        deleteFolder.prepare(QStringLiteral("DELETE FROM global_folder_node WHERE folder_key = ? AND project_uuid = ?"));
+        deleteFolder.addBindValue(folderKey);
+        deleteFolder.addBindValue(project.id);
+        if (!execQuery(deleteFolder, errorMessage)) {
+            globalDb.rollback();
+            return false;
+        }
+    }
+
+    QSqlQuery cleanupFolderLinks(globalDb);
+    cleanupFolderLinks.prepare(QStringLiteral(
+        "UPDATE global_video_asset SET folder_key = '' WHERE project_uuid = ? AND folder_key <> '' AND NOT EXISTS ("
+        "SELECT 1 FROM global_folder_node gf WHERE gf.folder_key = global_video_asset.folder_key)"));
+    cleanupFolderLinks.addBindValue(project.id);
+    if (!execQuery(cleanupFolderLinks, errorMessage)) {
+        globalDb.rollback();
+        return false;
     }
 
     if (!updateProjectRegistry(globalDb, project, QStringLiteral("ok"), QString(), errorMessage)) {
@@ -724,7 +1056,9 @@ void MaterialCatalogSyncService::rebuildAllProjects()
                 ++successCount;
             } else {
                 ++failedCount;
-                updateProjectRegistry(db, project, QStringLiteral("failed"), syncError, nullptr);
+                if (QFileInfo(project.databasePath).isFile()) {
+                    updateProjectRegistry(db, project, QStringLiteral("failed"), syncError, nullptr);
+                }
             }
         }
 

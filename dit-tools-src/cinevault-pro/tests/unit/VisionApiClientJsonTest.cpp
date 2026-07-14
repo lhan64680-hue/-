@@ -190,6 +190,42 @@ private slots:
         QCOMPARE(analysis->setting, QStringLiteral("街道；白天"));
     }
 
+    void normalizeFrameAnalysis_preservesEntityBindingsAndOcrCompleteness()
+    {
+        const QJsonObject payload{
+            {QStringLiteral("caption"), QStringLiteral("人物站在广告牌旁")},
+            {QStringLiteral("tags"), QJsonArray{QStringLiteral("人物"), QStringLiteral("广告牌")}},
+            {QStringLiteral("objects"), QJsonArray{}},
+            {QStringLiteral("actions"), QStringLiteral("站立")},
+            {QStringLiteral("setting"), QStringLiteral("街道")},
+            {QStringLiteral("entities"), QJsonArray{
+                 QJsonObject{
+                     {QStringLiteral("category"), QStringLiteral("clothing")},
+                     {QStringLiteral("label"), QStringLiteral("短裤")},
+                     {QStringLiteral("colors"), QJsonArray{QStringLiteral("红色")}},
+                     {QStringLiteral("materials"), QJsonArray{QStringLiteral("牛仔")}},
+                     {QStringLiteral("attributes"), QJsonArray{QStringLiteral("破洞")}}
+                 }
+             }},
+            {QStringLiteral("ocr_text"), QStringLiteral("SALE, 50% / OFF")},
+            {QStringLiteral("ocr_blocks"), QJsonArray{QStringLiteral("SALE, 50% / OFF")}}
+        };
+
+        QString error;
+        const auto analysis = normalizeFrameAnalysis(payload, &error);
+
+        QVERIFY2(analysis.has_value(), qPrintable(error));
+        QVERIFY(analysis->factsComplete);
+        QCOMPARE(analysis->structuredProfileVersion, 2);
+        QCOMPARE(analysis->entities.size(), 1);
+        QCOMPARE(analysis->entities.first().label, QStringLiteral("短裤"));
+        QCOMPARE(analysis->entities.first().colors, QStringList{QStringLiteral("红色")});
+        QCOMPARE(analysis->entities.first().materials, QStringList{QStringLiteral("牛仔")});
+        QCOMPARE(analysis->ocrText, QStringLiteral("SALE, 50% / OFF"));
+        QCOMPARE(analysis->ocrBlocks, QStringList{QStringLiteral("SALE, 50% / OFF")});
+        QCOMPARE(analysis->objects, QStringList{QStringLiteral("短裤")});
+    }
+
     void normalizeFrameAnalysis_rejectsEmptyPayload()
     {
         QString error;
@@ -197,6 +233,58 @@ private slots:
 
         QVERIFY(!analysis.has_value());
         QCOMPARE(error, QStringLiteral("视觉接口返回帧解析字段为空"));
+    }
+
+    void normalizeFrameAnalysis_doesNotMarkMalformedStructuredFieldsComplete()
+    {
+        const QJsonObject payload{
+            {QStringLiteral("caption"), QStringLiteral("测试画面")},
+            {QStringLiteral("entities"), QStringLiteral("短裤")},
+            {QStringLiteral("ocr_text"), QStringLiteral("SALE")},
+            {QStringLiteral("ocr_blocks"), QStringLiteral("SALE")}
+        };
+
+        QString error;
+        const auto analysis = normalizeFrameAnalysis(payload, &error);
+
+        QVERIFY2(analysis.has_value(), qPrintable(error));
+        QVERIFY(!analysis->factsComplete);
+        QCOMPARE(analysis->structuredProfileVersion, 1);
+    }
+
+    void normalizeFrameAnalysis_normalizesMissingOcrTextToNonNullEmptyString()
+    {
+        const QJsonObject payload{
+            {QStringLiteral("caption"), QStringLiteral("没有可辨文字的测试画面")},
+            {QStringLiteral("entities"), QJsonArray{}},
+            {QStringLiteral("ocr_blocks"), QJsonArray{}}
+        };
+
+        QString error;
+        const auto analysis = normalizeFrameAnalysis(payload, &error);
+
+        QVERIFY2(analysis.has_value(), qPrintable(error));
+        QVERIFY(!analysis->ocrText.isNull());
+        QVERIFY(analysis->ocrText.isEmpty());
+        QVERIFY(!analysis->factsComplete);
+    }
+
+    void normalizeFrameAnalysis_normalizesNullOcrTextToNonNullEmptyString()
+    {
+        const QJsonObject payload{
+            {QStringLiteral("caption"), QStringLiteral("没有可辨文字的测试画面")},
+            {QStringLiteral("entities"), QJsonArray{}},
+            {QStringLiteral("ocr_text"), QJsonValue::Null},
+            {QStringLiteral("ocr_blocks"), QJsonArray{}}
+        };
+
+        QString error;
+        const auto analysis = normalizeFrameAnalysis(payload, &error);
+
+        QVERIFY2(analysis.has_value(), qPrintable(error));
+        QVERIFY(!analysis->ocrText.isNull());
+        QVERIFY(analysis->ocrText.isEmpty());
+        QVERIFY(!analysis->factsComplete);
     }
 
     void normalizeVideoSummary_acceptsAliasesAndStringLists()

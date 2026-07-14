@@ -18,6 +18,8 @@ class MinimalReportWorkspaceViewModel;
 class DatabaseManager;
 class GlobalDatabaseManager;
 class SearchEngine;
+class SemanticSearchIndexService;
+class SearchDocumentSyncService;
 class FFmpegAdapter;
 class JobEngine;
 class MediaProbeEngine;
@@ -56,6 +58,19 @@ public:
 
     void expose(QQmlApplicationEngine &engine);
 
+#if !CINEVAULT_BUILD_MINIMAL_GUI
+    bool startAnalysisProbe(const QString &projectPath,
+                            const QString &videoKey,
+                            QString *errorMessage = nullptr);
+
+signals:
+    void analysisProbeProgress(qint64 progress,
+                               const QString &detail,
+                               int state,
+                               const QString &errorMessage);
+    void analysisProbeFinished(bool success, const QString &message);
+#endif
+
 private:
     WindowThemeController *m_windowThemeController = nullptr;
     LocalImageUrlHelper *m_localImageUrlHelper = nullptr;
@@ -71,6 +86,8 @@ private:
     AppSettings m_settings;
     DatabaseManager *m_databaseManager = nullptr;
     GlobalDatabaseManager *m_globalDatabaseManager = nullptr;
+    SemanticSearchIndexService *m_semanticSearchIndexService = nullptr;
+    SearchDocumentSyncService *m_searchDocumentSyncService = nullptr;
     SearchEngine *m_searchEngine = nullptr;
     FFmpegAdapter *m_ffmpegAdapter = nullptr;
     JobEngine *m_jobEngine = nullptr;
@@ -100,5 +117,8 @@ private:
     ReportWorkspaceViewModel *m_reportWorkspaceViewModel = nullptr;
     SettingsViewModel *m_settingsViewModel = nullptr;
     FeedbackViewModel *m_feedbackViewModel = nullptr;
+    QString m_analysisProbeVideoKey;
+    bool m_analysisProbeEnqueued = false;
+    bool m_analysisProbeFinished = false;
 #endif
 };

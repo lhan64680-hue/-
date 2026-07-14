@@ -2,6 +2,7 @@
 
 #include "domain/Enums.h"
 
+#include <QDate>
 #include <QStringList>
 
 class QSettings;
@@ -26,6 +27,24 @@ public:
 
     QString visionModel() const;
     void setVisionModel(const QString &value);
+
+    bool searchAssistantEnabled() const;
+    void setSearchAssistantEnabled(bool enabled);
+
+    bool frameRerankEnabled() const;
+    void setFrameRerankEnabled(bool enabled);
+
+    bool localOnlySearch() const;
+    void setLocalOnlySearch(bool enabled);
+
+    bool allowSearchFrameUpload() const;
+    void setAllowSearchFrameUpload(bool enabled);
+
+    int dailySearchModelCallLimit() const;
+    void setDailySearchModelCallLimit(int value);
+    int searchModelCallsForDate(const QDate &date = QDate::currentDate()) const;
+    bool canUseSearchModel(const QDate &date = QDate::currentDate()) const;
+    bool tryConsumeSearchModelCall(const QDate &date = QDate::currentDate());
 
     AnalysisMode analysisMode() const;
     void setAnalysisMode(AnalysisMode mode);

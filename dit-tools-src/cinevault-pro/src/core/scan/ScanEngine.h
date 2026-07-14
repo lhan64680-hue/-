@@ -16,7 +16,7 @@ class ScanEngine : public QObject {
 public:
     explicit ScanEngine(DatabaseManager *databaseManager, JobEngine *jobEngine, MediaProbeEngine *mediaProbeEngine, ThumbnailEngine *thumbnailEngine, QObject *parent = nullptr);
 
-    static constexpr int CurrentScanVersion = 2;
+    static constexpr int CurrentScanVersion = 3;
 
     void startScan(const SourceRoot &sourceRoot, qint64 jobId);
     void waitForIdle();
