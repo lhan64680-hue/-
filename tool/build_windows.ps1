@@ -97,6 +97,19 @@ if ($null -eq $exePath) {
 
 Copy-Item $exePath -Destination $stagingDir -Force
 $deployedExe = Join-Path $stagingDir "CineVault.exe"
+
+$onnxRuntimeSource = Join-Path $buildDir "onnxruntime.dll"
+$localSearchDataSource = Join-Path $buildDir "data"
+$hasOnnxRuntime = Test-Path -LiteralPath $onnxRuntimeSource -PathType Leaf
+$hasLocalSearchData = Test-Path -LiteralPath $localSearchDataSource -PathType Container
+if ($hasOnnxRuntime -xor $hasLocalSearchData) {
+    throw "Local-search runtime assets are incomplete in the build directory. Expected both onnxruntime.dll and data/."
+}
+if ($hasOnnxRuntime -and $hasLocalSearchData) {
+    Copy-Item -LiteralPath $onnxRuntimeSource -Destination $stagingDir -Force
+    Copy-Item -LiteralPath $localSearchDataSource -Destination $stagingDir -Recurse -Force
+}
+
 $deployMode = if ($Configuration -ieq "Debug") { "--debug" } else { "--release" }
 Invoke-VcVarsCommand "`"$($context.WindeployQt)`" $deployMode --qmldir `"$projectRoot\src\ui\qml`" `"$deployedExe`""
 
