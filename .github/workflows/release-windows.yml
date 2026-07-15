@@ -76,11 +76,35 @@ jobs:
                   throw "aqtinstall 安装失败。"
               }
 
-              python -m aqt install-qt windows desktop $env:QT_VERSION $env:QT_ARCH `
-                  --outputdir C:\Qt `
-                  --modules qtimageformats qtmultimedia qtpdf qtshadertools qtwebsockets
-              if ($LASTEXITCODE -ne 0) {
-                  throw "Qt 安装失败。"
+              $qtArchiveRoot = Join-Path $env:RUNNER_TEMP "aqt-archives"
+              New-Item -ItemType Directory -Force -Path $qtArchiveRoot | Out-Null
+              $qtMirrors = @(
+                  "https://qt.mirror.constant.com",
+                  "https://ftp.fau.de/qtproject",
+                  "https://mirrors.ustc.edu.cn/qtproject"
+              )
+              $qtInstalled = $false
+              foreach ($qtMirror in $qtMirrors) {
+                  Write-Host "正在通过 Qt 镜像安装：$qtMirror"
+                  python -m aqt install-qt windows desktop $env:QT_VERSION $env:QT_ARCH `
+                      --outputdir C:\Qt `
+                      --base $qtMirror `
+                      --timeout 30 `
+                      --keep `
+                      --archive-dest $qtArchiveRoot `
+                      --modules qtimageformats qtmultimedia qtpdf qtshadertools qtwebsockets
+                  if ($LASTEXITCODE -eq 0) {
+                      $qtInstalled = $true
+                      break
+                  }
+
+                  Write-Warning "Qt 镜像安装失败，将保留已下载归档并切换镜像：$qtMirror"
+                  if (Test-Path -LiteralPath $qtVersionRoot) {
+                      Remove-Item -LiteralPath $qtVersionRoot -Recurse -Force
+                  }
+              }
+              if (-not $qtInstalled) {
+                  throw "所有 Qt 镜像安装尝试均失败。"
               }
           }
 
