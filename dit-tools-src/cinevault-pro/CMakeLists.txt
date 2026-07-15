@@ -840,6 +840,9 @@ if(BUILD_TESTING)
         )
         add_dependencies(SearchAssistantIntegrationTest CineVault)
         add_test(NAME SearchAssistantIntegrationTest COMMAND SearchAssistantIntegrationTest)
+        set_tests_properties(SearchAssistantIntegrationTest PROPERTIES
+            LABELS "gpu-integration"
+        )
     endif()
 
     qt_add_executable(SearchQueryUnderstandingTest
