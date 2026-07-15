@@ -242,27 +242,24 @@ jobs:
         id: draft
         run: |
           $tag = "${{ steps.version.outputs.version_tag }}"
-          gh release create $tag `
-              --repo $env:GITHUB_REPOSITORY `
-              --target $env:GITHUB_SHA `
-              --draft `
-              --title "影资管家 $tag" `
-              --generate-notes `
-              --notes "Windows x64 自动构建安装包；发布前已通过完整测试、版本检查和 SHA-256 校验。"
+          $release = gh api `
+              --method POST `
+              "repos/$env:GITHUB_REPOSITORY/releases" `
+              -f "tag_name=$tag" `
+              -f "target_commitish=$env:GITHUB_SHA" `
+              -f "name=影资管家 $tag" `
+              -f "body=Windows x64 自动构建安装包；发布前已通过完整测试、版本检查和 SHA-256 校验。" `
+              -F draft=true `
+              -F prerelease=false `
+              -F generate_release_notes=true | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) {
               throw "Draft Release 创建失败。"
           }
           "created=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-
-          $releases = @(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json)
-          if ($LASTEXITCODE -ne 0) {
-              throw "Draft Release 已创建，但无法读取 Release 列表。"
+          "release_id=$($release.id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if ($release.tag_name -cne $tag -or -not $release.draft -or $release.prerelease) {
+              throw "GitHub 返回的 Draft Release 状态不符合预期。"
           }
-          $drafts = @($releases | Where-Object { $_.tag_name -ceq $tag -and $_.draft })
-          if ($drafts.Count -ne 1) {
-              throw "无法唯一确定刚创建的 Draft Release。"
-          }
-          "release_id=$($drafts[0].id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: 上传 Release 资产
         if: steps.version.outputs.should_publish == 'true'
@@ -360,10 +357,16 @@ jobs:
               $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/$releaseId" 2>$null | ConvertFrom-Json
           }
           if ($null -eq $release) {
-              $releases = @(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" 2>$null | ConvertFrom-Json)
-              $matches = @($releases | Where-Object { $_.tag_name -ceq $tag -and $_.draft })
-              if ($matches.Count -eq 1) {
-                  $release = $matches[0]
+              foreach ($attempt in 1..4) {
+                  $releases = @(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" 2>$null | ConvertFrom-Json)
+                  $matches = @($releases | Where-Object { $_.tag_name -ceq $tag -and $_.draft })
+                  if ($matches.Count -eq 1) {
+                      $release = $matches[0]
+                      break
+                  }
+                  if ($attempt -lt 4) {
+                      Start-Sleep -Seconds 3
+                  }
               }
           }
 
