@@ -53,6 +53,16 @@ QStringList keysFor(const QVector<GlobalVideoAsset> &assets)
     return keys;
 }
 
+QStringList keysFor(const QVector<FolderSearchHit> &folders)
+{
+    QStringList keys;
+    for (const auto &folder : folders) {
+        keys.append(folder.folderKey);
+    }
+    keys.sort();
+    return keys;
+}
+
 class GlobalDbFixture {
 public:
     GlobalDbFixture()
@@ -227,13 +237,14 @@ private:
         if (!execSql(db,
                      QStringLiteral(
                          "INSERT INTO video_frame_analysis "
-                         "(video_key, frame_number, timestamp_ms, caption, entities_json, structured_profile_version, "
+                         "(video_key, frame_number, timestamp_ms, caption, tags_json, objects_json, "
+                         "entities_json, structured_profile_version, "
                          "facts_complete, analysis_state) VALUES "
-                         "('other-1', 1, 1000, '红色上衣和蓝色牛仔短裤', "
+                         "('other-1', 1, 1000, '红色上衣和蓝色牛仔短裤', '[]', '[]', "
                          "'[{\"label\":\"上衣\",\"colors\":[\"红色\"],\"materials\":[],\"attributes\":[]},"
                          "{\"label\":\"短裤\",\"colors\":[\"蓝色\"],\"materials\":[\"牛仔\"],\"attributes\":[]}]', "
                          "2, 1, 1), "
-                         "('image-1', 1, 1000, '紫色帽子', "
+                         "('image-1', 1, 1000, '普通商品展示', '[\"紫色\"]', '[\"帽子\"]', "
                          "'[{\"label\":\"帽子\",\"colors\":[\"紫色\"],\"materials\":[],\"attributes\":[]}]', "
                          "2, 0, 1)"),
                      &errorMessage)) {
@@ -584,6 +595,40 @@ private slots:
         QVERIFY(result.assets.first().searchReasons.contains(
             QStringLiteral("同一帧文本证据命中（结构化事实不完整）")));
         QCOMPARE(result.assets.first().matchedFrameNumber, 1);
+        QVERIFY(result.assets.first().matchedFrameCaption.contains(QStringLiteral("紫色")));
+        QVERIFY(result.assets.first().matchedFrameCaption.contains(QStringLiteral("帽子")));
+        QVERIFY(!result.assets.first().matchedFrameCaption.contains(QStringLiteral("普通商品展示")));
+    }
+
+    void searchMaterials_doesNotCombineCompleteFactsAcrossFrames()
+    {
+        GlobalDbFixture fixture;
+        QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
+        SearchEngine searchEngine(&fixture.manager);
+        MaterialCenterQueryService service(&fixture.manager, &searchEngine);
+
+        StrictEntityConstraint redShorts;
+        redShorts.label = QStringLiteral("短裤");
+        redShorts.colors = {QStringLiteral("红色")};
+        redShorts.materials = {QStringLiteral("牛仔")};
+        StrictEntityConstraint blueJeans;
+        blueJeans.label = QStringLiteral("牛仔裤");
+        blueJeans.colors = {QStringLiteral("蓝色")};
+
+        ModelSearchUnderstanding assetUnderstanding;
+        assetUnderstanding.confidence = 0.95;
+        assetUnderstanding.strictEntities = {redShorts, blueJeans};
+        const auto assetResult = service.searchMaterials(
+            QStringLiteral("interview"), {}, QDate::currentDate(), &assetUnderstanding);
+        QVERIFY(!keysFor(assetResult.assets).contains(QStringLiteral("video-1")));
+
+        ModelSearchUnderstanding folderUnderstanding = assetUnderstanding;
+        folderUnderstanding.resultTarget = SearchResultTarget::Folders;
+        folderUnderstanding.resultTargetSpecified = true;
+        folderUnderstanding.folderByAssetCriteria = true;
+        const auto folderResult = service.searchMaterials(
+            QStringLiteral("camera"), {}, QDate::currentDate(), &folderUnderstanding);
+        QVERIFY(!keysFor(folderResult.folders).contains(QStringLiteral("folder-camera")));
     }
 
     void searchMaterials_doesNotCombineSummaryAndFrameIntoFalseSameFrameMatch()

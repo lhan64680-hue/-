@@ -313,6 +313,10 @@ private slots:
         QVERIFY(qml.contains(QStringLiteral("完整帧直接跳过")));
         QVERIFY(qml.contains(QStringLiteral("viewModel.analyzeVisibleSupplement()")));
         QVERIFY(qml.contains(QStringLiteral("viewModel.analyzeVisibleAll()")));
+        QVERIFY(qml.contains(QStringLiteral("Math.max(1, Math.min(620, root.width - 24))")));
+        QVERIFY(qml.contains(QStringLiteral("Math.max(1, Math.min(430, root.height - 24))")));
+        QVERIFY(qml.contains(QStringLiteral("id: batchAnalyzeScroll")));
+        QVERIFY(qml.contains(QStringLiteral("implicitHeight: supplementOptionContent.implicitHeight + 28")));
         QVERIFY(!qml.contains(QStringLiteral("解析未完成素材")));
 
         QVERIFY(viewModelHeader.contains(QStringLiteral("Q_INVOKABLE void analyzeVisibleSupplement()")));

@@ -184,6 +184,15 @@ bool factsMatchAllConstraints(const QVector<VisionEntityFact> &facts,
     return true;
 }
 
+bool anyFrameFactsMatchAllConstraints(
+    const QVector<QVector<VisionEntityFact>> &factsByFrame,
+    const QVector<StrictEntityConstraint> &constraints)
+{
+    return std::any_of(factsByFrame.cbegin(), factsByFrame.cend(), [&](const auto &facts) {
+        return factsMatchAllConstraints(facts, constraints);
+    });
+}
+
 
 QString frameDocumentKey(const QString &videoKey, int frameNumber)
 {
@@ -215,6 +224,51 @@ bool frameTextMatchesAllConstraints(const FrameSearchHit &frame,
         }
     }
     return true;
+}
+
+QString matchingFrameEvidenceText(const FrameSearchHit &frame,
+                                  const QVector<StrictEntityConstraint> &constraints)
+{
+    QStringList normalizedTerms;
+    for (const auto &constraint : constraints) {
+        for (const auto &term : constraint.allTerms()) {
+            const auto normalized = term.simplified().toCaseFolded();
+            if (!normalized.isEmpty() && !normalizedTerms.contains(normalized)) {
+                normalizedTerms.append(normalized);
+            }
+        }
+    }
+
+    QStringList matchingParts;
+    const auto appendMatchingPart = [&](const QString &label, const QString &value) {
+        const auto simplified = value.simplified();
+        if (simplified.isEmpty()) {
+            return;
+        }
+        const auto normalized = simplified.toCaseFolded();
+        const bool matches = std::any_of(
+            normalizedTerms.cbegin(), normalizedTerms.cend(), [&](const auto &term) {
+                return normalized.contains(term);
+            });
+        if (matches) {
+            matchingParts.append(QStringLiteral("%1：%2").arg(label, simplified));
+        }
+    };
+
+    appendMatchingPart(QStringLiteral("描述"), frame.caption);
+    appendMatchingPart(QStringLiteral("标签"), frame.tags.join(QStringLiteral("、")));
+    appendMatchingPart(QStringLiteral("对象"), frame.objects.join(QStringLiteral("、")));
+    appendMatchingPart(QStringLiteral("动作"), frame.actions);
+    appendMatchingPart(QStringLiteral("场景"), frame.setting);
+    appendMatchingPart(QStringLiteral("实体"),
+                       VisualAnalysisMetadata::entityFactSearchTerms(frame.entities)
+                           .join(QStringLiteral("、")));
+    appendMatchingPart(QStringLiteral("画面文字"), frame.ocrText);
+
+    if (!matchingParts.isEmpty()) {
+        return matchingParts.join(QStringLiteral(" · "));
+    }
+    return frameSearchableText(frame).simplified();
 }
 
 struct SameFrameTextEvidence {
@@ -634,7 +688,7 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
     }
 
     QSet<QString> assetsWithCompleteFacts;
-    QHash<QString, QVector<VisionEntityFact>> completeFactsByAsset;
+    QHash<QString, QVector<QVector<VisionEntityFact>>> completeFactsByAssetFrame;
     QHash<QString, SameFrameTextEvidence> incompleteTextEvidenceByAsset;
     if (hybrid.parsedQuery.hasStrictEntityConstraints()) {
         for (qsizetype offset = 0; offset < assetKeys.size(); offset += batchSize) {
@@ -670,7 +724,7 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
                     query.value(8).toString());
                 if (complete) {
                     assetsWithCompleteFacts.insert(videoKey);
-                    completeFactsByAsset[videoKey].append(entities);
+                    completeFactsByAssetFrame[videoKey].append(entities);
                     continue;
                 }
 
@@ -690,9 +744,8 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
                     SameFrameTextEvidence evidence;
                     evidence.frameNumber = frame.frameNumber;
                     evidence.timestampMs = frame.timestampMs;
-                    evidence.caption = frame.caption.trimmed().isEmpty()
-                        ? frame.ocrText.trimmed()
-                        : frame.caption.trimmed();
+                    evidence.caption = matchingFrameEvidenceText(
+                        frame, hybrid.parsedQuery.strictEntities);
                     incompleteTextEvidenceByAsset.insert(videoKey, std::move(evidence));
                 }
             }
@@ -700,7 +753,7 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
     }
 
     QSet<QString> foldersWithCompleteFacts;
-    QHash<QString, QVector<VisionEntityFact>> completeFactsByFolder;
+    QHash<QString, QVector<QVector<VisionEntityFact>>> completeFactsByFolderFrame;
     QSet<QString> foldersWithIncompleteTextEvidence;
     if (hybrid.parsedQuery.hasStrictEntityConstraints()
         && hybrid.parsedQuery.folderByAssetCriteria) {
@@ -782,7 +835,7 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
                     query.value(8).toString());
                 if (complete) {
                     foldersWithCompleteFacts.insert(folderKey);
-                    completeFactsByFolder[folderKey].append(entities);
+                    completeFactsByFolderFrame[folderKey].append(entities);
                     continue;
                 }
 
@@ -838,8 +891,9 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
                 if (hybrid.parsedQuery.hasStrictEntityConstraints()
                     && hybrid.parsedQuery.folderByAssetCriteria) {
                     const bool structuredMatch = foldersWithCompleteFacts.contains(hit.entityKey)
-                        && factsMatchAllConstraints(completeFactsByFolder.value(hit.entityKey),
-                                                    hybrid.parsedQuery.strictEntities);
+                        && anyFrameFactsMatchAllConstraints(
+                            completeFactsByFolderFrame.value(hit.entityKey),
+                            hybrid.parsedQuery.strictEntities);
                     const bool textFallback = foldersWithIncompleteTextEvidence.contains(
                         hit.entityKey);
                     if (!structuredMatch && !textFallback) {
@@ -852,8 +906,9 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
                 auto resolvedFolder = folder.value();
                 if (hybrid.parsedQuery.hasStrictEntityConstraints()) {
                     const bool structuredMatch = foldersWithCompleteFacts.contains(hit.entityKey)
-                        && factsMatchAllConstraints(completeFactsByFolder.value(hit.entityKey),
-                                                    hybrid.parsedQuery.strictEntities);
+                        && anyFrameFactsMatchAllConstraints(
+                            completeFactsByFolderFrame.value(hit.entityKey),
+                            hybrid.parsedQuery.strictEntities);
                     if (structuredMatch) {
                         resolvedFolder.reasons.append(
                             QStringLiteral("文件夹内同一视觉对象属性已验证"));
@@ -876,8 +931,9 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
         }
         if (hybrid.parsedQuery.hasStrictEntityConstraints()) {
             const bool structuredMatch = assetsWithCompleteFacts.contains(hit.entityKey)
-                && factsMatchAllConstraints(completeFactsByAsset.value(hit.entityKey),
-                                            hybrid.parsedQuery.strictEntities);
+                && anyFrameFactsMatchAllConstraints(
+                    completeFactsByAssetFrame.value(hit.entityKey),
+                    hybrid.parsedQuery.strictEntities);
             if (!structuredMatch && !incompleteTextEvidenceByAsset.contains(hit.entityKey)) {
                 if (!assetsWithCompleteFacts.contains(hit.entityKey)) {
                     ++result.excludedPartialCount;
@@ -895,8 +951,9 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
         resolvedAsset.matchedFrameCaption = evidence.matchedFrameCaption;
         if (hybrid.parsedQuery.hasStrictEntityConstraints()) {
             const bool structuredMatch = assetsWithCompleteFacts.contains(hit.entityKey)
-                && factsMatchAllConstraints(completeFactsByAsset.value(hit.entityKey),
-                                            hybrid.parsedQuery.strictEntities);
+                && anyFrameFactsMatchAllConstraints(
+                    completeFactsByAssetFrame.value(hit.entityKey),
+                    hybrid.parsedQuery.strictEntities);
             if (structuredMatch) {
                 resolvedAsset.searchReasons.append(QStringLiteral("同一视觉对象属性已验证"));
             } else {
