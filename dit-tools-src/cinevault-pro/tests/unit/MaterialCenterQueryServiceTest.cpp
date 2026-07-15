@@ -570,7 +570,7 @@ private slots:
         QCOMPARE(result.excludedPartialCount, 0);
     }
 
-    void searchMaterials_excludesAndCountsIncompleteStructuredFacts()
+    void searchMaterials_usesSameFrameTextFallbackForIncompleteAssetFacts()
     {
         GlobalDbFixture fixture;
         QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
@@ -578,6 +578,22 @@ private slots:
         MaterialCenterQueryService service(&fixture.manager, &searchEngine);
 
         const auto result = service.searchMaterials(QStringLiteral("紫色帽子"));
+
+        QCOMPARE(keysFor(result.assets), QStringList{QStringLiteral("image-1")});
+        QCOMPARE(result.excludedPartialCount, 0);
+        QVERIFY(result.assets.first().searchReasons.contains(
+            QStringLiteral("同一帧文本证据命中（结构化事实不完整）")));
+        QCOMPARE(result.assets.first().matchedFrameNumber, 1);
+    }
+
+    void searchMaterials_doesNotCombineSummaryAndFrameIntoFalseSameFrameMatch()
+    {
+        GlobalDbFixture fixture;
+        QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
+        SearchEngine searchEngine(&fixture.manager);
+        MaterialCenterQueryService service(&fixture.manager, &searchEngine);
+
+        const auto result = service.searchMaterials(QStringLiteral("蓝色帽子"));
 
         QVERIFY(result.assets.isEmpty());
         QCOMPARE(result.excludedPartialCount, 1);

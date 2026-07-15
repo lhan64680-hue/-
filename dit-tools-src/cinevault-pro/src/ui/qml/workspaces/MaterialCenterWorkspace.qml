@@ -229,11 +229,27 @@ Rectangle {
                     spacing: 10
 
                     ThemedTextField {
+                        id: searchInput
                         Layout.preferredWidth: 240
                         Layout.fillWidth: true
                         placeholderText: "用自然语言搜索文件夹、素材、视觉帧、日期、类型或画面内容"
                         text: shellVm ? shellVm.globalSearchText : ""
                         onTextChanged: if (shellVm) shellVm.globalSearchText = text
+                    }
+
+                    ActionButton {
+                        Layout.preferredWidth: 88
+                        Layout.preferredHeight: 36
+                        text: "清空输入"
+                        enabled: searchInput.text.length > 0
+                        onClicked: {
+                            if (shellVm) {
+                                shellVm.globalSearchText = ""
+                            } else {
+                                searchInput.clear()
+                            }
+                            searchInput.forceActiveFocus()
+                        }
                     }
 
                     ThemedComboBox {
@@ -1728,8 +1744,8 @@ Rectangle {
         id: batchAnalyzeDialog
 
         modal: true
-        width: 520
-        height: 220
+        width: Math.max(320, Math.min(620, root.width - 48))
+        height: 386
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
         padding: 0
@@ -1753,7 +1769,7 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                text: "当前结果中已有解析完成素材"
+                text: "选择批量解析方式"
                 color: Theme.text
                 font.pixelSize: 20
                 font.weight: Font.Black
@@ -1761,13 +1777,109 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                text: "请选择只解析待解析和失败素材，或将当前搜索/筛选结果全部重新解析。"
+                text: "检测到当前结果中已有解析数据。建议优先补充缺失字段，避免重复处理大量完整素材。"
                 color: Theme.muted
                 font.pixelSize: 13
                 wrapMode: Text.Wrap
             }
 
-            Item { Layout.fillHeight: true }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 100
+                radius: 12
+                color: Theme.panel2
+                border.width: 1
+                border.color: Theme.selectedLine
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    spacing: 14
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 5
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "补充解析"
+                            color: Theme.text
+                            font.pixelSize: 15
+                            font.weight: Font.Bold
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "只补齐当前结构化版本缺失的颜色、材质、属性、品牌/文字等字段；完整帧直接跳过，待解析或失败素材继续处理。"
+                            color: Theme.muted
+                            font.pixelSize: 12
+                            wrapMode: Text.Wrap
+                        }
+                    }
+
+                    ActionButton {
+                        Layout.preferredWidth: 148
+                        Layout.preferredHeight: 38
+                        text: "补充解析（推荐）"
+                        primary: true
+                        onClicked: {
+                            batchAnalyzeDialog.close()
+                            if (viewModel) {
+                                viewModel.analyzeVisibleSupplement()
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 86
+                radius: 12
+                color: Theme.panel2
+                border.width: 1
+                border.color: Theme.line
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    spacing: 14
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 5
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "全部重新解析"
+                            color: Theme.text
+                            font.pixelSize: 15
+                            font.weight: Font.Bold
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "从头读取素材、重新抽帧并调用模型。耗时和接口费用较高，适合源文件或解析规则整体变化时使用。"
+                            color: Theme.muted
+                            font.pixelSize: 12
+                            wrapMode: Text.Wrap
+                        }
+                    }
+
+                    ActionButton {
+                        Layout.preferredWidth: 128
+                        Layout.preferredHeight: 38
+                        text: "全部重新解析"
+                        danger: true
+                        onClicked: {
+                            batchAnalyzeDialog.close()
+                            if (viewModel) {
+                                viewModel.analyzeVisibleAll()
+                            }
+                        }
+                    }
+                }
+            }
 
             RowLayout {
                 Layout.fillWidth: true
@@ -1780,31 +1892,6 @@ Rectangle {
                     Layout.preferredHeight: 36
                     text: "取消"
                     onClicked: batchAnalyzeDialog.close()
-                }
-
-                ActionButton {
-                    Layout.preferredWidth: 132
-                    Layout.preferredHeight: 36
-                    text: "解析未完成素材"
-                    primary: true
-                    onClicked: {
-                        batchAnalyzeDialog.close()
-                        if (viewModel) {
-                            viewModel.analyzeVisiblePending()
-                        }
-                    }
-                }
-
-                ActionButton {
-                    Layout.preferredWidth: 118
-                    Layout.preferredHeight: 36
-                    text: "全部重新解析"
-                    onClicked: {
-                        batchAnalyzeDialog.close()
-                        if (viewModel) {
-                            viewModel.analyzeVisibleAll()
-                        }
-                    }
                 }
             }
         }

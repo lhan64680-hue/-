@@ -26,6 +26,8 @@ public:
 
     bool enqueueVideo(const QString &videoKey, QString *errorMessage = nullptr);
     int enqueueVideos(const QStringList &videoKeys, QString *errorMessage = nullptr);
+    int enqueueVideosForSupplement(const QStringList &videoKeys, QString *message = nullptr);
+    int enqueueVideosForRebuild(const QStringList &videoKeys, QString *message = nullptr);
     bool retryFrame(const QString &videoKey, int frameNumber, QString *errorMessage = nullptr);
     int pendingDimensionCount(const QString &videoKey, const QStringList &dimensions, QString *errorMessage = nullptr) const;
     bool analyzeDimensions(const QString &videoKey, const QStringList &dimensions, QString *errorMessage = nullptr);

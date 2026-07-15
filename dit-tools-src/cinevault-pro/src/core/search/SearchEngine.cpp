@@ -103,28 +103,70 @@ double textMatchScore(const QStringList &terms,
     const auto normalizedPath = path.toCaseFolded();
     double best = 0.0;
     double bestPath = 0.0;
+    int searchableTermCount = 0;
+    int matchedTermCount = 0;
+    int matchedPathTermCount = 0;
     for (const auto &term : terms) {
         const auto normalizedTerm = term.toCaseFolded();
         if (normalizedTerm.isEmpty()) {
             continue;
         }
+        ++searchableTermCount;
+        bool matched = false;
         if (normalizedName == normalizedTerm) {
             best = std::max(best, 1.0);
+            matched = true;
         } else if (normalizedName.contains(normalizedTerm)) {
             best = std::max(best, 0.9);
+            matched = true;
         }
         if (normalizedPath == normalizedTerm) {
             bestPath = std::max(bestPath, 1.0);
             best = std::max(best, 0.85);
+            matched = true;
+            ++matchedPathTermCount;
         } else if (normalizedPath.contains(normalizedTerm)) {
             bestPath = std::max(bestPath, 0.8);
             best = std::max(best, 0.72);
+            matched = true;
+            ++matchedPathTermCount;
         }
+        if (matched) {
+            ++matchedTermCount;
+        }
+    }
+    if (searchableTermCount > 0 && matchedTermCount > 0) {
+        const auto coverage = static_cast<double>(matchedTermCount)
+            / static_cast<double>(searchableTermCount);
+        best *= 0.55 + (0.45 * coverage);
+        const auto pathCoverage = static_cast<double>(matchedPathTermCount)
+            / static_cast<double>(searchableTermCount);
+        bestPath *= 0.55 + (0.45 * pathCoverage);
     }
     if (pathScore) {
         *pathScore = bestPath;
     }
     return best;
+}
+
+double termCoverageScore(const QStringList &terms, const QString &text)
+{
+    const auto normalizedText = text.toCaseFolded();
+    QSet<QString> uniqueTerms;
+    int matched = 0;
+    for (const auto &term : terms) {
+        const auto normalizedTerm = term.simplified().toCaseFolded();
+        if (normalizedTerm.isEmpty() || uniqueTerms.contains(normalizedTerm)) {
+            continue;
+        }
+        uniqueTerms.insert(normalizedTerm);
+        if (normalizedText.contains(normalizedTerm)) {
+            ++matched;
+        }
+    }
+    return uniqueTerms.isEmpty()
+        ? 0.0
+        : static_cast<double>(matched) / static_cast<double>(uniqueTerms.size());
 }
 
 void mergeHit(QHash<QString, HybridSearchHit> *hits, HybridSearchHit hit)
@@ -660,7 +702,8 @@ HybridSearchResult SearchEngine::searchMaterials(const QString &queryText,
         QString sql = QStringLiteral(
             "SELECT g.video_key, g.file_name, g.absolute_path, g.relative_path, g.modified_at, g.asset_type, "
             "COALESCE(g.capture_date, ''), COALESCE(g.capture_time_source, ''), "
-            "COALESCE(g.capture_time_confidence, 0) "
+            "COALESCE(g.capture_time_confidence, 0), COALESCE(r.search_text, ''), "
+            "COALESCE(g.source_text, ''), COALESCE(g.technical_summary, '') "
             "FROM global_video_asset g "
             "LEFT JOIN video_analysis_result r ON r.video_key = g.video_key "
             "WHERE g.is_available = 1");
@@ -709,6 +752,18 @@ HybridSearchResult SearchEngine::searchMaterials(const QString &queryText,
                 hit.lexicalScore = std::max(hit.lexicalScore, 0.6);
             }
             hit.pathScore = pathScore;
+            const auto contentCoverage = termCoverageScore(
+                result.parsedQuery.lexicalTerms,
+                QStringList{query.value(9).toString(),
+                            query.value(10).toString(),
+                            query.value(11).toString()}.join(QLatin1Char(' ')));
+            if (contentCoverage > 0.0) {
+                hit.lexicalScore = std::max(hit.lexicalScore,
+                                            0.4 + (0.6 * contentCoverage));
+                if (contentCoverage >= 0.999) {
+                    hit.reasons.append(QStringLiteral("查询关键词完整覆盖"));
+                }
+            }
             hit.lexicalScore = std::max(hit.lexicalScore, ftsScores.value(hit.entityKey));
             if (requireLexical && !result.parsedQuery.lexicalTerms.isEmpty()) {
                 hit.reasons.append(QStringLiteral("关键词或视觉文本命中"));

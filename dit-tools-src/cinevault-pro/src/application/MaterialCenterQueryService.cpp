@@ -216,6 +216,12 @@ bool frameTextMatchesAllConstraints(const FrameSearchHit &frame,
     }
     return true;
 }
+
+struct SameFrameTextEvidence {
+    int frameNumber = -1;
+    qint64 timestampMs = -1;
+    QString caption;
+};
 }
 
 MaterialCenterQueryService::MaterialCenterQueryService(GlobalDatabaseManager *globalDatabaseManager,
@@ -629,13 +635,16 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
 
     QSet<QString> assetsWithCompleteFacts;
     QHash<QString, QVector<VisionEntityFact>> completeFactsByAsset;
+    QHash<QString, SameFrameTextEvidence> incompleteTextEvidenceByAsset;
     if (hybrid.parsedQuery.hasStrictEntityConstraints()) {
         for (qsizetype offset = 0; offset < assetKeys.size(); offset += batchSize) {
             const auto count = std::min(batchSize, assetKeys.size() - offset);
             QSqlQuery query(db);
             query.prepare(QStringLiteral(
-                "SELECT video_key, COALESCE(entities_json, '[]'), structured_profile_version, "
-                "facts_complete, analysis_state, COALESCE(error_message, '') "
+                "SELECT video_key, frame_number, timestamp_ms, COALESCE(caption, ''), "
+                "COALESCE(tags_json, '[]'), COALESCE(objects_json, '[]'), COALESCE(actions, ''), "
+                "COALESCE(setting_text, ''), COALESCE(entities_json, '[]'), COALESCE(ocr_text, ''), "
+                "structured_profile_version, facts_complete, analysis_state, COALESCE(error_message, '') "
                 "FROM video_frame_analysis WHERE video_key IN (%1)")
                               .arg(queryPlaceholders(count)));
             for (qsizetype index = 0; index < count; ++index) {
@@ -650,32 +659,58 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
                 continue;
             }
             while (query.next()) {
-                const bool complete = query.value(3).toBool()
-                    && query.value(2).toInt()
+                const bool complete = query.value(11).toBool()
+                    && query.value(10).toInt()
                         >= cinevault::searchconfig::kStructuredVisionProfileVersion
-                    && static_cast<FrameAnalysisState>(query.value(4).toInt())
+                    && static_cast<FrameAnalysisState>(query.value(12).toInt())
                         == FrameAnalysisState::Success
-                    && query.value(5).toString().trimmed().isEmpty();
-                if (!complete) {
+                    && query.value(13).toString().trimmed().isEmpty();
+                const auto videoKey = query.value(0).toString();
+                const auto entities = VisualAnalysisMetadata::entityFactsFromJson(
+                    query.value(8).toString());
+                if (complete) {
+                    assetsWithCompleteFacts.insert(videoKey);
+                    completeFactsByAsset[videoKey].append(entities);
                     continue;
                 }
-                const auto videoKey = query.value(0).toString();
-                assetsWithCompleteFacts.insert(videoKey);
-                completeFactsByAsset[videoKey].append(
-                    VisualAnalysisMetadata::entityFactsFromJson(query.value(1).toString()));
+
+                FrameSearchHit frame;
+                frame.frameNumber = query.value(1).toInt();
+                frame.timestampMs = query.value(2).toLongLong();
+                frame.caption = query.value(3).toString();
+                frame.tags = parseJsonList(query.value(4).toString());
+                frame.objects = parseJsonList(query.value(5).toString());
+                frame.actions = query.value(6).toString();
+                frame.setting = query.value(7).toString();
+                frame.entities = entities;
+                frame.ocrText = query.value(9).toString();
+                if (!incompleteTextEvidenceByAsset.contains(videoKey)
+                    && frameTextMatchesAllConstraints(frame,
+                                                      hybrid.parsedQuery.strictEntities)) {
+                    SameFrameTextEvidence evidence;
+                    evidence.frameNumber = frame.frameNumber;
+                    evidence.timestampMs = frame.timestampMs;
+                    evidence.caption = frame.caption.trimmed().isEmpty()
+                        ? frame.ocrText.trimmed()
+                        : frame.caption.trimmed();
+                    incompleteTextEvidenceByAsset.insert(videoKey, std::move(evidence));
+                }
             }
         }
     }
 
     QSet<QString> foldersWithCompleteFacts;
     QHash<QString, QVector<VisionEntityFact>> completeFactsByFolder;
+    QSet<QString> foldersWithIncompleteTextEvidence;
     if (hybrid.parsedQuery.hasStrictEntityConstraints()
         && hybrid.parsedQuery.folderByAssetCriteria) {
         for (qsizetype offset = 0; offset < folderKeys.size(); offset += batchSize) {
             const auto count = std::min(batchSize, folderKeys.size() - offset);
             QString sql = QStringLiteral(
-                "SELECT g.folder_key, COALESCE(v.entities_json, '[]'), v.structured_profile_version, "
-                "v.facts_complete, v.analysis_state, COALESCE(v.error_message, '') "
+                "SELECT g.folder_key, v.frame_number, v.timestamp_ms, COALESCE(v.caption, ''), "
+                "COALESCE(v.tags_json, '[]'), COALESCE(v.objects_json, '[]'), COALESCE(v.actions, ''), "
+                "COALESCE(v.setting_text, ''), COALESCE(v.entities_json, '[]'), COALESCE(v.ocr_text, ''), "
+                "v.structured_profile_version, v.facts_complete, v.analysis_state, COALESCE(v.error_message, '') "
                 "FROM global_video_asset g JOIN video_frame_analysis v ON v.video_key = g.video_key "
                 "WHERE g.is_available = 1 AND g.folder_key IN (%1)")
                               .arg(queryPlaceholders(count));
@@ -736,19 +771,35 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
                 continue;
             }
             while (query.next()) {
-                const bool complete = query.value(3).toBool()
-                    && query.value(2).toInt()
+                const bool complete = query.value(11).toBool()
+                    && query.value(10).toInt()
                         >= cinevault::searchconfig::kStructuredVisionProfileVersion
-                    && static_cast<FrameAnalysisState>(query.value(4).toInt())
+                    && static_cast<FrameAnalysisState>(query.value(12).toInt())
                         == FrameAnalysisState::Success
-                    && query.value(5).toString().trimmed().isEmpty();
-                if (!complete) {
+                    && query.value(13).toString().trimmed().isEmpty();
+                const auto folderKey = query.value(0).toString();
+                const auto entities = VisualAnalysisMetadata::entityFactsFromJson(
+                    query.value(8).toString());
+                if (complete) {
+                    foldersWithCompleteFacts.insert(folderKey);
+                    completeFactsByFolder[folderKey].append(entities);
                     continue;
                 }
-                const auto folderKey = query.value(0).toString();
-                foldersWithCompleteFacts.insert(folderKey);
-                completeFactsByFolder[folderKey].append(
-                    VisualAnalysisMetadata::entityFactsFromJson(query.value(1).toString()));
+
+                FrameSearchHit frame;
+                frame.frameNumber = query.value(1).toInt();
+                frame.timestampMs = query.value(2).toLongLong();
+                frame.caption = query.value(3).toString();
+                frame.tags = parseJsonList(query.value(4).toString());
+                frame.objects = parseJsonList(query.value(5).toString());
+                frame.actions = query.value(6).toString();
+                frame.setting = query.value(7).toString();
+                frame.entities = entities;
+                frame.ocrText = query.value(9).toString();
+                if (frameTextMatchesAllConstraints(frame,
+                                                   hybrid.parsedQuery.strictEntities)) {
+                    foldersWithIncompleteTextEvidence.insert(folderKey);
+                }
             }
         }
     }
@@ -786,18 +837,31 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
             if (folder != foldersByKey.cend()) {
                 if (hybrid.parsedQuery.hasStrictEntityConstraints()
                     && hybrid.parsedQuery.folderByAssetCriteria) {
-                    if (!foldersWithCompleteFacts.contains(hit.entityKey)) {
-                        ++result.excludedPartialCount;
-                        continue;
-                    }
-                    if (!factsMatchAllConstraints(completeFactsByFolder.value(hit.entityKey),
-                                                  hybrid.parsedQuery.strictEntities)) {
+                    const bool structuredMatch = foldersWithCompleteFacts.contains(hit.entityKey)
+                        && factsMatchAllConstraints(completeFactsByFolder.value(hit.entityKey),
+                                                    hybrid.parsedQuery.strictEntities);
+                    const bool textFallback = foldersWithIncompleteTextEvidence.contains(
+                        hit.entityKey);
+                    if (!structuredMatch && !textFallback) {
+                        if (!foldersWithCompleteFacts.contains(hit.entityKey)) {
+                            ++result.excludedPartialCount;
+                        }
                         continue;
                     }
                 }
                 auto resolvedFolder = folder.value();
                 if (hybrid.parsedQuery.hasStrictEntityConstraints()) {
-                    resolvedFolder.reasons.append(QStringLiteral("文件夹内同一视觉对象属性已验证"));
+                    const bool structuredMatch = foldersWithCompleteFacts.contains(hit.entityKey)
+                        && factsMatchAllConstraints(completeFactsByFolder.value(hit.entityKey),
+                                                    hybrid.parsedQuery.strictEntities);
+                    if (structuredMatch) {
+                        resolvedFolder.reasons.append(
+                            QStringLiteral("文件夹内同一视觉对象属性已验证"));
+                    } else if (foldersWithIncompleteTextEvidence.contains(hit.entityKey)) {
+                        resolvedFolder.confidence *= 0.82;
+                        resolvedFolder.reasons.append(
+                            QStringLiteral("文件夹内同一帧文本证据命中（结构化事实不完整）"));
+                    }
                 }
                 result.folders.append(std::move(resolvedFolder));
             }
@@ -811,12 +875,13 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
             continue;
         }
         if (hybrid.parsedQuery.hasStrictEntityConstraints()) {
-            if (!assetsWithCompleteFacts.contains(hit.entityKey)) {
-                ++result.excludedPartialCount;
-                continue;
-            }
-            if (!factsMatchAllConstraints(completeFactsByAsset.value(hit.entityKey),
-                                          hybrid.parsedQuery.strictEntities)) {
+            const bool structuredMatch = assetsWithCompleteFacts.contains(hit.entityKey)
+                && factsMatchAllConstraints(completeFactsByAsset.value(hit.entityKey),
+                                            hybrid.parsedQuery.strictEntities);
+            if (!structuredMatch && !incompleteTextEvidenceByAsset.contains(hit.entityKey)) {
+                if (!assetsWithCompleteFacts.contains(hit.entityKey)) {
+                    ++result.excludedPartialCount;
+                }
                 continue;
             }
         }
@@ -829,7 +894,20 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
         resolvedAsset.matchedTimestampMs = evidence.matchedTimestampMs;
         resolvedAsset.matchedFrameCaption = evidence.matchedFrameCaption;
         if (hybrid.parsedQuery.hasStrictEntityConstraints()) {
-            resolvedAsset.searchReasons.append(QStringLiteral("同一视觉对象属性已验证"));
+            const bool structuredMatch = assetsWithCompleteFacts.contains(hit.entityKey)
+                && factsMatchAllConstraints(completeFactsByAsset.value(hit.entityKey),
+                                            hybrid.parsedQuery.strictEntities);
+            if (structuredMatch) {
+                resolvedAsset.searchReasons.append(QStringLiteral("同一视觉对象属性已验证"));
+            } else {
+                const auto textEvidence = incompleteTextEvidenceByAsset.value(hit.entityKey);
+                resolvedAsset.searchConfidence *= 0.82;
+                resolvedAsset.searchReasons.append(
+                    QStringLiteral("同一帧文本证据命中（结构化事实不完整）"));
+                resolvedAsset.matchedFrameNumber = textEvidence.frameNumber;
+                resolvedAsset.matchedTimestampMs = textEvidence.timestampMs;
+                resolvedAsset.matchedFrameCaption = textEvidence.caption;
+            }
         }
         result.assets.append(std::move(resolvedAsset));
     }

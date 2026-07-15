@@ -149,7 +149,7 @@ void replaceInterpretationLabel(QStringList *labels,
 }
 
 void mergeEntity(QVector<StrictEntityConstraint> *entities,
-                 const StrictEntityConstraint &incoming)
+                  const StrictEntityConstraint &incoming)
 {
     for (auto &entity : *entities) {
         if (entity.label.compare(incoming.label, Qt::CaseInsensitive) != 0) {
@@ -162,6 +162,27 @@ void mergeEntity(QVector<StrictEntityConstraint> *entities,
     }
     if (entities->size() < kMaxEntityCount) {
         entities->append(incoming);
+    }
+}
+
+void removeTermsImpliedByLabel(QStringList *terms, const QString &label)
+{
+    const auto normalizedLabel = label.simplified().toCaseFolded();
+    terms->erase(std::remove_if(terms->begin(), terms->end(), [&](const QString &term) {
+        const auto normalizedTerm = term.simplified().toCaseFolded();
+        return !normalizedTerm.isEmpty()
+            && normalizedLabel != normalizedTerm
+            && normalizedLabel.contains(normalizedTerm);
+    }), terms->end());
+}
+
+void normalizeEntityConstraints(QVector<StrictEntityConstraint> *entities)
+{
+    for (auto &entity : *entities) {
+        removeTermsImpliedByLabel(&entity.materials, entity.label);
+        entity.colors = uniqueTerms(entity.colors);
+        entity.materials = uniqueTerms(entity.materials);
+        entity.attributes = uniqueTerms(entity.attributes);
     }
 }
 }
@@ -404,6 +425,7 @@ ParsedMaterialQuery SearchQueryUnderstanding::merge(
         mergeEntity(&merged.strictEntities, entity);
         changed = true;
     }
+    normalizeEntityConstraints(&merged.strictEntities);
     QStringList lexical = merged.lexicalTerms;
     lexical.append(modelUnderstanding.lexicalTerms);
     for (const auto &entity : merged.strictEntities) {
