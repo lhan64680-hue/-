@@ -84,7 +84,7 @@ private slots:
         QCOMPARE(merged.resultTarget, SearchResultTarget::Frames);
         QVERIFY(merged.lexicalTerms.contains(QStringLiteral("蓝色")));
         QVERIFY(merged.lexicalTerms.contains(QStringLiteral("牛仔")));
-        QVERIFY(merged.interpretationLabels.contains(QStringLiteral("视觉语言模型辅助理解")));
+        QVERIFY(merged.interpretationLabels.contains(QStringLiteral("内置文本模型辅助理解")));
     }
 
     void mergeRemovesMaterialAlreadyImpliedByEntityLabel()
@@ -105,6 +105,137 @@ private slots:
         QCOMPARE(merged.strictEntities.first().label, QStringLiteral("牛仔裤"));
         QVERIFY(merged.strictEntities.first().materials.isEmpty());
         QVERIFY(merged.interpretationLabels.contains(QStringLiteral("同一对象：牛仔裤 蓝色")));
+    }
+
+    void modelAliasDoesNotBecomeSecondRequiredEntity()
+    {
+        NaturalLanguageQueryParser parser;
+        const auto local = parser.parse(QStringLiteral("红色牛仔裤"));
+        ModelSearchUnderstanding model;
+        model.confidence = 0.95;
+        model.lexicalTerms = {QStringLiteral("丹宁裤"), QStringLiteral("长裤")};
+        StrictEntityConstraint alias;
+        alias.label = QStringLiteral("裤子");
+        alias.colors = {QStringLiteral("红色")};
+        model.strictEntities = {alias};
+
+        bool applied = false;
+        const auto merged = SearchQueryUnderstanding::merge(local, model, &applied);
+
+        QVERIFY(applied);
+        QCOMPARE(merged.strictEntities.size(), 1);
+        QCOMPARE(merged.strictEntities.first().label, QStringLiteral("牛仔裤"));
+        QVERIFY(merged.lexicalTerms.contains(QStringLiteral("丹宁裤")));
+        QVERIFY(merged.lexicalTerms.contains(QStringLiteral("裤子")));
+    }
+
+    void explicitSecondEntityBecomesRequiredCooccurrenceConstraint()
+    {
+        ParsedMaterialQuery local;
+        local.originalText = QStringLiteral("有男人穿着红色牛仔裤的画面");
+        StrictEntityConstraint jeans;
+        jeans.label = QStringLiteral("牛仔裤");
+        jeans.colors = {QStringLiteral("红色")};
+        local.strictEntities = {jeans};
+
+        ModelSearchUnderstanding model;
+        model.confidence = 0.95;
+        StrictEntityConstraint man;
+        man.label = QStringLiteral("男人");
+        model.strictEntities = {man, jeans};
+
+        const auto merged = SearchQueryUnderstanding::merge(local, model);
+
+        QCOMPARE(merged.strictEntities.size(), 2);
+        QVERIFY(std::any_of(merged.strictEntities.cbegin(),
+                            merged.strictEntities.cend(),
+                            [](const auto &entity) {
+            return entity.label == QStringLiteral("男人");
+        }));
+        QVERIFY(merged.interpretationLabels.join(QStringLiteral(" "))
+                    .contains(QStringLiteral("男人")));
+    }
+
+    void modelHallucinatedPropertiesNeverBecomeHardConstraints()
+    {
+        NaturalLanguageQueryParser parser;
+        const auto local = parser.parse(QStringLiteral("有男人穿着牛仔裤的画面"));
+
+        ModelSearchUnderstanding model;
+        model.confidence = 0.95;
+        StrictEntityConstraint man;
+        man.label = QStringLiteral("男人");
+        man.attributes = {QStringLiteral("胡须"), QStringLiteral("穿着")};
+        StrictEntityConstraint jeans;
+        jeans.label = QStringLiteral("牛仔裤");
+        jeans.colors = {QStringLiteral("红色")};
+        model.strictEntities = {man, jeans};
+
+        const auto merged = SearchQueryUnderstanding::merge(local, model);
+
+        QCOMPARE(merged.strictEntities.size(), 2);
+        for (const auto &entity : merged.strictEntities) {
+            QVERIFY2(entity.colors.isEmpty(), "模型不得添加用户原句中不存在的颜色硬条件");
+            QVERIFY2(entity.attributes.isEmpty(), "模型不得添加臆测属性或关系词硬条件");
+        }
+    }
+
+    void hallucinatedDuskConstraintsNeverNarrowSemanticRecall()
+    {
+        NaturalLanguageQueryParser parser;
+        const auto local = parser.parse(QStringLiteral("查找黄昏的画面"));
+
+        ModelSearchUnderstanding model;
+        model.confidence = 0.98;
+        model.semanticText = QStringLiteral("夕阳落山时的金色天空和太阳");
+        model.assetTypeFilters = {static_cast<int>(AssetType::Image)};
+        model.dateConstraint.startDate = QStringLiteral("2026-07-14");
+        model.dateConstraint.endDate = QStringLiteral("2026-07-14");
+        model.dateConstraint.matchedText = QStringLiteral("昨天");
+        model.ocrText = QStringLiteral("落日");
+        StrictEntityConstraint sun;
+        sun.label = QStringLiteral("太阳");
+        sun.colors = {QStringLiteral("金色")};
+        model.strictEntities = {sun};
+
+        const auto merged = SearchQueryUnderstanding::merge(local, model);
+
+        QCOMPARE(merged.semanticText, local.semanticText);
+        QVERIFY(merged.assetTypeFilters.isEmpty());
+        QVERIFY(merged.dateConstraint.isEmpty());
+        QVERIFY(merged.ocrText.isEmpty());
+        QVERIFY(merged.strictEntities.isEmpty());
+    }
+
+    void explicitWomanAndJeansRemainGroundedCooccurrenceConstraints()
+    {
+        NaturalLanguageQueryParser parser;
+        const auto local = parser.parse(
+            QStringLiteral("查找包含穿着红色牛仔裤的女人的画面"));
+
+        ModelSearchUnderstanding model;
+        model.confidence = 0.95;
+        StrictEntityConstraint woman;
+        woman.label = QStringLiteral("女性");
+        StrictEntityConstraint jeans;
+        jeans.label = QStringLiteral("牛仔裤");
+        jeans.colors = {QStringLiteral("红色")};
+        model.strictEntities = {woman, jeans};
+
+        const auto merged = SearchQueryUnderstanding::merge(local, model);
+
+        QCOMPARE(merged.strictEntities.size(), 2);
+        QVERIFY(std::any_of(merged.strictEntities.cbegin(),
+                            merged.strictEntities.cend(),
+                            [](const auto &entity) {
+            return entity.label == QStringLiteral("女性");
+        }));
+        QVERIFY(std::any_of(merged.strictEntities.cbegin(),
+                            merged.strictEntities.cend(),
+                            [](const auto &entity) {
+            return entity.label == QStringLiteral("牛仔裤")
+                && entity.colors.contains(QStringLiteral("红色"));
+        }));
     }
 
     void rejectsInvalidDatesAndUnknownTypes()
@@ -139,30 +270,6 @@ private slots:
         QCOMPARE(merged.semanticText, local.semanticText);
     }
 
-    void frameRerankDropsHallucinatedAndDuplicateIds()
-    {
-        const QJsonObject payload{
-            {QStringLiteral("version"), 1},
-            {QStringLiteral("matches"), QJsonArray{
-                QJsonObject{{QStringLiteral("candidate_id"), QStringLiteral("frame:a:1")}, {QStringLiteral("relevant"), true}, {QStringLiteral("score"), 0.92}, {QStringLiteral("reason"), QStringLiteral("蓝色牛仔裤清晰可见")}},
-                QJsonObject{{QStringLiteral("candidate_id"), QStringLiteral("frame:invented:99")}, {QStringLiteral("relevant"), true}, {QStringLiteral("score"), 1.0}, {QStringLiteral("reason"), QStringLiteral("虚构")}},
-                QJsonObject{{QStringLiteral("candidate_id"), QStringLiteral("frame:a:1")}, {QStringLiteral("relevant"), false}, {QStringLiteral("score"), 0.1}, {QStringLiteral("reason"), QStringLiteral("重复")}},
-                QJsonObject{{QStringLiteral("candidate_id"), QStringLiteral("frame:b:2")}, {QStringLiteral("relevant"), false}, {QStringLiteral("score"), 0.25}, {QStringLiteral("reason"), QStringLiteral("只有蓝色上衣")}}
-            }}
-        };
-        QString error;
-        const auto scores = SearchQueryUnderstanding::parseFrameRerankPayload(
-            payload,
-            {QStringLiteral("frame:a:1"), QStringLiteral("frame:b:2")},
-            &error);
-        QVERIFY2(scores.has_value(), qPrintable(error));
-        QCOMPARE(scores->size(), 2);
-        QCOMPARE(scores->first().frameKey, QStringLiteral("frame:a:1"));
-        QVERIFY(scores->first().relevant);
-        QVERIFY(std::none_of(scores->cbegin(), scores->cend(), [](const auto &item) {
-            return item.frameKey == QStringLiteral("frame:invented:99");
-        }));
-    }
 };
 
 QTEST_GUILESS_MAIN(SearchQueryUnderstandingTest)

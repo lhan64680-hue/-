@@ -11,6 +11,8 @@ class DatabaseManager : public QObject {
 public:
     explicit DatabaseManager(QObject *parent = nullptr);
 
+    static constexpr int CurrentSchemaVersion = 5;
+
     bool openProjectDatabase(const QString &databaseFilePath, QString *errorMessage);
     void closeProjectDatabase();
     bool hasOpenProject() const;
@@ -18,6 +20,9 @@ public:
     int schemaVersion() const;
     QSqlDatabase database() const;
     QSqlDatabase openThreadConnection(const QString &connectionName, QString *errorMessage) const;
+    QSqlDatabase openThreadConnectionForPath(const QString &databaseFilePath,
+                                             const QString &connectionName,
+                                             QString *errorMessage) const;
     void closeThreadConnection(const QString &connectionName) const;
 
 private:
@@ -29,6 +34,11 @@ private:
     bool migrateToVersion3(QSqlDatabase &db, QString *errorMessage) const;
     bool ensureFolderSchemaCompatibility(QSqlDatabase &db, QString *errorMessage) const;
     bool backfillFolderHierarchy(QSqlDatabase &db, QString *errorMessage) const;
+    bool migrateToVersion4(QSqlDatabase &db, QString *errorMessage) const;
+    bool ensureAtomicScanSchemaCompatibility(QSqlDatabase &db, QString *errorMessage) const;
+    bool backfillAssetPathKeys(QSqlDatabase &db, QString *errorMessage) const;
+    bool migrateToVersion5(QSqlDatabase &db, QString *errorMessage) const;
+    bool ensureEmbeddedMetadataSchemaCompatibility(QSqlDatabase &db, QString *errorMessage) const;
     int currentSchemaVersion(QSqlDatabase &db) const;
     bool setSchemaVersion(QSqlDatabase &db, int version, QString *errorMessage) const;
 

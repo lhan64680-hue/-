@@ -417,6 +417,7 @@ QVector<AssetFile> LibraryQueryService::fetchAssets(const QString &keyword,
         "COALESCE(mm.bit_rate, 0), COALESCE(mm.probe_status, 0) "
         "FROM asset_file af "
         "LEFT JOIN media_metadata mm ON mm.asset_id = af.id "
+        "LEFT JOIN embedded_metadata em ON em.asset_id = af.id "
         "LEFT JOIN thumbnail th ON th.asset_id = af.id "
         "WHERE 1 = 1").arg(static_cast<int>(AssetType::Image));
 
@@ -433,8 +434,11 @@ QVector<AssetFile> LibraryQueryService::fetchAssets(const QString &keyword,
         sql += QStringLiteral(" AND af.is_favorite = 1");
     }
     if (!keyword.trimmed().isEmpty()) {
-        sql += QStringLiteral(" AND (af.name LIKE ? ESCAPE '\\' OR af.relative_path LIKE ? ESCAPE '\\')");
+        sql += QStringLiteral(
+            " AND (af.name LIKE ? ESCAPE '\\' OR af.relative_path LIKE ? ESCAPE '\\' "
+            "OR COALESCE(em.search_text, '') LIKE ? ESCAPE '\\')");
         const auto pattern = m_searchEngine->buildLikePattern(keyword);
+        binds.append(pattern);
         binds.append(pattern);
         binds.append(pattern);
     }
@@ -536,9 +540,14 @@ InspectorState LibraryQueryService::buildAssetInspector(qint64 assetId) const
         "WHEN COALESCE(th.status, 0) = 1 THEN COALESCE(th.image_path, '') "
         "ELSE '' END, "
         "COALESCE(th.status, 0), "
-        "mm.raw_json "
+        "mm.raw_json, "
+        "em.status, em.tool_version, em.capture_time, em.create_time, em.camera_make, em.camera_model, em.lens_model, "
+        "em.camera_serial_hash, em.gps_latitude, em.gps_longitude, em.gps_altitude, em.orientation, em.width, em.height, "
+        "em.duration_ms, em.frame_rate, em.video_codec, em.color_space, em.sample_rate, em.channels, em.bit_rate, "
+        "em.timecode, em.title, em.description, em.artist, em.album, em.genre, em.keywords, em.error_message, em.raw_json "
         "FROM asset_file af "
         "LEFT JOIN media_metadata mm ON mm.asset_id = af.id "
+        "LEFT JOIN embedded_metadata em ON em.asset_id = af.id "
         "LEFT JOIN thumbnail th ON th.asset_id = af.id "
         "WHERE af.id = ?").arg(static_cast<int>(AssetType::Image)));
     query.addBindValue(assetId);
@@ -627,6 +636,64 @@ InspectorState LibraryQueryService::buildAssetInspector(qint64 assetId) const
         }
     }
 
+    if (!query.value(16).isNull()) {
+        const auto embeddedStatus = static_cast<ProbeStatus>(query.value(16).toInt());
+        details.append({QStringLiteral("ExifTool / 状态"), Formatters::probeStatusLabel(embeddedStatus)});
+        appendDetail(details, QStringLiteral("ExifTool / 版本"), query.value(17).toString());
+        appendDetail(details, QStringLiteral("ExifTool / 拍摄时间"), query.value(18).toString());
+        appendDetail(details, QStringLiteral("ExifTool / 创建时间"), query.value(19).toString());
+        appendDetail(details, QStringLiteral("相机 / 品牌"), query.value(20).toString());
+        appendDetail(details, QStringLiteral("相机 / 型号"), query.value(21).toString());
+        appendDetail(details, QStringLiteral("相机 / 镜头"), query.value(22).toString());
+        appendDetail(details, QStringLiteral("相机 / 序列号指纹"), query.value(23).toString());
+        if (!query.value(24).isNull() && !query.value(25).isNull()) {
+            appendDetail(details,
+                         QStringLiteral("位置 / GPS"),
+                         QStringLiteral("%1, %2")
+                             .arg(query.value(24).toDouble(), 0, 'f', 6)
+                             .arg(query.value(25).toDouble(), 0, 'f', 6));
+        }
+        if (!query.value(26).isNull()) {
+            appendDetail(details,
+                         QStringLiteral("位置 / 海拔"),
+                         QStringLiteral("%1 m").arg(query.value(26).toDouble(), 0, 'f', 1));
+        }
+        if (query.value(27).toInt() != 0) appendDetail(details, QStringLiteral("图像 / 方向"), query.value(27).toString());
+        if (query.value(28).toInt() > 0 && query.value(29).toInt() > 0) {
+            appendDetail(details,
+                         QStringLiteral("图像 / 尺寸"),
+                         QStringLiteral("%1 × %2").arg(query.value(28).toInt()).arg(query.value(29).toInt()));
+        }
+        if (query.value(30).toLongLong() > 0) {
+            appendDetail(details, QStringLiteral("媒体 / 时长"), Formatters::formatDuration(query.value(30).toLongLong()));
+        }
+        if (query.value(31).toDouble() > 0) {
+            appendDetail(details,
+                         QStringLiteral("视频 / 帧率"),
+                         QStringLiteral("%1 fps").arg(query.value(31).toDouble(), 0, 'f', 3));
+        }
+        appendDetail(details, QStringLiteral("视频 / 编码"), query.value(32).toString());
+        appendDetail(details, QStringLiteral("视频 / 色彩空间"), query.value(33).toString());
+        if (query.value(34).toInt() > 0) appendDetail(details, QStringLiteral("音频 / 采样率"), QStringLiteral("%1 Hz").arg(query.value(34).toInt()));
+        if (query.value(35).toInt() > 0) appendDetail(details, QStringLiteral("音频 / 声道数"), query.value(35).toString());
+        if (query.value(36).toLongLong() > 0) appendDetail(details, QStringLiteral("媒体 / 码率"), Formatters::formatBitRate(query.value(36).toLongLong()));
+        appendDetail(details, QStringLiteral("媒体 / 时间码"), query.value(37).toString());
+        appendDetail(details, QStringLiteral("内容 / 标题"), query.value(38).toString());
+        appendDetail(details, QStringLiteral("内容 / 描述"), query.value(39).toString());
+        appendDetail(details, QStringLiteral("音频 / 艺术家"), query.value(40).toString());
+        appendDetail(details, QStringLiteral("音频 / 专辑"), query.value(41).toString());
+        appendDetail(details, QStringLiteral("音频 / 流派"), query.value(42).toString());
+        appendDetail(details, QStringLiteral("内容 / 关键词"), query.value(43).toString());
+        if (embeddedStatus != ProbeStatus::Success) {
+            appendDetail(details, QStringLiteral("ExifTool / 错误"), query.value(44).toString());
+        }
+        if (!query.value(45).toString().trimmed().isEmpty()) {
+            appendDetail(details,
+                         QStringLiteral("ExifTool / 原始数据"),
+                         QStringLiteral("完整 JSON 已保存到项目数据库（设备序列号已脱敏）"));
+        }
+    }
+
     state.details = makeDetails(details);
     return state;
 }
@@ -637,7 +704,9 @@ qint64 LibraryQueryService::assetCount(const QString &keyword, std::optional<qin
         return 0;
     }
 
-    QString sql = QStringLiteral("SELECT COUNT(*) FROM asset_file af WHERE 1 = 1");
+    QString sql = QStringLiteral(
+        "SELECT COUNT(*) FROM asset_file af "
+        "LEFT JOIN embedded_metadata em ON em.asset_id = af.id WHERE 1 = 1");
     QVariantList binds;
     if (sourceRootId.has_value()) {
         sql += QStringLiteral(" AND af.source_root_id = ?");
@@ -651,8 +720,11 @@ qint64 LibraryQueryService::assetCount(const QString &keyword, std::optional<qin
         sql += QStringLiteral(" AND af.is_favorite = 1");
     }
     if (!keyword.trimmed().isEmpty()) {
-        sql += QStringLiteral(" AND (af.name LIKE ? ESCAPE '\\' OR af.relative_path LIKE ? ESCAPE '\\')");
+        sql += QStringLiteral(
+            " AND (af.name LIKE ? ESCAPE '\\' OR af.relative_path LIKE ? ESCAPE '\\' "
+            "OR COALESCE(em.search_text, '') LIKE ? ESCAPE '\\')");
         const auto pattern = m_searchEngine->buildLikePattern(keyword);
+        binds.append(pattern);
         binds.append(pattern);
         binds.append(pattern);
     }
@@ -804,5 +876,6 @@ bool LibraryQueryService::removeSourceRoot(qint64 sourceRootId)
     }
 
     emit dataChanged();
+    emit sourceRootsChanged();
     return true;
 }

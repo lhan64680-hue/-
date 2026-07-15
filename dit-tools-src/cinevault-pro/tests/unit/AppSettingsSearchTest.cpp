@@ -27,14 +27,12 @@ private slots:
         settings.sync();
     }
 
-    void defaultsEnableUnlimitedAssistanceAndQuickSearch()
+    void defaultsEnableLocalAssistantAndQuickSearch()
     {
         AppSettings settings;
 
         QVERIFY(settings.searchAssistantEnabled());
-        QVERIFY(settings.frameRerankEnabled());
-        QVERIFY(!settings.localOnlySearch());
-        QVERIFY(settings.allowSearchFrameUpload());
+        QCOMPARE(settings.searchAssistantAutoUnloadMinutes(), 60);
         QVERIFY(settings.quickSearchEnabled());
         QCOMPARE(settings.quickSearchShortcut(), QStringLiteral("Alt+Space"));
         QVERIFY(!settings.hasQuickSearchWindowPosition());
@@ -47,9 +45,7 @@ private slots:
         {
             AppSettings settings;
             settings.setSearchAssistantEnabled(false);
-            settings.setFrameRerankEnabled(false);
-            settings.setLocalOnlySearch(true);
-            settings.setAllowSearchFrameUpload(false);
+            settings.setSearchAssistantAutoUnloadMinutes(120);
             settings.setQuickSearchEnabled(false);
             settings.setQuickSearchShortcut(QStringLiteral("Ctrl+Shift+K"));
             settings.setQuickSearchWindowPosition(QPoint(-820, 135));
@@ -60,9 +56,7 @@ private slots:
 
         AppSettings restored;
         QVERIFY(!restored.searchAssistantEnabled());
-        QVERIFY(!restored.frameRerankEnabled());
-        QVERIFY(restored.localOnlySearch());
-        QVERIFY(!restored.allowSearchFrameUpload());
+        QCOMPARE(restored.searchAssistantAutoUnloadMinutes(), 120);
         QVERIFY(!restored.quickSearchEnabled());
         QCOMPARE(restored.quickSearchShortcut(), QStringLiteral("Ctrl+Shift+K"));
         QVERIFY(restored.hasQuickSearchWindowPosition());
@@ -88,6 +82,20 @@ private slots:
         QCOMPARE(settings.closeButtonBehavior(), 0);
         settings.setCloseButtonBehavior(2);
         QCOMPARE(settings.closeButtonBehavior(), 2);
+    }
+
+    void assistantAutoUnloadMinutesAreBounded()
+    {
+        AppSettings settings;
+        settings.setSearchAssistantAutoUnloadMinutes(1);
+        QCOMPARE(settings.searchAssistantAutoUnloadMinutes(), 5);
+        settings.setSearchAssistantAutoUnloadMinutes(2000);
+        QCOMPARE(settings.searchAssistantAutoUnloadMinutes(), 1440);
+
+        QSettings rawSettings;
+        rawSettings.setValue(QStringLiteral("materialCenter/searchAssistantAutoUnloadMinutes"), -20);
+        rawSettings.sync();
+        QCOMPARE(settings.searchAssistantAutoUnloadMinutes(), 5);
     }
 
 private:

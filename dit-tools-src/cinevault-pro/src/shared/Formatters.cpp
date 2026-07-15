@@ -13,7 +13,6 @@ QString Formatters::formatBytes(qint64 bytes)
     }
     return QString::number(value, unitIndex == 0 ? 'f' : 'f', unitIndex == 0 ? 0 : 1) + units.at(unitIndex);
 }
-
 QString Formatters::formatDuration(qint64 durationMs)
 {
     if (durationMs <= 0) {
@@ -216,7 +215,7 @@ QString Formatters::analysisModeLabel(AnalysisMode mode)
     }
 }
 
-QString Formatters::videoAnalysisStatusLabel(VideoAnalysisStatus status, ConfirmationStatus confirmationStatus)
+QString Formatters::videoAnalysisStatusLabel(VideoAnalysisStatus status, ConfirmationStatus)
 {
     switch (status) {
     case VideoAnalysisStatus::Pending:
@@ -224,9 +223,7 @@ QString Formatters::videoAnalysisStatusLabel(VideoAnalysisStatus status, Confirm
     case VideoAnalysisStatus::Running:
         return QStringLiteral("解析中");
     case VideoAnalysisStatus::Ready:
-        return confirmationStatus == ConfirmationStatus::Confirmed
-            ? QStringLiteral("已确认")
-            : QStringLiteral("待确认");
+        return QStringLiteral("已解析");
     case VideoAnalysisStatus::Failed:
         return QStringLiteral("解析失败");
     case VideoAnalysisStatus::IndexedOnly:
@@ -235,13 +232,3 @@ QString Formatters::videoAnalysisStatusLabel(VideoAnalysisStatus status, Confirm
     return QStringLiteral("未知");
 }
 
-QString Formatters::confirmationStatusLabel(ConfirmationStatus status)
-{
-    switch (status) {
-    case ConfirmationStatus::Confirmed:
-        return QStringLiteral("已确认");
-    case ConfirmationStatus::Pending:
-    default:
-        return QStringLiteral("未确认");
-    }
-}

@@ -1,5 +1,6 @@
 #include "core/search/NaturalLanguageQueryParser.h"
 
+#include <QHash>
 #include <QRegularExpression>
 #include <QSet>
 
@@ -32,6 +33,28 @@ QStringList matchingTerms(const QString &text, const QStringList &dictionary)
         }
     }
     return uniqueTerms(matches);
+}
+
+QStringList mostSpecificTerms(const QStringList &terms)
+{
+    QStringList result;
+    for (const auto &candidate : terms) {
+        const auto normalizedCandidate = candidate.simplified().toCaseFolded();
+        if (normalizedCandidate.isEmpty()) {
+            continue;
+        }
+        const bool impliedByMoreSpecificTerm = std::any_of(
+            terms.cbegin(), terms.cend(), [&](const QString &other) {
+                const auto normalizedOther = other.simplified().toCaseFolded();
+                return normalizedOther != normalizedCandidate
+                    && normalizedOther.size() > normalizedCandidate.size()
+                    && normalizedOther.contains(normalizedCandidate);
+            });
+        if (!impliedByMoreSpecificTerm) {
+            result.append(candidate);
+        }
+    }
+    return uniqueTerms(result);
 }
 
 void removeTermsImpliedByLabel(QStringList *terms, const QString &label)
@@ -105,6 +128,57 @@ ParsedDateText normalizedDateFromText(const QString &text,
             return dateRange(referenceDate.addDays(-(days - 1)),
                              referenceDate,
                              match.captured(0));
+        }
+    }
+
+    const auto monthCount = [](const QString &value) {
+        bool ok = false;
+        const auto numeric = value.toInt(&ok);
+        if (ok) {
+            return numeric;
+        }
+        static const QHash<QString, int> chineseNumbers{
+            {QStringLiteral("一"), 1}, {QStringLiteral("两"), 2},
+            {QStringLiteral("二"), 2}, {QStringLiteral("三"), 3},
+            {QStringLiteral("四"), 4}, {QStringLiteral("五"), 5},
+            {QStringLiteral("六"), 6}, {QStringLiteral("七"), 7},
+            {QStringLiteral("八"), 8}, {QStringLiteral("九"), 9},
+            {QStringLiteral("十"), 10},
+        };
+        return chineseNumbers.value(value, 0);
+    };
+    static const QString monthNumberPattern = QStringLiteral("(\\d{1,2}|一|两|二|三|四|五|六|七|八|九|十)");
+    static const QRegularExpression recentMonths(
+        QStringLiteral("(?:最近|近)\\s*%1\\s*个?月(?:内)?").arg(monthNumberPattern));
+    match = recentMonths.match(text);
+    if (match.hasMatch()) {
+        const auto months = monthCount(match.captured(1));
+        if (months > 0) {
+            return dateRange(referenceDate.addMonths(-months),
+                             referenceDate,
+                             match.captured(0));
+        }
+    }
+
+    static const QRegularExpression monthsBefore(
+        QStringLiteral("%1\\s*个?月之前").arg(monthNumberPattern));
+    match = monthsBefore.match(text);
+    if (match.hasMatch()) {
+        const auto months = monthCount(match.captured(1));
+        if (months > 0) {
+            return dateRange(QDate(1, 1, 1),
+                             referenceDate.addMonths(-months).addDays(-1),
+                             match.captured(0));
+        }
+    }
+
+    static const QRegularExpression monthsAgo(
+        QStringLiteral("%1\\s*个?月前").arg(monthNumberPattern));
+    match = monthsAgo.match(text);
+    if (match.hasMatch()) {
+        const auto months = monthCount(match.captured(1));
+        if (months > 0) {
+            return exactDate(referenceDate.addMonths(-months), match.captured(0));
         }
     }
 
@@ -366,7 +440,16 @@ ParsedMaterialQuery NaturalLanguageQueryParser::parse(const QString &text,
 
     query.folderIntent = working.contains(QStringLiteral("文件夹"))
         || working.contains(QStringLiteral("目录"));
-    query.frameIntent = !query.folderIntent && working.contains(QStringLiteral("帧"));
+    const bool hasExplicitAssetTarget = !assetTypesFromText(working, nullptr).isEmpty()
+        || working.contains(QStringLiteral("素材"), Qt::CaseInsensitive)
+        || working.contains(QStringLiteral("文件"), Qt::CaseInsensitive);
+    const bool hasFrameWord = working.contains(QStringLiteral("帧"), Qt::CaseInsensitive);
+    const bool hasStandalonePictureIntent = working.contains(QStringLiteral("画面"), Qt::CaseInsensitive)
+        && !working.contains(QStringLiteral("画面文字"), Qt::CaseInsensitive)
+        && !working.contains(QStringLiteral("画面内容"), Qt::CaseInsensitive)
+        && !working.contains(QStringLiteral("画面描述"), Qt::CaseInsensitive)
+        && !hasExplicitAssetTarget;
+    query.frameIntent = !query.folderIntent && (hasFrameWord || hasStandalonePictureIntent);
     query.resultTarget = query.folderIntent
         ? SearchResultTarget::Folders
         : (query.frameIntent ? SearchResultTarget::Frames : SearchResultTarget::Assets);
@@ -403,14 +486,21 @@ ParsedMaterialQuery NaturalLanguageQueryParser::parse(const QString &text,
     auto materials = matchingTerms(working, materialDictionary());
     const auto attributes = matchingTerms(working, attributeDictionary());
     const auto labels = matchingTerms(working, entityLabelDictionary());
+    const auto specificLabels = mostSpecificTerms(labels);
+    query.explicitEntityLabels = specificLabels;
     const auto visualTerms = matchingTerms(working, visualLexicalDictionary());
     query.ocrText = quotedOcrText(query.originalText);
-    if (!labels.isEmpty()) {
-        removeTermsImpliedByLabel(&materials, labels.first());
+    if (specificLabels.size() == 1) {
+        removeTermsImpliedByLabel(&materials, specificLabels.first());
     }
-    if (!labels.isEmpty() && (!colors.isEmpty() || !materials.isEmpty() || !attributes.isEmpty())) {
+    // When several different entities are present, assigning a modifier to the
+    // first noun is ambiguous. The real-time text assistant resolves that
+    // relation; the deterministic parser only creates a strict constraint for
+    // one unambiguous entity.
+    if (specificLabels.size() == 1
+        && (!colors.isEmpty() || !materials.isEmpty() || !attributes.isEmpty())) {
         StrictEntityConstraint constraint;
-        constraint.label = labels.first();
+        constraint.label = specificLabels.first();
         constraint.colors = colors;
         constraint.materials = materials;
         constraint.attributes = attributes;

@@ -10,9 +10,7 @@ constexpr auto kVisionBaseUrlKey = "materialCenter/visionBaseUrl";
 constexpr auto kVisionApiKeyKey = "materialCenter/visionApiKey";
 constexpr auto kVisionModelKey = "materialCenter/visionModel";
 constexpr auto kSearchAssistantEnabledKey = "materialCenter/searchAssistantEnabled";
-constexpr auto kFrameRerankEnabledKey = "materialCenter/frameRerankEnabled";
-constexpr auto kLocalOnlySearchKey = "materialCenter/localOnlySearch";
-constexpr auto kAllowSearchFrameUploadKey = "materialCenter/allowSearchFrameUpload";
+constexpr auto kSearchAssistantAutoUnloadMinutesKey = "materialCenter/searchAssistantAutoUnloadMinutes";
 constexpr auto kQuickSearchEnabledKey = "quickSearch/enabled";
 constexpr auto kQuickSearchShortcutKey = "quickSearch/shortcut";
 constexpr auto kQuickSearchWindowXKey = "quickSearch/windowX";
@@ -47,6 +45,11 @@ int normalizedUpdateDownloadMode(int value)
 int normalizedCloseButtonBehavior(int value)
 {
     return value >= 0 && value <= 2 ? value : 0;
+}
+
+int normalizedSearchAssistantAutoUnloadMinutes(int value)
+{
+    return qBound(5, value, 24 * 60);
 }
 
 QString normalizedProjectPath(const QString &projectPath)
@@ -188,34 +191,16 @@ void AppSettings::setSearchAssistantEnabled(bool enabled)
     m_settings->setValue(QLatin1String(kSearchAssistantEnabledKey), enabled);
 }
 
-bool AppSettings::frameRerankEnabled() const
+int AppSettings::searchAssistantAutoUnloadMinutes() const
 {
-    return m_settings->value(QLatin1String(kFrameRerankEnabledKey), true).toBool();
+    return normalizedSearchAssistantAutoUnloadMinutes(
+        m_settings->value(QLatin1String(kSearchAssistantAutoUnloadMinutesKey), 60).toInt());
 }
 
-void AppSettings::setFrameRerankEnabled(bool enabled)
+void AppSettings::setSearchAssistantAutoUnloadMinutes(int minutes)
 {
-    m_settings->setValue(QLatin1String(kFrameRerankEnabledKey), enabled);
-}
-
-bool AppSettings::localOnlySearch() const
-{
-    return m_settings->value(QLatin1String(kLocalOnlySearchKey), false).toBool();
-}
-
-void AppSettings::setLocalOnlySearch(bool enabled)
-{
-    m_settings->setValue(QLatin1String(kLocalOnlySearchKey), enabled);
-}
-
-bool AppSettings::allowSearchFrameUpload() const
-{
-    return m_settings->value(QLatin1String(kAllowSearchFrameUploadKey), true).toBool();
-}
-
-void AppSettings::setAllowSearchFrameUpload(bool enabled)
-{
-    m_settings->setValue(QLatin1String(kAllowSearchFrameUploadKey), enabled);
+    m_settings->setValue(QLatin1String(kSearchAssistantAutoUnloadMinutesKey),
+                         normalizedSearchAssistantAutoUnloadMinutes(minutes));
 }
 
 bool AppSettings::quickSearchEnabled() const

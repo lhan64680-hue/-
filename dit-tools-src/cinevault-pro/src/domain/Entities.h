@@ -234,6 +234,7 @@ struct GlobalVideoAsset {
     QStringList scenes;
     QString searchText;
     QString technicalSummary;
+    QString embeddedMetadataText;
     QString sourceText;
     QString errorMessage;
     QString updatedAt;

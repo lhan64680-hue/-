@@ -36,6 +36,19 @@ qint64 countAssets(QSqlDatabase db, QString *errorMessage)
     return query.value(0).toLongLong();
 }
 
+QStringList assetNames(QSqlDatabase db)
+{
+    QStringList names;
+    QSqlQuery query(db);
+    if (!query.exec(QStringLiteral("SELECT name FROM asset_file ORDER BY name"))) {
+        return names;
+    }
+    while (query.next()) {
+        names.append(query.value(0).toString());
+    }
+    return names;
+}
+
 int scanVersion(QSqlDatabase db, QString *errorMessage)
 {
     QSqlQuery query(db);
@@ -68,12 +81,150 @@ QVariantList folderRow(QSqlDatabase db, const QString &relativePath, QString *er
     }
     return row;
 }
+
+qint64 insertSourceRoot(QSqlDatabase db, const QString &name, const QString &path)
+{
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "INSERT INTO source_root "
+        "(name, path, status, created_at, updated_at) VALUES (?, ?, 'ok', ?, ?)"));
+    query.addBindValue(name);
+    query.addBindValue(QFileInfo(path).absoluteFilePath());
+    query.addBindValue(QStringLiteral("2026-07-15T10:00:00"));
+    query.addBindValue(QStringLiteral("2026-07-15T10:00:00"));
+    if (!query.exec()) {
+        return 0;
+    }
+    return query.lastInsertId().toLongLong();
+}
+
+SourceRoot sourceRootById(QSqlDatabase db, qint64 sourceRootId)
+{
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "SELECT id, name, path, status, total_files, total_folders, total_size_bytes, "
+        "video_count, audio_count, image_count, other_count, warning_count, scan_version "
+        "FROM source_root WHERE id = ?"));
+    query.addBindValue(sourceRootId);
+    if (!query.exec() || !query.next()) {
+        return {};
+    }
+    SourceRoot source;
+    source.id = query.value(0).toLongLong();
+    source.name = query.value(1).toString();
+    source.path = query.value(2).toString();
+    source.status = query.value(3).toString();
+    source.totalFiles = query.value(4).toLongLong();
+    source.totalFolders = query.value(5).toLongLong();
+    source.totalSizeBytes = query.value(6).toLongLong();
+    source.videoCount = query.value(7).toLongLong();
+    source.audioCount = query.value(8).toLongLong();
+    source.imageCount = query.value(9).toLongLong();
+    source.otherCount = query.value(10).toLongLong();
+    source.warningCount = query.value(11).toLongLong();
+    source.scanVersion = query.value(12).toInt();
+    return source;
+}
 }
 
 class ImportServiceLegacyRescanTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void atomicRescan_failureKeepsPreviousCatalogAndSuccessfulRetryPreservesIdentity()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto projectDb = QDir(temp.path()).filePath(QStringLiteral("atomic.cvdb"));
+        const auto sourcePath = QDir(temp.path()).filePath(QStringLiteral("FullDisk"));
+        const auto firstPath = QDir(sourcePath).filePath(QStringLiteral("Camera/A001.mov"));
+        writeFile(firstPath, "first-version");
+        writeFile(QDir(sourcePath).filePath(QStringLiteral("Notes/shot.txt")), "notes");
+
+        DatabaseManager databaseManager;
+        QString errorMessage;
+        QVERIFY2(databaseManager.openProjectDatabase(projectDb, &errorMessage), qPrintable(errorMessage));
+        const auto sourceRootId = insertSourceRoot(databaseManager.database(), QStringLiteral("FullDisk"), sourcePath);
+        QVERIFY(sourceRootId > 0);
+
+        JobEngine jobEngine(&databaseManager);
+        ScanEngine scanEngine(&databaseManager, &jobEngine, nullptr, nullptr);
+        QSignalSpy scanFinished(&scanEngine, &ScanEngine::scanFinished);
+        QSignalSpy scanFailed(&scanEngine, &ScanEngine::scanFailed);
+
+        const auto firstJobId = jobEngine.createJob(JobType::Scan,
+                                                    QStringLiteral("首次扫描"),
+                                                    QStringLiteral("建立原子扫描基线"),
+                                                    sourceRootId);
+        scanEngine.startScan(sourceRootById(databaseManager.database(), sourceRootId), firstJobId);
+        QVERIFY(scanFinished.wait(10000));
+        scanEngine.waitForIdle();
+        QCOMPARE(countAssets(databaseManager.database(), &errorMessage), qint64{2});
+
+        QSqlQuery readIdentity(databaseManager.database());
+        readIdentity.prepare(QStringLiteral("SELECT id FROM asset_file WHERE name = 'A001.mov'"));
+        QVERIFY2(readIdentity.exec() && readIdentity.next(), qPrintable(readIdentity.lastError().text()));
+        const auto originalAssetId = readIdentity.value(0).toLongLong();
+        QVERIFY(originalAssetId > 0);
+        readIdentity.finish();
+
+        QSqlQuery favorite(databaseManager.database());
+        favorite.prepare(QStringLiteral("UPDATE asset_file SET is_favorite = 1 WHERE id = ?"));
+        favorite.addBindValue(originalAssetId);
+        QVERIFY2(favorite.exec(), qPrintable(favorite.lastError().text()));
+
+        QSqlQuery metadata(databaseManager.database());
+        metadata.prepare(QStringLiteral(
+            "INSERT INTO media_metadata "
+            "(asset_id, probe_status, media_type, container, duration_ms, bit_rate, raw_json, error_message, updated_at) "
+            "VALUES (?, 1, 1, 'mov', 1000, 100, '{}', '', '2026-07-15T10:00:00')"));
+        metadata.addBindValue(originalAssetId);
+        QVERIFY2(metadata.exec(), qPrintable(metadata.lastError().text()));
+
+        writeFile(QDir(sourcePath).filePath(QStringLiteral("Added/new.jpg")), "new-image");
+        scanEngine.setFailureAfterEntriesForTesting(1);
+        scanFinished.clear();
+        const auto failedJobId = jobEngine.createJob(JobType::Scan,
+                                                     QStringLiteral("故障扫描"),
+                                                     QStringLiteral("验证旧目录保护"),
+                                                     sourceRootId);
+        scanEngine.startScan(sourceRootById(databaseManager.database(), sourceRootId), failedJobId);
+        QVERIFY(scanFailed.wait(10000));
+        scanEngine.waitForIdle();
+
+        QCOMPARE(countAssets(databaseManager.database(), &errorMessage), qint64{2});
+        QSqlQuery preserved(databaseManager.database());
+        preserved.prepare(QStringLiteral(
+            "SELECT af.id, af.is_favorite, COUNT(mm.asset_id) "
+            "FROM asset_file af LEFT JOIN media_metadata mm ON mm.asset_id = af.id "
+            "WHERE af.name = 'A001.mov' GROUP BY af.id, af.is_favorite"));
+        QVERIFY2(preserved.exec() && preserved.next(), qPrintable(preserved.lastError().text()));
+        QCOMPARE(preserved.value(0).toLongLong(), originalAssetId);
+        QCOMPARE(preserved.value(1).toInt(), 1);
+        QCOMPARE(preserved.value(2).toInt(), 1);
+        preserved.finish();
+
+        scanEngine.setFailureAfterEntriesForTesting(-1);
+        scanFailed.clear();
+        scanFinished.clear();
+        const auto retryJobId = jobEngine.createJob(JobType::Scan,
+                                                    QStringLiteral("重试扫描"),
+                                                    QStringLiteral("验证原子切换"),
+                                                    sourceRootId);
+        scanEngine.startScan(sourceRootById(databaseManager.database(), sourceRootId), retryJobId);
+        QVERIFY(scanFinished.wait(10000));
+        scanEngine.waitForIdle();
+
+        const auto retryNames = assetNames(databaseManager.database());
+        QCOMPARE(retryNames.join(QLatin1Char(',')),
+                 QStringLiteral("A001.mov,new.jpg,shot.txt"));
+        QSqlQuery afterRetry(databaseManager.database());
+        afterRetry.prepare(QStringLiteral("SELECT id, is_favorite FROM asset_file WHERE name = 'A001.mov'"));
+        QVERIFY2(afterRetry.exec() && afterRetry.next(), qPrintable(afterRetry.lastError().text()));
+        QCOMPARE(afterRetry.value(0).toLongLong(), originalAssetId);
+        QCOMPARE(afterRetry.value(1).toInt(), 1);
+    }
+
     void rescanLegacySourceRoots_rebuildsOldVideoOnlyIndex()
     {
         QTemporaryDir temp;

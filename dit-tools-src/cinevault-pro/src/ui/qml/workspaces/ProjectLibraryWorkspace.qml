@@ -70,6 +70,10 @@ Rectangle {
                 cellHeight: 224
                 model: viewModel ? viewModel.model : null
 
+                MiddleDragScrollHandler {
+                    flickable: projectGrid
+                }
+
                 delegate: Rectangle {
                     width: 286
                     height: 204

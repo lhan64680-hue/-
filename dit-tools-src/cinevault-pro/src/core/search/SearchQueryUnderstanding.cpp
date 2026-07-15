@@ -49,6 +49,140 @@ QStringList uniqueTerms(const QStringList &values, int limit = kMaxTermCount)
     return result;
 }
 
+bool labelsDescribeSameEntity(const QString &left, const QString &right)
+{
+    const auto normalizedLeft = left.simplified().toCaseFolded();
+    const auto normalizedRight = right.simplified().toCaseFolded();
+    if (normalizedLeft.isEmpty() || normalizedRight.isEmpty()) {
+        return false;
+    }
+    if (normalizedLeft == normalizedRight
+        || normalizedLeft.contains(normalizedRight)
+        || normalizedRight.contains(normalizedLeft)) {
+        return true;
+    }
+
+    const QVector<QStringList> aliases{
+        {QStringLiteral("牛仔裤"), QStringLiteral("长裤"), QStringLiteral("裤子"),
+         QStringLiteral("丹宁裤")},
+        {QStringLiteral("男人"), QStringLiteral("男性"), QStringLiteral("男子"),
+         QStringLiteral("男士")},
+        {QStringLiteral("女人"), QStringLiteral("女性"), QStringLiteral("女子"),
+         QStringLiteral("女士")}
+    };
+    return std::any_of(aliases.cbegin(), aliases.cend(), [&](const QStringList &group) {
+        return group.contains(normalizedLeft) && group.contains(normalizedRight);
+    });
+}
+
+bool queryExplicitlyRequiresEntity(const QString &queryText, const QString &label)
+{
+    const auto normalizedQuery = queryText.simplified().toCaseFolded();
+    const auto normalizedLabel = label.simplified().toCaseFolded();
+    if (normalizedQuery.contains(normalizedLabel)) {
+        return true;
+    }
+    const QVector<QStringList> aliases{
+        {QStringLiteral("男人"), QStringLiteral("男性"), QStringLiteral("男子"),
+         QStringLiteral("男士")},
+        {QStringLiteral("女人"), QStringLiteral("女性"), QStringLiteral("女子"),
+         QStringLiteral("女士")}
+    };
+    return std::any_of(aliases.cbegin(), aliases.cend(), [&](const QStringList &group) {
+        if (!group.contains(normalizedLabel)) {
+            return false;
+        }
+        return std::any_of(group.cbegin(), group.cend(), [&](const QString &alias) {
+            return normalizedQuery.contains(alias);
+        });
+    });
+}
+
+bool queryExplicitlyRequiresAssetType(const QString &queryText, int assetType)
+{
+    const auto normalizedQuery = queryText.simplified().toCaseFolded();
+    QStringList aliases;
+    switch (static_cast<AssetType>(assetType)) {
+    case AssetType::Video:
+        aliases = {QStringLiteral("视频"), QStringLiteral("影片"), QStringLiteral("录像"),
+                   QStringLiteral("片段")};
+        break;
+    case AssetType::Audio:
+        aliases = {QStringLiteral("音频"), QStringLiteral("录音"), QStringLiteral("声音")};
+        break;
+    case AssetType::Image:
+        aliases = {QStringLiteral("图片"), QStringLiteral("照片"), QStringLiteral("图像"),
+                   QStringLiteral("相片"), QStringLiteral("海报")};
+        break;
+    case AssetType::Document:
+        aliases = {QStringLiteral("文档"), QStringLiteral("文本"), QStringLiteral("表格")};
+        break;
+    case AssetType::Subtitle:
+        aliases = {QStringLiteral("字幕")};
+        break;
+    case AssetType::Archive:
+        aliases = {QStringLiteral("压缩包"), QStringLiteral("归档")};
+        break;
+    case AssetType::ProjectFile:
+        aliases = {QStringLiteral("工程文件"), QStringLiteral("项目文件")};
+        break;
+    default:
+        return false;
+    }
+    return std::any_of(aliases.cbegin(), aliases.cend(), [&normalizedQuery](const QString &alias) {
+        return normalizedQuery.contains(alias);
+    });
+}
+
+bool queryExplicitlyContains(const QString &queryText, const QString &candidate)
+{
+    const auto normalizedCandidate = candidate.simplified();
+    return !normalizedCandidate.isEmpty()
+        && queryText.contains(normalizedCandidate, Qt::CaseInsensitive);
+}
+
+QStringList groundedModelProperties(const QStringList &values,
+                                    const QString &queryText,
+                                    bool rejectRelationalAttributes = false)
+{
+    const auto normalizedQuery = queryText.simplified().toCaseFolded();
+    const QStringList relationalTerms{
+        QStringLiteral("穿着"), QStringLiteral("穿戴"), QStringLiteral("戴着"),
+        QStringLiteral("拿着"), QStringLiteral("手持"), QStringLiteral("正在"),
+        QStringLiteral("坐着"), QStringLiteral("站着"), QStringLiteral("走着")
+    };
+
+    QStringList grounded;
+    for (const auto &value : values) {
+        const auto normalized = value.simplified().toCaseFolded();
+        if (normalized.isEmpty() || !normalizedQuery.contains(normalized)) {
+            continue;
+        }
+        if (rejectRelationalAttributes
+            && std::any_of(relationalTerms.cbegin(), relationalTerms.cend(),
+                           [&normalized](const QString &term) {
+                return normalized.contains(term);
+            })) {
+            continue;
+        }
+        grounded.append(value);
+    }
+    return uniqueTerms(grounded, 8);
+}
+
+StrictEntityConstraint groundedModelEntity(const StrictEntityConstraint &entity,
+                                           const QString &queryText)
+{
+    auto grounded = entity;
+    // Model-supplied properties become hard database constraints, so only keep
+    // values that are explicitly grounded in the user's text. The entity label
+    // is validated separately by queryExplicitlyRequiresEntity/known aliases.
+    grounded.colors = groundedModelProperties(entity.colors, queryText);
+    grounded.materials = groundedModelProperties(entity.materials, queryText);
+    grounded.attributes = groundedModelProperties(entity.attributes, queryText, true);
+    return grounded;
+}
+
 QStringList stringArray(const QJsonValue &value, int limit = kMaxTermCount)
 {
     if (!value.isArray()) {
@@ -148,21 +282,28 @@ void replaceInterpretationLabel(QStringList *labels,
     }
 }
 
-void mergeEntity(QVector<StrictEntityConstraint> *entities,
-                  const StrictEntityConstraint &incoming)
+bool mergeEntity(QVector<StrictEntityConstraint> *entities,
+                 const StrictEntityConstraint &incoming)
 {
     for (auto &entity : *entities) {
-        if (entity.label.compare(incoming.label, Qt::CaseInsensitive) != 0) {
+        if (!labelsDescribeSameEntity(entity.label, incoming.label)) {
             continue;
         }
+        const auto previousColors = entity.colors;
+        const auto previousMaterials = entity.materials;
+        const auto previousAttributes = entity.attributes;
         entity.colors = uniqueTerms(entity.colors + incoming.colors);
         entity.materials = uniqueTerms(entity.materials + incoming.materials);
         entity.attributes = uniqueTerms(entity.attributes + incoming.attributes);
-        return;
+        return entity.colors != previousColors
+            || entity.materials != previousMaterials
+            || entity.attributes != previousAttributes;
     }
     if (entities->size() < kMaxEntityCount) {
         entities->append(incoming);
+        return true;
     }
+    return false;
 }
 
 void removeTermsImpliedByLabel(QStringList *terms, const QString &label)
@@ -232,30 +373,6 @@ QJsonObject SearchQueryUnderstanding::responseSchema()
             QStringLiteral("folder_by_asset_criteria"), QStringLiteral("ocr_text"), QStringLiteral("entities"),
             QStringLiteral("confidence"), QStringLiteral("explanation")
         }}
-    };
-}
-
-QJsonObject SearchQueryUnderstanding::frameRerankResponseSchema()
-{
-    const auto matchSchema = QJsonObject{
-        {QStringLiteral("type"), QStringLiteral("object")},
-        {QStringLiteral("additionalProperties"), false},
-        {QStringLiteral("properties"), QJsonObject{
-            {QStringLiteral("candidate_id"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
-            {QStringLiteral("relevant"), QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")}}},
-            {QStringLiteral("score"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}, {QStringLiteral("minimum"), 0.0}, {QStringLiteral("maximum"), 1.0}}},
-            {QStringLiteral("reason"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}}
-        }},
-        {QStringLiteral("required"), QJsonArray{QStringLiteral("candidate_id"), QStringLiteral("relevant"), QStringLiteral("score"), QStringLiteral("reason")}}
-    };
-    return QJsonObject{
-        {QStringLiteral("type"), QStringLiteral("object")},
-        {QStringLiteral("additionalProperties"), false},
-        {QStringLiteral("properties"), QJsonObject{
-            {QStringLiteral("version"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("const"), 1}}},
-            {QStringLiteral("matches"), QJsonObject{{QStringLiteral("type"), QStringLiteral("array")}, {QStringLiteral("items"), matchSchema}, {QStringLiteral("maxItems"), 8}}}
-        }},
-        {QStringLiteral("required"), QJsonArray{QStringLiteral("version"), QStringLiteral("matches")}}
     };
 }
 
@@ -368,13 +485,14 @@ ParsedMaterialQuery SearchQueryUnderstanding::merge(
         const auto modelSemantic = modelUnderstanding.semanticText.simplified();
         if (localSemantic.isEmpty()) {
             merged.semanticText = modelSemantic;
-        } else if (localSemantic.compare(modelSemantic, Qt::CaseInsensitive) != 0) {
-            merged.semanticText = QStringLiteral("%1 %2").arg(localSemantic, modelSemantic).simplified();
+            changed = true;
         }
-        changed = true;
     }
 
-    if (merged.dateConstraint.isEmpty() && !modelUnderstanding.dateConstraint.isEmpty()) {
+    if (merged.dateConstraint.isEmpty()
+        && !modelUnderstanding.dateConstraint.isEmpty()
+        && queryExplicitlyContains(localQuery.originalText,
+                                   modelUnderstanding.dateConstraint.matchedText)) {
         merged.dateConstraint = modelUnderstanding.dateConstraint;
         merged.normalizedDate = merged.dateConstraint.isExactDate()
             ? merged.dateConstraint.startDate
@@ -389,7 +507,14 @@ ParsedMaterialQuery SearchQueryUnderstanding::merge(
     }
 
     if (merged.assetTypeFilters.isEmpty() && !modelUnderstanding.assetTypeFilters.isEmpty()) {
-        merged.assetTypeFilters = modelUnderstanding.assetTypeFilters;
+        for (const auto type : modelUnderstanding.assetTypeFilters) {
+            if (queryExplicitlyRequiresAssetType(localQuery.originalText, type)
+                && !merged.assetTypeFilters.contains(type)) {
+                merged.assetTypeFilters.append(type);
+            }
+        }
+    }
+    if (merged.assetTypeFilter < 0 && !merged.assetTypeFilters.isEmpty()) {
         merged.assetTypeFilter = merged.assetTypeFilters.first();
         QStringList labels;
         for (const auto type : merged.assetTypeFilters) {
@@ -413,7 +538,9 @@ ParsedMaterialQuery SearchQueryUnderstanding::merge(
         changed = true;
     }
 
-    if (merged.ocrText.isEmpty() && !modelUnderstanding.ocrText.isEmpty()) {
+    if (merged.ocrText.isEmpty()
+        && !modelUnderstanding.ocrText.isEmpty()
+        && queryExplicitlyContains(localQuery.originalText, modelUnderstanding.ocrText)) {
         merged.ocrText = modelUnderstanding.ocrText;
         replaceInterpretationLabel(&merged.interpretationLabels,
                                    {QStringLiteral("画面文字：")},
@@ -422,12 +549,27 @@ ParsedMaterialQuery SearchQueryUnderstanding::merge(
     }
 
     for (const auto &entity : modelUnderstanding.strictEntities) {
-        mergeEntity(&merged.strictEntities, entity);
-        changed = true;
+        const bool matchesKnownEntity = std::any_of(
+            merged.strictEntities.cbegin(),
+            merged.strictEntities.cend(),
+            [&entity](const auto &knownEntity) {
+                return labelsDescribeSameEntity(knownEntity.label, entity.label);
+            });
+        if (matchesKnownEntity
+            || queryExplicitlyRequiresEntity(localQuery.originalText, entity.label)) {
+            changed = mergeEntity(
+                          &merged.strictEntities,
+                          groundedModelEntity(entity, localQuery.originalText))
+                || changed;
+        }
     }
     normalizeEntityConstraints(&merged.strictEntities);
-    QStringList lexical = merged.lexicalTerms;
+    const auto previousLexicalTerms = merged.lexicalTerms;
+    QStringList lexical = previousLexicalTerms;
     lexical.append(modelUnderstanding.lexicalTerms);
+    for (const auto &entity : modelUnderstanding.strictEntities) {
+        lexical.append(entity.allTerms());
+    }
     for (const auto &entity : merged.strictEntities) {
         lexical.append(entity.allTerms());
     }
@@ -435,6 +577,7 @@ ParsedMaterialQuery SearchQueryUnderstanding::merge(
         lexical.append(merged.ocrText);
     }
     merged.lexicalTerms = uniqueTerms(lexical);
+    changed = merged.lexicalTerms != previousLexicalTerms || changed;
 
     if (!modelUnderstanding.strictEntities.isEmpty()) {
         QStringList entityLabels;
@@ -451,72 +594,11 @@ ParsedMaterialQuery SearchQueryUnderstanding::merge(
                                    QStringLiteral("内容：%1").arg(merged.semanticText));
     }
     if (changed) {
-        merged.interpretationLabels.append(QStringLiteral("视觉语言模型辅助理解"));
+        merged.interpretationLabels.append(QStringLiteral("内置文本模型辅助理解"));
     }
     merged.interpretationLabels = uniqueTerms(merged.interpretationLabels, 32);
     if (modelApplied) {
         *modelApplied = changed;
     }
     return merged;
-}
-
-std::optional<QVector<ModelFrameRerankScore>> SearchQueryUnderstanding::parseFrameRerankPayload(
-    const QJsonObject &payload,
-    const QStringList &allowedFrameKeys,
-    QString *errorMessage)
-{
-    if (payload.value(QStringLiteral("version")).toInt(-1) != 1) {
-        if (errorMessage) *errorMessage = QStringLiteral("候选帧复核协议版本不受支持");
-        return std::nullopt;
-    }
-    QSet<QString> allowed;
-    for (const auto &key : allowedFrameKeys) {
-        if (!key.trimmed().isEmpty()) {
-            allowed.insert(key.trimmed());
-        }
-    }
-    if (allowed.isEmpty()) {
-        if (errorMessage) *errorMessage = QStringLiteral("候选帧白名单为空");
-        return std::nullopt;
-    }
-
-    QVector<ModelFrameRerankScore> scores;
-    QSet<QString> seen;
-    const auto matches = payload.value(QStringLiteral("matches")).toArray();
-    for (const auto &value : matches) {
-        if (!value.isObject()) {
-            continue;
-        }
-        const auto object = value.toObject();
-        const auto key = boundedText(object.value(QStringLiteral("candidate_id")), 180);
-        if (!allowed.contains(key) || seen.contains(key)) {
-            continue;
-        }
-        const auto scoreValue = object.value(QStringLiteral("score"));
-        if (!scoreValue.isDouble()) {
-            continue;
-        }
-        const auto score = scoreValue.toDouble();
-        if (score < 0.0 || score > 1.0) {
-            continue;
-        }
-        ModelFrameRerankScore item;
-        item.frameKey = key;
-        item.relevant = object.value(QStringLiteral("relevant")).toBool(false);
-        item.score = score;
-        item.reason = boundedText(object.value(QStringLiteral("reason")), 120);
-        scores.append(item);
-        seen.insert(key);
-    }
-    if (scores.isEmpty()) {
-        if (errorMessage) *errorMessage = QStringLiteral("模型没有返回任何白名单内的候选帧");
-        return std::nullopt;
-    }
-    std::stable_sort(scores.begin(), scores.end(), [](const auto &left, const auto &right) {
-        if (left.relevant != right.relevant) {
-            return left.relevant;
-        }
-        return left.score > right.score;
-    });
-    return scores;
 }

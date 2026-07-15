@@ -160,27 +160,13 @@ QString nowIso()
     return QDateTime::currentDateTime().toString(Qt::ISODate);
 }
 
-QStringList uniqueNormalizedKeys(const QStringList &videoKeys)
-{
-    QStringList normalizedKeys;
-    QSet<QString> seen;
-    for (const auto &videoKey : videoKeys) {
-        const auto normalizedKey = videoKey.trimmed();
-        if (normalizedKey.isEmpty() || seen.contains(normalizedKey)) {
-            continue;
-        }
-        normalizedKeys.append(normalizedKey);
-        seen.insert(normalizedKey);
-    }
-    return normalizedKeys;
-}
-
 bool isSupportedTextAsset(AssetType assetType, const QString &extension)
 {
     static const QSet<QString> textExtensions = {
         QStringLiteral("txt"), QStringLiteral("log"), QStringLiteral("md"),
         QStringLiteral("json"), QStringLiteral("csv"), QStringLiteral("tsv"),
         QStringLiteral("xml"), QStringLiteral("yaml"), QStringLiteral("yml"),
+        QStringLiteral("pdf"),
         QStringLiteral("docx"), QStringLiteral("xlsx"), QStringLiteral("pptx"),
         QStringLiteral("srt"), QStringLiteral("ass"), QStringLiteral("vtt")
     };
@@ -1097,29 +1083,6 @@ bool updateAssetState(QSqlDatabase &db,
     return execQuery(query, errorMessage);
 }
 
-bool confirmVideoRecords(QSqlDatabase &db,
-                         const QString &videoKey,
-                         const QString &confirmedAt,
-                         QString *errorMessage)
-{
-    QSqlQuery result(db);
-    result.prepare(QStringLiteral("UPDATE video_analysis_result SET confirmed_at = ? WHERE video_key = ?"));
-    result.addBindValue(confirmedAt);
-    result.addBindValue(videoKey);
-    if (!execQuery(result, errorMessage)) {
-        return false;
-    }
-
-    QSqlQuery asset(db);
-    asset.prepare(QStringLiteral(
-        "UPDATE global_video_asset SET confirmation_status = ?, error_message = '', updated_at = ? "
-        "WHERE video_key = ?"));
-    asset.addBindValue(static_cast<int>(ConfirmationStatus::Confirmed));
-    asset.addBindValue(confirmedAt);
-    asset.addBindValue(videoKey);
-    return execQuery(asset, errorMessage);
-}
-
 bool deleteAnalysisArtifacts(QSqlDatabase &db, const QString &videoKey, bool hasFts5, QString *errorMessage)
 {
     QSqlQuery frames(db);
@@ -1382,7 +1345,8 @@ bool persistSummary(QSqlDatabase &db,
         "search_text = excluded.search_text, "
         "model_name = excluded.model_name, "
         "prompt_version = excluded.prompt_version, "
-        "analyzed_at = excluded.analyzed_at"));
+        "analyzed_at = excluded.analyzed_at, "
+        "confirmed_at = excluded.confirmed_at"));
     result.addBindValue(asset.videoKey);
     result.addBindValue(summary.summary);
     result.addBindValue(toJson(summary.keywords));
@@ -1391,7 +1355,7 @@ bool persistSummary(QSqlDatabase &db,
     result.addBindValue(QStringLiteral("openai-compatible"));
     result.addBindValue(QStringLiteral("v3-structured-entity-ocr-search"));
     result.addBindValue(analyzedAt);
-    result.addBindValue(QString());
+    result.addBindValue(analyzedAt);
     if (!execQuery(result, errorMessage)) {
         return false;
     }
@@ -1401,7 +1365,7 @@ bool persistSummary(QSqlDatabase &db,
         "UPDATE global_video_asset SET analysis_status = ?, confirmation_status = ?, source_text = ?, error_message = '', updated_at = ? "
         "WHERE video_key = ?"));
     updateAsset.addBindValue(static_cast<int>(VideoAnalysisStatus::Ready));
-    updateAsset.addBindValue(static_cast<int>(ConfirmationStatus::Pending));
+    updateAsset.addBindValue(static_cast<int>(ConfirmationStatus::Confirmed));
     updateAsset.addBindValue(sourceText);
     updateAsset.addBindValue(analyzedAt);
     updateAsset.addBindValue(asset.videoKey);
@@ -1560,6 +1524,13 @@ QString VideoAnalysisService::batchStatusText() const
               .arg(total)
               .arg(failed)
         : QStringLiteral("本批次完成：已处理 %1/%2").arg(finished).arg(total);
+}
+
+bool VideoAnalysisService::hasPendingAnalysisWork() const
+{
+    return m_analysisRunning
+        || !m_analysisQueue.isEmpty()
+        || !m_dimensionAnalysisQueue.isEmpty();
 }
 
 bool VideoAnalysisService::validateReadyForEnqueue(const QString &videoKey, QString *errorMessage) const
@@ -2526,9 +2497,9 @@ void VideoAnalysisService::startNextAnalysis()
 
             updateJob(jobId,
                       100,
-                      QStringLiteral("图片解析完成，等待确认"),
+                      QStringLiteral("图片解析完成，结果已自动生效"),
                       analysisProgressContext(3, 3, QStringLiteral("完成图片解析"), 1, 1, QStringLiteral("张")));
-            finishSuccess(QStringLiteral("图片解析完成，等待确认"));
+            finishSuccess(QStringLiteral("图片解析完成，结果已自动生效"));
             return;
         }
 
@@ -2605,9 +2576,9 @@ void VideoAnalysisService::startNextAnalysis()
 
             updateJob(jobId,
                       100,
-                      QStringLiteral("文本/文档解析完成，等待确认"),
+                      QStringLiteral("文本/文档解析完成，结果已自动生效"),
                       analysisProgressContext(3, 3, QStringLiteral("完成文本解析"), 1, 1, QStringLiteral("个文件")));
-            finishSuccess(QStringLiteral("文本/文档解析完成，等待确认"));
+            finishSuccess(QStringLiteral("文本/文档解析完成，结果已自动生效"));
             return;
         }
 
@@ -3153,8 +3124,8 @@ void VideoAnalysisService::startNextAnalysis()
             }
 
             QString successMessage = task.skippedFrames > 0
-                ? QStringLiteral("视频解析完成，成功 %1 帧，跳过 %2 帧，等待确认").arg(task.successfulFrames).arg(task.skippedFrames)
-                : QStringLiteral("视频解析完成，等待确认");
+                ? QStringLiteral("视频解析完成，成功 %1 帧，跳过 %2 帧，结果已自动生效").arg(task.successfulFrames).arg(task.skippedFrames)
+                : QStringLiteral("视频解析完成，结果已自动生效");
             const auto remainingStructuredGaps = VisualAnalysisMetadata::incompletePlannedFrameNumbers(
                 plan.sourceFrameCount,
                 plan.frameInterval,
@@ -3190,46 +3161,6 @@ void VideoAnalysisService::finishCurrentAnalysis(const QString &videoKey)
     emit analysisQueueChanged(m_currentVideoKey, m_analysisQueue.size());
     notifyBatchChanged();
     startNextAnalysis();
-}
-
-bool VideoAnalysisService::confirmVideo(const QString &videoKey)
-{
-    return confirmVideos(QStringList{videoKey}) > 0;
-}
-
-int VideoAnalysisService::confirmVideos(const QStringList &videoKeys)
-{
-    if (!m_globalDatabaseManager || !m_globalDatabaseManager->isOpen()) {
-        return 0;
-    }
-
-    const auto normalizedKeys = uniqueNormalizedKeys(videoKeys);
-    if (normalizedKeys.isEmpty()) {
-        return 0;
-    }
-
-    QString errorMessage;
-    const auto confirmedAt = QDateTime::currentDateTime().toString(Qt::ISODate);
-
-    auto db = m_globalDatabaseManager->database();
-    if (!db.transaction()) {
-        return 0;
-    }
-
-    for (const auto &normalizedKey : normalizedKeys) {
-        if (!confirmVideoRecords(db, normalizedKey, confirmedAt, &errorMessage)) {
-            db.rollback();
-            return 0;
-        }
-    }
-
-    if (!db.commit()) {
-        db.rollback();
-        return 0;
-    }
-
-    emit catalogChanged();
-    return normalizedKeys.size();
 }
 
 void VideoAnalysisService::reportAnalysisProgress(const QString &videoKey,

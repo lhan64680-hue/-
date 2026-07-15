@@ -564,6 +564,10 @@ Rectangle {
                         spacing: 12
                         model: viewModel ? viewModel.messageModel : null
 
+                        MiddleDragScrollHandler {
+                            flickable: messageListView
+                        }
+
                         ScrollBar.vertical: ThemedScrollBar {
                             policy: ScrollBar.AsNeeded
                         }

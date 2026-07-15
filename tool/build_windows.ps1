@@ -2,6 +2,7 @@ param(
     [string]$QtRoot = $env:QT_ROOT,
     [string]$FfmpegDevRoot = $env:FFMPEG_DEV_ROOT,
     [string]$Configuration = "Release",
+    [string]$Version,
     [switch]$RealWorkflow,
     [switch]$EnableFfmpeg
 )
@@ -18,7 +19,11 @@ if ($RealWorkflow -and $EnableFfmpeg) {
 $context = Get-CineVaultBuildContext -QtRoot $QtRoot -FfmpegDevRoot $FfmpegDevRoot -RequireFfmpeg:$EnableFfmpeg
 $projectRoot = Join-Path $context.RepoRoot "dit-tools-src\cinevault-pro"
 $outputRoot = Join-Path $context.RepoRoot "output"
-$version = Get-NextDistVersion -DistRoot $outputRoot -ReferenceRoots @((Join-Path $context.RepoRoot "dist"))
+$version = if ([string]::IsNullOrWhiteSpace($Version)) {
+    Get-NextDistVersion -DistRoot $outputRoot -ReferenceRoots @((Join-Path $context.RepoRoot "dist"))
+} else {
+    Get-NormalizedCineVaultVersionTag -Version $Version
+}
 $appVersion = $version.TrimStart("v")
 
 $isDebug = $Configuration -ieq "Debug"
@@ -42,6 +47,18 @@ if ($context.HasFfmpeg) {
 
 Push-Location $projectRoot
 try {
+    $exifToolCacheRoot = Join-Path $env:LOCALAPPDATA "CineVault\BuildCache\exiftool-v1"
+    $exifToolPrepareScript = Join-Path $projectRoot "cmake\PrepareExifToolDependency.cmake"
+    Invoke-VcVarsCommand "cmake -DOUTPUT_ROOT=`"$exifToolCacheRoot`" -P `"$exifToolPrepareScript`""
+    if ($RealWorkflow -or $EnableFfmpeg) {
+        $localSearchCacheRoot = Join-Path $env:LOCALAPPDATA "CineVault\BuildCache\local-search-v1"
+        $localSearchPrepareScript = Join-Path $projectRoot "cmake\PrepareLocalSearchDependencies.cmake"
+        Invoke-VcVarsCommand "cmake -DOUTPUT_ROOT=`"$localSearchCacheRoot`" -P `"$localSearchPrepareScript`""
+
+        $assistantCacheRoot = Join-Path $env:LOCALAPPDATA "CineVault\BuildCache\search-assistant-v1"
+        $assistantPrepareScript = Join-Path $projectRoot "cmake\PrepareSearchAssistantDependencies.cmake"
+        Invoke-VcVarsCommand "cmake -DOUTPUT_ROOT=`"$assistantCacheRoot`" -P `"$assistantPrepareScript`""
+    }
     Invoke-VcVarsCommand "cmake --preset $configurePreset -DCINEVAULT_APP_VERSION=$appVersion"
     Invoke-VcVarsCommand "cmake --build --preset $buildPreset --config $Configuration"
 } finally {
@@ -99,17 +116,43 @@ Copy-Item $exePath -Destination $stagingDir -Force
 $deployedExe = Join-Path $stagingDir "CineVault.exe"
 
 $onnxRuntimeSource = Join-Path $buildDir "onnxruntime.dll"
-$localSearchModelsSource = Join-Path $buildDir "data\models"
+$modelsSource = Join-Path $buildDir "data\models"
+$localSearchModelSource = Join-Path $modelsSource "bge-small-zh-v1.5\onnx\model_quantized.onnx"
 $hasOnnxRuntime = Test-Path -LiteralPath $onnxRuntimeSource -PathType Leaf
-$hasLocalSearchModels = Test-Path -LiteralPath $localSearchModelsSource -PathType Container
-if ($hasOnnxRuntime -xor $hasLocalSearchModels) {
+$hasLocalSearchModel = Test-Path -LiteralPath $localSearchModelSource -PathType Leaf
+if ($hasOnnxRuntime -xor $hasLocalSearchModel) {
     throw "Local-search runtime assets are incomplete in the build directory. Expected both onnxruntime.dll and data/models/."
 }
-if ($hasOnnxRuntime -and $hasLocalSearchModels) {
+if ($hasOnnxRuntime -and $hasLocalSearchModel) {
     Copy-Item -LiteralPath $onnxRuntimeSource -Destination $stagingDir -Force
+}
+
+$assistantRuntimeSource = Join-Path $buildDir "search-assistant"
+$assistantExecutableSource = Join-Path $assistantRuntimeSource "llama-server.exe"
+$assistantModelSource = Join-Path $modelsSource "qwen3-0.6b\Qwen3-0.6B-Q8_0.gguf"
+$hasAssistantRuntime = Test-Path -LiteralPath $assistantExecutableSource -PathType Leaf
+$hasAssistantModel = Test-Path -LiteralPath $assistantModelSource -PathType Leaf
+if ($hasAssistantRuntime -xor $hasAssistantModel) {
+    throw "Search-assistant assets are incomplete in the build directory. Expected both search-assistant/llama-server.exe and the Qwen GGUF model."
+}
+if ($hasAssistantRuntime -and $hasAssistantModel) {
+    Copy-Item -LiteralPath $assistantRuntimeSource -Destination $stagingDir -Recurse -Force
+}
+
+if ($hasLocalSearchModel -or $hasAssistantModel) {
     $localSearchDataTarget = Join-Path $stagingDir "data"
     New-Item -ItemType Directory -Force -Path $localSearchDataTarget | Out-Null
-    Copy-Item -LiteralPath $localSearchModelsSource -Destination $localSearchDataTarget -Recurse -Force
+    Copy-Item -LiteralPath $modelsSource -Destination $localSearchDataTarget -Recurse -Force
+}
+
+$exifToolSource = Join-Path $buildDir "exiftool"
+$exifToolExecutable = Join-Path $exifToolSource "exiftool.exe"
+$exifToolLibrary = Join-Path $exifToolSource "exiftool_files\exiftool.pl"
+if ((Test-Path -LiteralPath $exifToolExecutable -PathType Leaf) -and
+    (Test-Path -LiteralPath $exifToolLibrary -PathType Leaf)) {
+    Copy-Item -LiteralPath $exifToolSource -Destination $stagingDir -Recurse -Force
+} elseif ($RealWorkflow -or $EnableFfmpeg) {
+    throw "ExifTool runtime is missing from the build directory."
 }
 
 $deployMode = if ($Configuration -ieq "Debug") { "--debug" } else { "--release" }

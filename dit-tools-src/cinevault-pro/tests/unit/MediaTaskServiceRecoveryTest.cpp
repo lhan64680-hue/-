@@ -105,6 +105,7 @@ class MediaTaskServiceRecoveryTest : public QObject {
 
 private slots:
     void recoversRunningEmptyThumbnails();
+    void unchangedCompletedAssetsDoNotCreateDuplicateJobs();
 };
 
 void MediaTaskServiceRecoveryTest::recoversRunningEmptyThumbnails()
@@ -163,6 +164,52 @@ void MediaTaskServiceRecoveryTest::recoversRunningEmptyThumbnails()
     QCOMPARE(finishedRow.second, finishedPath);
 
     QTRY_VERIFY_WITH_TIMEOUT(!jobEngine.jobs().isEmpty() && jobEngine.jobs().first().state == JobState::Completed, 10000);
+    databaseManager.closeProjectDatabase();
+}
+
+void MediaTaskServiceRecoveryTest::unchangedCompletedAssetsDoNotCreateDuplicateJobs()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const auto sourcePath = QDir(tempDir.path()).filePath(QStringLiteral("source"));
+    QVERIFY(QDir().mkpath(sourcePath));
+
+    DatabaseManager databaseManager;
+    QString errorMessage;
+    const auto databasePath = QDir(tempDir.path()).filePath(QStringLiteral("project.cvdb"));
+    QVERIFY2(databaseManager.openProjectDatabase(databasePath, &errorMessage), qPrintable(errorMessage));
+    auto db = databaseManager.database();
+
+    QSqlQuery source(db);
+    source.prepare(QStringLiteral(
+        "INSERT INTO source_root "
+        "(name, path, status, total_files, total_folders, total_size_bytes, video_count, audio_count, image_count, "
+        "other_count, warning_count, scan_version, created_at, updated_at) "
+        "VALUES ('Source', ?, 'ok', 1, 0, 12, 1, 0, 0, 0, 0, 2, '2026-07-06T12:00:00', '2026-07-06T12:00:00')"));
+    source.addBindValue(sourcePath);
+    QVERIFY2(source.exec(), qPrintable(source.lastError().text()));
+    const auto sourceRootId = source.lastInsertId().toLongLong();
+    const auto assetId = insertAsset(db, sourceRootId, sourcePath, QStringLiteral("complete.mp4"));
+    QVERIFY(assetId > 0);
+
+    QSqlQuery metadata(db);
+    metadata.prepare(QStringLiteral(
+        "INSERT INTO media_metadata "
+        "(asset_id, probe_status, media_type, container, duration_ms, bit_rate, raw_json, error_message, updated_at) "
+        "VALUES (?, ?, ?, 'mp4', 1000, 1000000, '{}', '', '2026-07-06T12:00:00')"));
+    metadata.addBindValue(assetId);
+    metadata.addBindValue(static_cast<int>(ProbeStatus::Success));
+    metadata.addBindValue(static_cast<int>(AssetType::Video));
+    QVERIFY2(metadata.exec(), qPrintable(metadata.lastError().text()));
+    insertThumbnail(db, assetId, ThumbnailStatus::Success, tempDir.filePath(QStringLiteral("complete.jpg")));
+
+    JobEngine jobEngine(&databaseManager);
+    FakeThumbnailEngine thumbnailEngine;
+    MediaTaskService service(&databaseManager, &jobEngine, nullptr, &thumbnailEngine);
+    service.startForSourceRoot(sourceRootId);
+    QCoreApplication::processEvents();
+
+    QVERIFY2(jobEngine.jobs().isEmpty(), "未变化且已完成的素材不应重复创建媒体解析任务");
     databaseManager.closeProjectDatabase();
 }
 

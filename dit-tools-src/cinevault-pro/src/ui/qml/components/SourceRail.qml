@@ -65,12 +65,19 @@ Rectangle {
         }
 
         ListView {
+            id: sourceList
+
             Layout.fillWidth: true
             Layout.fillHeight: !root.collapsed
             visible: !root.collapsed
             clip: true
             spacing: 10
             model: viewModel.model
+
+            MiddleDragScrollHandler {
+                flickable: sourceList
+            }
+
             delegate: Item {
                 width: ListView.view.width
                 height: sourceCard.implicitHeight + 28
@@ -143,7 +150,7 @@ Rectangle {
             ActionButton {
                 anchors.fill: parent
                 anchors.margins: 16
-                text: "添加素材源"
+                text: "添加目录 / 磁盘卷"
                 primary: true
                 onClicked: shellVm.addSourceDirectory()
             }

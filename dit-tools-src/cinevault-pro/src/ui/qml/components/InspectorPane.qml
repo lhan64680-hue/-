@@ -50,6 +50,11 @@ Rectangle {
             Layout.fillHeight: true
             clip: true
 
+            MiddleDragScrollHandler {
+                parent: detailScroll.contentItem
+                flickable: detailScroll.contentItem
+            }
+
             Column {
                 width: detailScroll.availableWidth
                 spacing: 10

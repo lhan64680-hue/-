@@ -12,6 +12,10 @@
 #include "ui/viewmodels/MinimalSourceRailViewModel.h"
 #else
 #include "application/ImportService.h"
+#include "application/StorageVolumeService.h"
+#include "application/SourceChangeMonitor.h"
+#include "application/SystemIdleMonitor.h"
+#include "application/BackgroundMaintenanceCoordinator.h"
 #include "application/JobService.h"
 #include "application/LibraryQueryService.h"
 #include "application/FeedbackService.h"
@@ -19,9 +23,11 @@
 #include "application/MaterialCatalogSyncService.h"
 #include "application/MaterialCenterQueryService.h"
 #include "application/MediaTaskService.h"
+#include "application/MetadataExtractionService.h"
 #include "application/ProjectService.h"
 #include "application/ReportExportService.h"
 #include "application/SearchDocumentSyncService.h"
+#include "application/SearchAssistantLifecycleController.h"
 #include "application/UpdateService.h"
 #include "application/VideoAnalysisService.h"
 #include "core/media/MediaProbeEngine.h"
@@ -33,7 +39,10 @@
 #include "infrastructure/db/DatabaseManager.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
 #include "infrastructure/ffmpeg/FFmpegAdapter.h"
+#include "infrastructure/metadata/ExifToolAdapter.h"
 #include "infrastructure/network/VisionApiClient.h"
+#include "infrastructure/search/LocalSearchAssistantRuntime.h"
+#include "infrastructure/search/SearchAssistantClient.h"
 #include "ui/viewmodels/InspectorViewModel.h"
 #include "ui/viewmodels/JobTimelineViewModel.h"
 #include "ui/viewmodels/LibraryWorkspaceViewModel.h"
@@ -76,6 +85,7 @@ AppContext::AppContext(QObject *parent)
     , m_searchDocumentSyncService(new SearchDocumentSyncService(m_globalDatabaseManager, m_semanticSearchIndexService, this))
     , m_searchEngine(new SearchEngine(m_globalDatabaseManager, m_semanticSearchIndexService))
     , m_ffmpegAdapter(new FFmpegAdapter)
+    , m_exifToolAdapter(new ExifToolAdapter)
     , m_jobEngine(new JobEngine(m_databaseManager, this))
     , m_mediaProbeEngine(new MediaProbeEngine(m_ffmpegAdapter, this))
     , m_thumbnailEngine(new ThumbnailEngine(m_ffmpegAdapter, &m_settings, this))
@@ -83,21 +93,43 @@ AppContext::AppContext(QObject *parent)
     , m_projectService(new ProjectService(m_databaseManager, &m_settings, m_globalDatabaseManager, this))
     , m_jobService(new JobService(m_jobEngine, this))
     , m_mediaTaskService(new MediaTaskService(m_databaseManager, m_jobEngine, m_mediaProbeEngine, m_thumbnailEngine, this))
-    , m_importService(new ImportService(m_databaseManager, m_jobService, m_scanEngine, this))
-    , m_libraryQueryService(new LibraryQueryService(m_databaseManager, m_searchEngine, this))
-    , m_documentPreviewService(new DocumentPreviewService(this))
-    , m_reportExportService(new ReportExportService(m_databaseManager, m_projectService, this))
+    , m_metadataExtractionService(new MetadataExtractionService(
+          m_databaseManager, m_jobEngine, m_exifToolAdapter, this))
     , m_materialCatalogSyncService(new MaterialCatalogSyncService(m_globalDatabaseManager, m_jobEngine, m_projectService, this))
     , m_materialCenterQueryService(new MaterialCenterQueryService(m_globalDatabaseManager, m_searchEngine, this))
     , m_visionApiClient(new VisionApiClient)
+    , m_localSearchAssistantRuntime(new LocalSearchAssistantRuntime({}, {}, this))
+    , m_searchAssistantClient(new SearchAssistantClient(this))
+    , m_searchAssistantLifecycleController(new SearchAssistantLifecycleController(
+          &m_settings, m_localSearchAssistantRuntime, this))
     , m_videoAnalysisService(new VideoAnalysisService(m_globalDatabaseManager, m_jobEngine, &m_settings, m_ffmpegAdapter, m_visionApiClient, this))
     , m_feedbackService(new FeedbackService(&m_settings, m_projectService, this))
     , m_updateService(new UpdateService(&m_settings, this))
-    , m_shellViewModel(new ShellViewModel(m_projectService, m_importService, m_feedbackService, this))
+    , m_importService(new ImportService(m_databaseManager, m_jobService, m_scanEngine, this))
+    , m_storageVolumeService(new StorageVolumeService(this))
+    , m_libraryQueryService(new LibraryQueryService(m_databaseManager, m_searchEngine, this))
+    , m_sourceChangeMonitor(new SourceChangeMonitor(this))
+    , m_systemIdleMonitor(new SystemIdleMonitor(this))
+    , m_backgroundMaintenanceCoordinator(new BackgroundMaintenanceCoordinator(
+          m_importService,
+          m_libraryQueryService,
+          m_projectService,
+          m_globalDatabaseManager,
+          m_videoAnalysisService,
+          m_sourceChangeMonitor,
+          m_systemIdleMonitor,
+          this))
+    , m_documentPreviewService(new DocumentPreviewService(this))
+    , m_reportExportService(new ReportExportService(m_databaseManager, m_projectService, this))
+    , m_shellViewModel(new ShellViewModel(m_projectService,
+                                         m_importService,
+                                         m_feedbackService,
+                                         m_storageVolumeService,
+                                         this))
     , m_projectLibraryViewModel(new ProjectLibraryViewModel(m_projectService, this))
     , m_sourceRailViewModel(new SourceRailViewModel(m_libraryQueryService, this))
     , m_libraryWorkspaceViewModel(new LibraryWorkspaceViewModel(m_libraryQueryService, this))
-    , m_materialCenterViewModel(new MaterialCenterViewModel(m_materialCenterQueryService, m_materialCatalogSyncService, m_searchDocumentSyncService, m_videoAnalysisService, m_projectService, &m_settings, m_visionApiClient, this))
+    , m_materialCenterViewModel(new MaterialCenterViewModel(m_materialCenterQueryService, m_materialCatalogSyncService, m_searchDocumentSyncService, m_videoAnalysisService, m_projectService, &m_settings, m_localSearchAssistantRuntime, m_searchAssistantClient, this))
     , m_inspectorViewModel(new InspectorViewModel(m_libraryQueryService, this))
     , m_jobTimelineViewModel(new JobTimelineViewModel(m_jobService, m_videoAnalysisService, this))
     , m_reportWorkspaceViewModel(new ReportWorkspaceViewModel(m_projectService, m_libraryQueryService, m_reportExportService, this))
@@ -106,6 +138,8 @@ AppContext::AppContext(QObject *parent)
                                                 m_videoAnalysisService,
                                                 m_updateService,
                                                 m_quickSearchController,
+                                                m_localSearchAssistantRuntime,
+                                                m_searchAssistantLifecycleController,
                                                 this))
     , m_feedbackViewModel(new FeedbackViewModel(m_feedbackService, this))
 {
@@ -129,9 +163,25 @@ AppContext::AppContext(QObject *parent)
     connect(m_importService, &ImportService::catalogChanged, m_materialCatalogSyncService, &MaterialCatalogSyncService::syncCurrentProject);
 
     connect(m_scanEngine, &ScanEngine::scanFinished, m_mediaTaskService, &MediaTaskService::startForSourceRoot);
+    connect(m_scanEngine,
+            &ScanEngine::scanFinished,
+            m_metadataExtractionService,
+            &MetadataExtractionService::startForSourceRoot);
     connect(m_mediaTaskService, &MediaTaskService::mediaCatalogChanged, m_libraryWorkspaceViewModel, &LibraryWorkspaceViewModel::reload);
     connect(m_mediaTaskService, &MediaTaskService::mediaCatalogChanged, m_inspectorViewModel, &InspectorViewModel::reload);
     connect(m_mediaTaskService, &MediaTaskService::mediaCatalogChanged, m_materialCatalogSyncService, &MaterialCatalogSyncService::syncCurrentProject);
+    connect(m_metadataExtractionService,
+            &MetadataExtractionService::metadataCatalogChanged,
+            m_libraryWorkspaceViewModel,
+            &LibraryWorkspaceViewModel::reload);
+    connect(m_metadataExtractionService,
+            &MetadataExtractionService::metadataCatalogChanged,
+            m_inspectorViewModel,
+            &InspectorViewModel::reload);
+    connect(m_metadataExtractionService,
+            &MetadataExtractionService::metadataCatalogChanged,
+            m_materialCatalogSyncService,
+            &MaterialCatalogSyncService::syncCurrentProject);
     connect(m_libraryQueryService, &LibraryQueryService::dataChanged, m_sourceRailViewModel, &SourceRailViewModel::reload);
     connect(m_libraryQueryService, &LibraryQueryService::dataChanged, m_inspectorViewModel, &InspectorViewModel::reload);
     connect(m_libraryQueryService, &LibraryQueryService::dataChanged, m_materialCatalogSyncService, &MaterialCatalogSyncService::syncCurrentProject);
@@ -141,6 +191,18 @@ AppContext::AppContext(QObject *parent)
             m_searchDocumentSyncService, &SearchDocumentSyncService::scheduleFullSync);
     connect(m_settingsViewModel, &SettingsViewModel::searchSettingsChanged,
             m_materialCenterViewModel, &MaterialCenterViewModel::reload);
+    connect(m_materialCenterViewModel,
+            &MaterialCenterViewModel::quickSearchNavigationRequested,
+            m_shellViewModel,
+            &ShellViewModel::enterMaterialCenterFromQuickSearch);
+    connect(m_quickSearchController,
+            &QuickSearchController::quickSearchRequested,
+            m_searchAssistantLifecycleController,
+            &SearchAssistantLifecycleController::recordUserActivity);
+    connect(m_quickSearchController,
+            &QuickSearchController::showMainWindowRequested,
+            m_searchAssistantLifecycleController,
+            &SearchAssistantLifecycleController::recordUserActivity);
 
     connect(m_shellViewModel, &ShellViewModel::searchRequested, this, [this](const QString &text) {
         if (m_shellViewModel->currentWorkspace() == static_cast<int>(WorkspaceId::ProjectLibrary)) {
@@ -188,6 +250,18 @@ void AppContext::expose(QQmlApplicationEngine &engine)
     context->setContextProperty(QStringLiteral("documentPreviewVm"), m_documentPreviewService);
     context->setContextProperty(QStringLiteral("settingsVm"), m_settingsViewModel);
     context->setContextProperty(QStringLiteral("feedbackVm"), m_feedbackViewModel);
+#endif
+}
+
+void AppContext::startInteractiveServices()
+{
+#if !CINEVAULT_BUILD_MINIMAL_GUI
+    if (m_searchAssistantLifecycleController) {
+        m_searchAssistantLifecycleController->start();
+    }
+    if (m_backgroundMaintenanceCoordinator) {
+        m_backgroundMaintenanceCoordinator->start();
+    }
 #endif
 }
 

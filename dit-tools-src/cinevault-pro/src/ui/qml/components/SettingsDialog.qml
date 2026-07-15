@@ -11,9 +11,7 @@ Dialog {
     property string draftVisionApiKey: ""
     property string draftVisionModel: ""
     property bool draftSearchAssistantEnabled: true
-    property bool draftFrameRerankEnabled: true
-    property bool draftLocalOnlySearch: false
-    property bool draftAllowSearchFrameUpload: true
+    property int draftSearchAssistantAutoUnloadMinutes: 60
     property bool draftQuickSearchEnabled: true
     property string draftQuickSearchShortcut: "Alt+Space"
     property bool draftStartAtLogin: false
@@ -49,9 +47,7 @@ Dialog {
             draftVisionApiKey = viewModel.visionApiKey
             draftVisionModel = viewModel.visionModel
             draftSearchAssistantEnabled = viewModel.searchAssistantEnabled
-            draftFrameRerankEnabled = viewModel.frameRerankEnabled
-            draftLocalOnlySearch = viewModel.localOnlySearch
-            draftAllowSearchFrameUpload = viewModel.allowSearchFrameUpload
+            draftSearchAssistantAutoUnloadMinutes = viewModel.searchAssistantAutoUnloadMinutes
             draftQuickSearchEnabled = viewModel.quickSearchEnabled
             draftQuickSearchShortcut = viewModel.quickSearchShortcut
             draftStartAtLogin = viewModel.startAtLogin
@@ -142,9 +138,7 @@ Dialog {
                             root.draftVisionApiKey,
                             root.draftVisionModel,
                             root.draftSearchAssistantEnabled,
-                            root.draftFrameRerankEnabled,
-                            root.draftLocalOnlySearch,
-                            root.draftAllowSearchFrameUpload,
+                            root.draftSearchAssistantAutoUnloadMinutes,
                             root.draftQuickSearchEnabled,
                             root.draftQuickSearchShortcut,
                             root.draftStartAtLogin,
@@ -170,9 +164,16 @@ Dialog {
         }
 
         ScrollView {
+            id: settingsScroll
+
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
+
+            MiddleDragScrollHandler {
+                parent: settingsScroll.contentItem
+                flickable: settingsScroll.contentItem
+            }
 
             ColumnLayout {
                 width: root.width
@@ -652,46 +653,99 @@ Dialog {
                                 spacing: 8
 
                                 Text {
-                                    text: "模型辅助搜索与隐私"
+                                    text: "智能搜索与隐私"
                                     color: Theme.text
                                     font.pixelSize: 16
                                     font.weight: Font.DemiBold
                                 }
 
                                 ThemedSwitch {
-                                    checked: root.draftLocalOnlySearch
-                                    text: "仅本地搜索（不发起任何搜索模型网络请求）"
-                                    font.pixelSize: root.bodyFontSize
-                                    onToggled: root.draftLocalOnlySearch = checked
-                                }
-
-                                ThemedSwitch {
-                                    enabled: !root.draftLocalOnlySearch
                                     checked: root.draftSearchAssistantEnabled
-                                    text: "使用视觉语言模型辅助理解自然语言查询"
+                                    text: "实时使用内置轻量文本模型辅助理解查询"
                                     font.pixelSize: root.bodyFontSize
                                     onToggled: root.draftSearchAssistantEnabled = checked
                                 }
 
-                                ThemedSwitch {
-                                    enabled: !root.draftLocalOnlySearch
-                                    checked: root.draftFrameRerankEnabled
-                                    text: "使用视觉语言模型复核前 8 个候选帧"
-                                    font.pixelSize: root.bodyFontSize
-                                    onToggled: root.draftFrameRerankEnabled = checked
-                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 10
 
-                                ThemedSwitch {
-                                    enabled: !root.draftLocalOnlySearch && root.draftFrameRerankEnabled
-                                    checked: root.draftAllowSearchFrameUpload
-                                    text: "允许将候选帧缩略图发送到已配置的模型接口"
-                                    font.pixelSize: root.bodyFontSize
-                                    onToggled: root.draftAllowSearchFrameUpload = checked
+                                    Text {
+                                        Layout.preferredWidth: 150
+                                        Layout.alignment: Qt.AlignVCenter
+                                        text: "自动卸载时间"
+                                        color: root.draftSearchAssistantEnabled ? Theme.muted : Theme.weak
+                                        font.pixelSize: root.bodyFontSize
+                                    }
+
+                                    ThemedSpinBox {
+                                        objectName: "searchAssistantAutoUnloadMinutesInput"
+                                        Layout.preferredWidth: 150
+                                        Layout.preferredHeight: root.controlHeight
+                                        enabled: root.draftSearchAssistantEnabled
+                                        font.pixelSize: root.bodyFontSize
+                                        from: 5
+                                        to: 1440
+                                        value: root.draftSearchAssistantAutoUnloadMinutes
+                                        onValueModified: root.draftSearchAssistantAutoUnloadMinutes = value
+                                    }
+
+                                    Text {
+                                        Layout.alignment: Qt.AlignVCenter
+                                        text: "分钟"
+                                        color: Theme.weak
+                                        font.pixelSize: 13
+                                    }
+
+                                    ThemedComboBox {
+                                        id: searchAssistantAutoUnloadPreset
+                                        objectName: "searchAssistantAutoUnloadPreset"
+                                        Layout.preferredWidth: 190
+                                        Layout.preferredHeight: root.controlHeight
+                                        enabled: root.draftSearchAssistantEnabled
+                                        font.pixelSize: root.bodyFontSize
+                                        model: [
+                                            { label: "15 分钟", value: 15 },
+                                            { label: "30 分钟", value: 30 },
+                                            { label: "1 小时（默认）", value: 60 },
+                                            { label: "2 小时", value: 120 },
+                                            { label: "4 小时", value: 240 },
+                                            { label: "8 小时", value: 480 }
+                                        ]
+                                        textRole: "label"
+                                        currentIndex: {
+                                            for (var i = 0; i < model.length; ++i) {
+                                                if (model[i].value === root.draftSearchAssistantAutoUnloadMinutes)
+                                                    return i
+                                            }
+                                            return -1
+                                        }
+                                        displayText: currentIndex >= 0 ? model[currentIndex].label : "自定义时间"
+                                        onActivated: root.draftSearchAssistantAutoUnloadMinutes = model[index].value
+                                    }
+
+                                    Item { Layout.fillWidth: true }
                                 }
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: "查询理解只发送搜索文字；候选帧复核会发送最多 8 张缩略图和对应候选 ID。关闭缩略图授权后仍保留本地帧搜索与中央帧卡片。"
+                                    text: "软件启动后会自动在 GPU 上加载模型；鼠标、键盘或快捷搜索操作都会重置计时。连续无操作达到该时间后释放模型和显存，恢复操作时自动重新预热。可直接输入 5–1440 分钟，或从右侧选择常用时间。"
+                                    color: Theme.muted
+                                    font.pixelSize: 12
+                                    wrapMode: Text.Wrap
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: viewModel ? viewModel.localSearchAssistantStatusText : ""
+                                    color: Theme.muted
+                                    font.pixelSize: 12
+                                    wrapMode: Text.Wrap
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "搜索始终在本机完成：内置查询助手只接收搜索文字，不读取图片、视频或文件路径，也不会发往外网。视觉接口仅用于素材导入和解析，不参与搜索，也不会在搜索时发送候选帧。"
                                     color: Theme.muted
                                     font.pixelSize: 12
                                     wrapMode: Text.Wrap

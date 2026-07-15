@@ -254,6 +254,12 @@ Rectangle {
         anchors.bottomMargin: 24
         visible: overlay.mode === "document"
         clip: true
+
+        MiddleDragScrollHandler {
+            parent: documentScroll.contentItem
+            flickable: documentScroll.contentItem
+        }
+
         ScrollBar.vertical: ThemedScrollBar { policy: ScrollBar.AsNeeded }
         ScrollBar.horizontal: ThemedScrollBar { policy: ScrollBar.AsNeeded }
 

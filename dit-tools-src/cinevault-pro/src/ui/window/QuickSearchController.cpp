@@ -15,6 +15,7 @@
 #include <QSettings>
 #include <QScreen>
 #include <QSystemTrayIcon>
+#include <QWindow>
 
 #ifdef Q_OS_WIN
 #define WIN32_LEAN_AND_MEAN
@@ -101,6 +102,59 @@ bool nativeShortcut(const QKeyCombination &combination,
     *nativeModifiers = modifiers;
     *nativeVirtualKey = virtualKey;
     return true;
+}
+
+bool restoreNativeWindowToForeground(HWND windowHandle)
+{
+    if (!windowHandle || !IsWindow(windowHandle)) {
+        return false;
+    }
+
+    ShowWindow(windowHandle, IsIconic(windowHandle) ? SW_RESTORE : SW_SHOW);
+
+    const auto foregroundWindow = GetForegroundWindow();
+    const auto currentThreadId = GetCurrentThreadId();
+    const auto foregroundThreadId = foregroundWindow
+        ? GetWindowThreadProcessId(foregroundWindow, nullptr)
+        : 0;
+    const bool attachedToForeground = foregroundThreadId != 0
+        && foregroundThreadId != currentThreadId
+        && AttachThreadInput(currentThreadId, foregroundThreadId, TRUE) != FALSE;
+
+    SetWindowPos(windowHandle,
+                 HWND_TOP,
+                 0,
+                 0,
+                 0,
+                 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    BringWindowToTop(windowHandle);
+    SetActiveWindow(windowHandle);
+    SetFocus(windowHandle);
+    SetForegroundWindow(windowHandle);
+
+    if (GetForegroundWindow() != windowHandle) {
+        SetWindowPos(windowHandle,
+                     HWND_TOPMOST,
+                     0,
+                     0,
+                     0,
+                     0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetWindowPos(windowHandle,
+                     HWND_NOTOPMOST,
+                     0,
+                     0,
+                     0,
+                     0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetForegroundWindow(windowHandle);
+    }
+
+    if (attachedToForeground) {
+        AttachThreadInput(currentThreadId, foregroundThreadId, FALSE);
+    }
+    return IsWindowVisible(windowHandle) != FALSE;
 }
 #endif
 }
@@ -258,6 +312,25 @@ QPoint QuickSearchController::clampWindowPosition(const QPoint &requestedPositio
 void QuickSearchController::requestQuickSearch()
 {
     emit quickSearchRequested();
+}
+
+bool QuickSearchController::restoreMainWindow(QObject *windowObject)
+{
+    auto *window = qobject_cast<QWindow *>(windowObject);
+    if (!window) {
+        return false;
+    }
+
+    window->showNormal();
+    window->raise();
+#ifdef Q_OS_WIN
+    const auto windowHandle = reinterpret_cast<HWND>(window->winId());
+    const auto restored = restoreNativeWindowToForeground(windowHandle);
+#else
+    const auto restored = window->isVisible();
+#endif
+    window->requestActivate();
+    return restored || window->isVisible();
 }
 
 QPoint QuickSearchController::restoredWindowPosition(int windowWidth, int windowHeight) const

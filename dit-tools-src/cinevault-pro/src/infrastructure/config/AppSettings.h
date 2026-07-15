@@ -31,14 +31,8 @@ public:
     bool searchAssistantEnabled() const;
     void setSearchAssistantEnabled(bool enabled);
 
-    bool frameRerankEnabled() const;
-    void setFrameRerankEnabled(bool enabled);
-
-    bool localOnlySearch() const;
-    void setLocalOnlySearch(bool enabled);
-
-    bool allowSearchFrameUpload() const;
-    void setAllowSearchFrameUpload(bool enabled);
+    int searchAssistantAutoUnloadMinutes() const;
+    void setSearchAssistantAutoUnloadMinutes(int minutes);
 
     bool quickSearchEnabled() const;
     void setQuickSearchEnabled(bool enabled);

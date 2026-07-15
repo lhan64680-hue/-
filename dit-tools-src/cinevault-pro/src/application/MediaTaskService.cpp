@@ -5,6 +5,7 @@
 #include "core/thumbnail/ThumbnailEngine.h"
 #include "infrastructure/db/DatabaseManager.h"
 #include "shared/Paths.h"
+#include "shared/ScopedBackgroundThreadPriority.h"
 
 #include <QtConcurrent>
 
@@ -70,7 +71,20 @@ void MediaTaskService::startForSourceRoot(qint64 sourceRootId)
     }
 
     QSqlQuery query(m_databaseManager->database());
-    query.prepare(QStringLiteral("SELECT name, path, video_count, audio_count, image_count FROM source_root WHERE id = ?"));
+    query.prepare(QStringLiteral(
+        "SELECT sr.name, sr.path, "
+        "(SELECT COUNT(*) FROM asset_file af LEFT JOIN media_metadata mm ON mm.asset_id = af.id "
+        " WHERE af.source_root_id = sr.id AND af.is_readable = 1 AND af.asset_type IN (?, ?, ?) AND mm.asset_id IS NULL), "
+        "(SELECT COUNT(*) FROM asset_file af LEFT JOIN thumbnail th ON th.asset_id = af.id "
+        " WHERE af.source_root_id = sr.id AND af.is_readable = 1 AND af.asset_type IN (?, ?) "
+        " AND (th.asset_id IS NULL OR th.status <> ? OR COALESCE(th.image_path, '') = '')) "
+        "FROM source_root sr WHERE sr.id = ?"));
+    query.addBindValue(static_cast<int>(AssetType::Video));
+    query.addBindValue(static_cast<int>(AssetType::Audio));
+    query.addBindValue(static_cast<int>(AssetType::Image));
+    query.addBindValue(static_cast<int>(AssetType::Video));
+    query.addBindValue(static_cast<int>(AssetType::Image));
+    query.addBindValue(static_cast<int>(ThumbnailStatus::Success));
     query.addBindValue(sourceRootId);
     if (!query.exec() || !query.next()) {
         return;
@@ -78,11 +92,10 @@ void MediaTaskService::startForSourceRoot(qint64 sourceRootId)
 
     const auto sourceName = query.value(0).toString();
     const auto sourcePath = query.value(1).toString();
-    const auto videoCount = query.value(2).toLongLong();
-    const auto audioCount = query.value(3).toLongLong();
-    const auto imageCount = query.value(4).toLongLong();
-    const bool needsMetadata = (videoCount + audioCount + imageCount) > 0;
-    const bool needsThumbnails = (videoCount + imageCount) > 0;
+    const auto pendingMetadataCount = query.value(2).toLongLong();
+    const auto pendingThumbnailCount = query.value(3).toLongLong();
+    const bool needsMetadata = pendingMetadataCount > 0;
+    const bool needsThumbnails = pendingThumbnailCount > 0;
 
     if (!needsMetadata && !needsThumbnails) {
         return;
@@ -96,7 +109,7 @@ void MediaTaskService::startForSourceRoot(qint64 sourceRootId)
                                                QStringLiteral("准备读取视频/音频/图片技术参数"),
                                                sourceRootId,
                                                sourceRootSubject(sourceRootId, sourceName, sourcePath),
-                                               itemProgressContext(QStringLiteral("读取元数据"), 0, videoCount + audioCount + imageCount, QStringLiteral("个文件")));
+                                               itemProgressContext(QStringLiteral("读取元数据"), 0, pendingMetadataCount, QStringLiteral("个文件")));
     }
     if (needsThumbnails) {
         thumbnailJobId = m_jobEngine->createJob(JobType::Thumbnail,
@@ -104,7 +117,7 @@ void MediaTaskService::startForSourceRoot(qint64 sourceRootId)
                                                 QStringLiteral("准备生成视频/图片缩略图"),
                                                 sourceRootId,
                                                 sourceRootSubject(sourceRootId, sourceName, sourcePath),
-                                                itemProgressContext(QStringLiteral("生成缩略图"), 0, videoCount + imageCount, QStringLiteral("张")));
+                                                itemProgressContext(QStringLiteral("生成缩略图"), 0, pendingThumbnailCount, QStringLiteral("张")));
     }
 
     const auto projectDatabasePath = m_databaseManager->databaseFilePath();
@@ -161,7 +174,11 @@ void MediaTaskService::recoverStaleThumbnails()
     }
 }
 
-QVector<AssetFile> MediaTaskService::fetchAssets(QSqlDatabase &db, qint64 sourceRootId, const QList<AssetType> &assetTypes, QString *errorMessage) const
+QVector<AssetFile> MediaTaskService::fetchAssets(QSqlDatabase &db,
+                                                 qint64 sourceRootId,
+                                                 const QList<AssetType> &assetTypes,
+                                                 PendingWork pendingWork,
+                                                 QString *errorMessage) const
 {
     QVector<AssetFile> assets;
     if (assetTypes.isEmpty()) {
@@ -173,10 +190,19 @@ QVector<AssetFile> MediaTaskService::fetchAssets(QSqlDatabase &db, qint64 source
         placeholders.append(QStringLiteral("?"));
     }
 
+    const auto join = pendingWork == PendingWork::Metadata
+        ? QStringLiteral("LEFT JOIN media_metadata pending ON pending.asset_id = af.id ")
+        : QStringLiteral("LEFT JOIN thumbnail pending ON pending.asset_id = af.id ");
+    const auto pendingPredicate = pendingWork == PendingWork::Metadata
+        ? QStringLiteral("AND pending.asset_id IS NULL ")
+        : QStringLiteral("AND (pending.asset_id IS NULL OR pending.status <> %1 OR COALESCE(pending.image_path, '') = '') ")
+              .arg(static_cast<int>(ThumbnailStatus::Success));
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT id, source_root_id, name, extension, absolute_path, relative_path, parent_path, asset_type, size_bytes, modified_at, is_readable "
-        "FROM asset_file WHERE source_root_id = ? AND asset_type IN (%1) ORDER BY id").arg(placeholders.join(QStringLiteral(","))));
+        "SELECT af.id, af.source_root_id, af.name, af.extension, af.absolute_path, af.relative_path, af.parent_path, "
+        "af.asset_type, af.size_bytes, af.modified_at, af.is_readable FROM asset_file af %1"
+        "WHERE af.source_root_id = ? AND af.is_readable = 1 AND af.asset_type IN (%2) %3ORDER BY af.id")
+                      .arg(join, placeholders.join(QStringLiteral(",")), pendingPredicate));
     query.addBindValue(sourceRootId);
     for (const auto assetType : assetTypes) {
         query.addBindValue(static_cast<int>(assetType));
@@ -213,11 +239,14 @@ void MediaTaskService::runMediaJobs(qint64 sourceRootId,
                                     qint64 metadataJobId,
                                     qint64 thumbnailJobId)
 {
+    const ScopedBackgroundThreadPriority backgroundPriority;
     Q_UNUSED(sourceName);
 
     const auto connectionName = QStringLiteral("media_%1_%2").arg(sourceRootId).arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
     QString errorMessage;
-    auto db = m_databaseManager->openThreadConnection(connectionName, &errorMessage);
+    auto db = m_databaseManager->openThreadConnectionForPath(projectDatabasePath,
+                                                              connectionName,
+                                                              &errorMessage);
     if (!db.isOpen()) {
         if (metadataJobId > 0) {
             failJob(metadataJobId, errorMessage);
@@ -230,7 +259,11 @@ void MediaTaskService::runMediaJobs(qint64 sourceRootId,
 
     if (metadataJobId > 0) {
         QString fetchError;
-        const auto assets = fetchAssets(db, sourceRootId, {AssetType::Video, AssetType::Audio, AssetType::Image}, &fetchError);
+        const auto assets = fetchAssets(db,
+                                       sourceRootId,
+                                       {AssetType::Video, AssetType::Audio, AssetType::Image},
+                                       PendingWork::Metadata,
+                                       &fetchError);
         if (!fetchError.isEmpty()) {
             failJob(metadataJobId, fetchError);
         } else {
@@ -241,7 +274,11 @@ void MediaTaskService::runMediaJobs(qint64 sourceRootId,
 
     if (thumbnailJobId > 0) {
         QString fetchError;
-        const auto assets = fetchAssets(db, sourceRootId, {AssetType::Video, AssetType::Image}, &fetchError);
+        const auto assets = fetchAssets(db,
+                                       sourceRootId,
+                                       {AssetType::Video, AssetType::Image},
+                                       PendingWork::Thumbnail,
+                                       &fetchError);
         if (!fetchError.isEmpty()) {
             failJob(thumbnailJobId, fetchError);
         } else {
@@ -409,13 +446,16 @@ void MediaTaskService::runStaleThumbnailRecovery(qint64 sourceRootId,
                                                  const QString &projectDatabasePath,
                                                  qint64 thumbnailJobId)
 {
+    const ScopedBackgroundThreadPriority backgroundPriority;
     Q_UNUSED(sourceName);
 
     const auto connectionName = QStringLiteral("thumbnail_recovery_%1_%2")
                                     .arg(sourceRootId)
                                     .arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
     QString errorMessage;
-    auto db = m_databaseManager->openThreadConnection(connectionName, &errorMessage);
+    auto db = m_databaseManager->openThreadConnectionForPath(projectDatabasePath,
+                                                              connectionName,
+                                                              &errorMessage);
     if (!db.isOpen()) {
         failJob(thumbnailJobId, errorMessage);
         return;

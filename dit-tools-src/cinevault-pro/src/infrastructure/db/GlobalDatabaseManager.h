@@ -11,6 +11,8 @@ class GlobalDatabaseManager : public QObject {
 public:
     explicit GlobalDatabaseManager(QObject *parent = nullptr);
 
+    static constexpr int CurrentSchemaVersion = 13;
+
     bool openDatabase(QString *errorMessage);
     void closeDatabase();
     bool isOpen() const;
@@ -34,6 +36,8 @@ private:
     bool migrateToVersion9(QSqlDatabase &db, QString *errorMessage);
     bool migrateToVersion10(QSqlDatabase &db, QString *errorMessage);
     bool migrateToVersion11(QSqlDatabase &db, QString *errorMessage);
+    bool migrateToVersion12(QSqlDatabase &db, QString *errorMessage);
+    bool migrateToVersion13(QSqlDatabase &db, QString *errorMessage);
     bool ensureFolderSchemaCompatibility(QSqlDatabase &db, QString *errorMessage);
     bool ensureVisualAnalysisSchemaCompatibility(QSqlDatabase &db, QString *errorMessage);
     bool ensureSemanticSearchSchemaCompatibility(QSqlDatabase &db, QString *errorMessage);

@@ -270,6 +270,66 @@ QVector<int> parsedAssetTypes(const ParsedMaterialQuery &parsed)
         : QVector<int>{};
 }
 
+void applyResultQuickFilter(ParsedMaterialQuery *parsed,
+                            SearchResultQuickFilter quickFilter)
+{
+    if (!parsed || quickFilter == SearchResultQuickFilter::Smart) {
+        return;
+    }
+
+    parsed->interpretationLabels.erase(
+        std::remove_if(parsed->interpretationLabels.begin(),
+                       parsed->interpretationLabels.end(),
+                       [](const QString &label) {
+            return label.startsWith(QStringLiteral("目标："))
+                || label.startsWith(QStringLiteral("类型："))
+                || label.startsWith(QStringLiteral("快捷筛选："));
+        }),
+        parsed->interpretationLabels.end());
+    parsed->folderIntent = false;
+    parsed->folderByAssetCriteria = false;
+
+    switch (quickFilter) {
+    case SearchResultQuickFilter::Video:
+        parsed->resultTarget = SearchResultTarget::Assets;
+        parsed->frameIntent = false;
+        parsed->assetTypeFilters = {static_cast<int>(AssetType::Video)};
+        parsed->assetTypeFilter = static_cast<int>(AssetType::Video);
+        parsed->interpretationLabels.append(QStringLiteral("快捷筛选：视频"));
+        parsed->interpretationLabels.append(QStringLiteral("目标：素材"));
+        parsed->interpretationLabels.append(QStringLiteral("类型：视频"));
+        break;
+    case SearchResultQuickFilter::Frames:
+        parsed->resultTarget = SearchResultTarget::Frames;
+        parsed->frameIntent = true;
+        parsed->assetTypeFilters.clear();
+        parsed->assetTypeFilter = -1;
+        parsed->interpretationLabels.append(QStringLiteral("快捷筛选：帧画面"));
+        parsed->interpretationLabels.append(QStringLiteral("目标：视觉帧"));
+        break;
+    case SearchResultQuickFilter::Image:
+        parsed->resultTarget = SearchResultTarget::Assets;
+        parsed->frameIntent = false;
+        parsed->assetTypeFilters = {static_cast<int>(AssetType::Image)};
+        parsed->assetTypeFilter = static_cast<int>(AssetType::Image);
+        parsed->interpretationLabels.append(QStringLiteral("快捷筛选：图片"));
+        parsed->interpretationLabels.append(QStringLiteral("目标：素材"));
+        parsed->interpretationLabels.append(QStringLiteral("类型：图片"));
+        break;
+    case SearchResultQuickFilter::Document:
+        parsed->resultTarget = SearchResultTarget::Assets;
+        parsed->frameIntent = false;
+        parsed->assetTypeFilters = {static_cast<int>(AssetType::Document)};
+        parsed->assetTypeFilter = static_cast<int>(AssetType::Document);
+        parsed->interpretationLabels.append(QStringLiteral("快捷筛选：文档"));
+        parsed->interpretationLabels.append(QStringLiteral("目标：素材"));
+        parsed->interpretationLabels.append(QStringLiteral("类型：文档"));
+        break;
+    case SearchResultQuickFilter::Smart:
+        break;
+    }
+}
+
 void appendAssetTypeConstraint(QString *sql,
                                QVariantList *binds,
                                const QString &alias,
@@ -444,6 +504,7 @@ void appendAssetLexicalPredicate(QString *sql,
     const QStringList directExpressions{
         QStringLiteral("COALESCE(r.search_text, '')"),
         QStringLiteral("COALESCE(g.source_text, '')"),
+        QStringLiteral("COALESCE(g.embedded_metadata_text, '')"),
         QStringLiteral("COALESCE(g.technical_summary, '')"),
         QStringLiteral("g.file_name"),
         QStringLiteral("g.absolute_path"),
@@ -571,6 +632,7 @@ void appendFolderAssetLexicalPredicate(QString *sql,
         const QStringList predicates{
             QStringLiteral("COALESCE(gr.search_text, '') LIKE ? ESCAPE '\\'"),
             QStringLiteral("COALESCE(ga.source_text, '') LIKE ? ESCAPE '\\'"),
+            QStringLiteral("COALESCE(ga.embedded_metadata_text, '') LIKE ? ESCAPE '\\'"),
             QStringLiteral("COALESCE(ga.technical_summary, '') LIKE ? ESCAPE '\\'"),
             QStringLiteral("ga.file_name LIKE ? ESCAPE '\\'"),
             QStringLiteral("ga.absolute_path LIKE ? ESCAPE '\\'"),
@@ -586,7 +648,7 @@ void appendFolderAssetLexicalPredicate(QString *sql,
                            "COALESCE(gvfa.ocr_text, '') LIKE ? ESCAPE '\\'))")
         };
         termPredicates.append(QStringLiteral("(%1)").arg(predicates.join(QStringLiteral(" OR "))));
-        for (int index = 0; index < 13; ++index) {
+        for (int index = 0; index < 14; ++index) {
             predicateBinds.append(pattern);
         }
     }
@@ -663,6 +725,7 @@ HybridSearchResult SearchEngine::searchMaterials(const QString &queryText,
         result.parsedQuery = SearchQueryUnderstanding::merge(result.parsedQuery,
                                                              *modelUnderstanding);
     }
+    applyResultQuickFilter(&result.parsedQuery, scope.resultQuickFilter);
     if (!m_globalDatabaseManager || !m_globalDatabaseManager->isOpen()) {
         result.warningMessage = QStringLiteral("全局素材数据库尚未打开");
         return result;

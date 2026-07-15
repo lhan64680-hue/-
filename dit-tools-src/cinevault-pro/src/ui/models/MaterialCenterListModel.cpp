@@ -115,9 +115,6 @@ QVariant MaterialCenterListModel::data(const QModelIndex &index, int role) const
     case SummaryRole: return item.summary;
     case KeywordsRole: return item.keywords.join(QStringLiteral("、"));
     case AnalysisStatusLabelRole: return Formatters::videoAnalysisStatusLabel(item.analysisStatus, item.confirmationStatus);
-    case ConfirmationStatusRole: return static_cast<int>(item.confirmationStatus);
-    case ConfirmationStatusLabelRole: return Formatters::confirmationStatusLabel(item.confirmationStatus);
-    case IsConfirmedRole: return item.confirmationStatus == ConfirmationStatus::Confirmed;
     case ThumbnailPathRole: return item.thumbnailPath;
     case ThumbnailStatusRole: return static_cast<int>(item.thumbnailStatus);
     case ThumbnailLoadingRole: return item.thumbnailStatus == ThumbnailStatus::Running && item.thumbnailPath.isEmpty();
@@ -133,8 +130,6 @@ QVariant MaterialCenterListModel::data(const QModelIndex &index, int role) const
     case MatchedFrameCaptionRole: return item.matchedFrameCaption;
     case ErrorMessageRole: return item.errorMessage;
     case CanAnalyzeRole: return canAnalyzeAsset(item);
-    case CanConfirmRole: return item.analysisStatus == VideoAnalysisStatus::Ready
-            && item.confirmationStatus != ConfirmationStatus::Confirmed;
     case ResultRankRole: return index.row() + 1;
     case QuickPreviewPathRole: return quickPreviewPath(item);
     case QuickDetailRole: return quickDetail(item);
@@ -159,9 +154,6 @@ QHash<int, QByteArray> MaterialCenterListModel::roleNames() const
         {SummaryRole, "summary"},
         {KeywordsRole, "keywords"},
         {AnalysisStatusLabelRole, "analysisStatusLabel"},
-        {ConfirmationStatusRole, "confirmationStatus"},
-        {ConfirmationStatusLabelRole, "confirmationStatusLabel"},
-        {IsConfirmedRole, "isConfirmed"},
         {ThumbnailPathRole, "thumbnailPath"},
         {ThumbnailStatusRole, "thumbnailStatus"},
         {ThumbnailLoadingRole, "thumbnailLoading"},
@@ -177,7 +169,6 @@ QHash<int, QByteArray> MaterialCenterListModel::roleNames() const
         {MatchedFrameCaptionRole, "matchedFrameCaption"},
         {ErrorMessageRole, "errorMessage"},
         {CanAnalyzeRole, "canAnalyze"},
-        {CanConfirmRole, "canConfirm"},
         {ResultRankRole, "resultRank"},
         {QuickPreviewPathRole, "quickPreviewPath"},
         {QuickDetailRole, "quickDetail"},

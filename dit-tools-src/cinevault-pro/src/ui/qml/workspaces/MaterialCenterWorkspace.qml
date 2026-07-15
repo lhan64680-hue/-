@@ -13,6 +13,8 @@ Rectangle {
     property real imageViewerOffsetX: 0
     property real imageViewerOffsetY: 0
     property string dimensionDialogMessage: ""
+    property bool quickSearchRevealActive: false
+    property int handledQuickSearchRevealRevision: -1
 
     function imageFileSource(path) {
         return path && path.length > 0 && localImageUrlHelper
@@ -111,6 +113,31 @@ Rectangle {
         return selectedDimensionDrafts().length > 0
     }
 
+    function revealQuickSearchResult() {
+        if (!viewModel) {
+            return
+        }
+        if (viewModel.quickSearchRevealVideoKey.length === 0) {
+            quickSearchRevealActive = false
+            return
+        }
+        var targetIndex = viewModel.quickSearchRevealIndex
+        if (targetIndex < 0) {
+            return
+        }
+        if (viewModel.quickSearchRevealRevision !== handledQuickSearchRevealRevision) {
+            handledQuickSearchRevealRevision = viewModel.quickSearchRevealRevision
+            quickSearchRevealActive = true
+            quickSearchRevealTimer.restart()
+        }
+        if (viewModel.frameSearchMode) {
+            frameResultGrid.currentIndex = targetIndex
+            frameResultGrid.positionViewAtIndex(targetIndex, GridView.Center)
+        } else {
+            resultList.positionViewAtIndex(targetIndex, ListView.Center)
+        }
+    }
+
     ListModel {
         id: dimensionDraftModel
     }
@@ -131,7 +158,31 @@ Rectangle {
         }
     }
 
-    Component.onCompleted: if (viewModel) viewModel.reload()
+    Component.onCompleted: {
+        if (viewModel) {
+            viewModel.reload()
+        }
+        Qt.callLater(root.revealQuickSearchResult)
+    }
+    onVisibleChanged: if (visible) Qt.callLater(root.revealQuickSearchResult)
+
+    Connections {
+        target: root.viewModel
+        function onQuickSearchRevealChanged() {
+            Qt.callLater(root.revealQuickSearchResult)
+        }
+        function onSearchStateChanged() {
+            if (root.quickSearchRevealActive) {
+                Qt.callLater(root.revealQuickSearchResult)
+            }
+        }
+    }
+
+    Timer {
+        id: quickSearchRevealTimer
+        interval: 3200
+        onTriggered: root.quickSearchRevealActive = false
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -215,13 +266,6 @@ Rectangle {
                         onClicked: if (viewModel) viewModel.rebuildGlobalIndex()
                     }
 
-                    ActionButton {
-                        Layout.preferredWidth: 88
-                        Layout.preferredHeight: 36
-                        text: "全部确认"
-                        enabled: viewModel && viewModel.canConfirmVisible
-                        onClicked: if (viewModel) viewModel.confirmVisible()
-                    }
                 }
 
                 RowLayout {
@@ -284,13 +328,6 @@ Rectangle {
                         onActivated: if (viewModel) viewModel.setAnalysisStatusFilter(model[index].value)
                     }
 
-                    ThemedComboBox {
-                        Layout.preferredWidth: 140
-                        model: viewModel ? viewModel.confirmationStatusOptions : []
-                        textRole: "label"
-                        currentIndex: viewModel ? root.optionIndex(viewModel.confirmationStatusOptions, viewModel.confirmationStatusFilter) : 0
-                        onActivated: if (viewModel) viewModel.setConfirmationStatusFilter(model[index].value)
-                    }
                 }
             }
         }
@@ -421,6 +458,79 @@ Rectangle {
 
                     RowLayout {
                         Layout.fillWidth: true
+                        spacing: 8
+
+                        Text {
+                            text: "搜索命中"
+                            color: Theme.text
+                            font.pixelSize: 16
+                            font.weight: Font.DemiBold
+                        }
+
+                        Text {
+                            text: viewModel
+                                ? "· " + (viewModel.folderCount + viewModel.assetCount + viewModel.frameCount)
+                                : ""
+                            color: Theme.muted
+                            font.pixelSize: 12
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        ActionButton {
+                            objectName: "searchResultFilterSmart"
+                            Layout.preferredWidth: 68
+                            Layout.preferredHeight: 32
+                            text: "智能"
+                            primary: viewModel && viewModel.searchResultFilter === 0
+                            onClicked: if (viewModel) viewModel.setSearchResultFilter(0)
+                        }
+
+                        ActionButton {
+                            objectName: "searchResultFilterVideo"
+                            Layout.preferredWidth: 68
+                            Layout.preferredHeight: 32
+                            text: "视频"
+                            primary: viewModel && viewModel.searchResultFilter === 1
+                            onClicked: if (viewModel) viewModel.setSearchResultFilter(1)
+                        }
+
+                        ActionButton {
+                            objectName: "searchResultFilterFrames"
+                            Layout.preferredWidth: 78
+                            Layout.preferredHeight: 32
+                            text: "帧画面"
+                            primary: viewModel && viewModel.searchResultFilter === 2
+                            onClicked: if (viewModel) viewModel.setSearchResultFilter(2)
+                        }
+
+                        ActionButton {
+                            objectName: "searchResultFilterImage"
+                            Layout.preferredWidth: 68
+                            Layout.preferredHeight: 32
+                            text: "图片"
+                            primary: viewModel && viewModel.searchResultFilter === 3
+                            onClicked: if (viewModel) viewModel.setSearchResultFilter(3)
+                        }
+
+                        ActionButton {
+                            objectName: "searchResultFilterDocument"
+                            Layout.preferredWidth: 68
+                            Layout.preferredHeight: 32
+                            text: "文档"
+                            primary: viewModel && viewModel.searchResultFilter === 4
+                            onClicked: if (viewModel) viewModel.setSearchResultFilter(4)
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: Theme.line
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
                         visible: viewModel && viewModel.frameSearchMode
 
                         Text {
@@ -458,17 +568,28 @@ Rectangle {
                         cellHeight: 310
                         model: viewModel ? viewModel.frameModel : null
 
+                        MiddleDragScrollHandler {
+                            flickable: frameResultGrid
+                        }
+
                         ScrollBar.vertical: ThemedScrollBar {
                             policy: ScrollBar.AsNeeded
                         }
 
                         delegate: Rectangle {
+                            id: frameResultCard
+                            readonly property bool quickSearchReveal: root.quickSearchRevealActive
+                                && viewModel
+                                && viewModel.quickSearchRevealVideoKey === videoKey
+                                && (viewModel.quickSearchRevealFrameNumber < 0
+                                    || viewModel.quickSearchRevealFrameNumber === frameNumber)
+
                             width: frameResultGrid.cardWidth - 10
                             height: 298
                             radius: 18
-                            color: Theme.bg
-                            border.width: 1
-                            border.color: Theme.line
+                            color: quickSearchReveal ? Qt.rgba(0.20, 0.48, 0.95, 0.18) : Theme.bg
+                            border.width: quickSearchReveal ? 3 : 1
+                            border.color: quickSearchReveal ? Theme.blue : Theme.line
 
                             RowLayout {
                                 anchors.fill: parent
@@ -490,6 +611,27 @@ Rectangle {
                                         asynchronous: true
                                         cache: true
                                         source: root.imageFileSource(imagePath)
+                                    }
+
+                                    Rectangle {
+                                        anchors.left: parent.left
+                                        anchors.top: parent.top
+                                        anchors.margins: 8
+                                        width: frameRankText.implicitWidth + 16
+                                        height: 26
+                                        radius: 13
+                                        color: Qt.rgba(0.02, 0.03, 0.05, 0.82)
+                                        border.width: 1
+                                        border.color: Qt.rgba(1, 1, 1, 0.24)
+
+                                        Text {
+                                            id: frameRankText
+                                            anchors.centerIn: parent
+                                            text: "#" + resultRank
+                                            color: "white"
+                                            font.pixelSize: 12
+                                            font.weight: Font.Bold
+                                        }
                                     }
 
                                     Text {
@@ -637,6 +779,50 @@ Rectangle {
                                     }
                                 }
                             }
+
+                            Rectangle {
+                                id: frameRevealRing
+                                anchors.fill: parent
+                                anchors.margins: 5
+                                radius: parent.radius - 4
+                                color: "transparent"
+                                border.width: 2
+                                border.color: Theme.blue
+                                visible: frameResultCard.quickSearchReveal
+                                z: 20
+
+                                SequentialAnimation on opacity {
+                                    running: frameRevealRing.visible
+                                    loops: Animation.Infinite
+                                    NumberAnimation { from: 1.0; to: 0.28; duration: 480; easing.type: Easing.InOutQuad }
+                                    NumberAnimation { from: 0.28; to: 1.0; duration: 480; easing.type: Easing.InOutQuad }
+                                }
+                            }
+
+                            ThemedMenu {
+                                id: frameContextMenu
+
+                                ThemedMenuItem {
+                                    text: "打开所在目录"
+                                    onTriggered: if (viewModel) viewModel.openAssetFolder(videoKey)
+                                }
+                                ThemedMenuItem {
+                                    text: "复制文件路径"
+                                    onTriggered: if (viewModel) viewModel.copyAssetPath(videoKey)
+                                }
+                            }
+
+                            MouseArea {
+                                id: frameContextArea
+                                anchors.fill: parent
+                                acceptedButtons: Qt.RightButton
+                                onClicked: function(mouse) {
+                                    if (viewModel) {
+                                        viewModel.selectVideo(videoKey)
+                                    }
+                                    frameContextMenu.popup(frameContextArea, mouse.x, mouse.y)
+                                }
+                            }
                         }
                     }
 
@@ -677,11 +863,17 @@ Rectangle {
                         cacheBuffer: 360
                         model: viewModel ? viewModel.folderModel : null
 
+                        MiddleDragScrollHandler {
+                            flickable: folderResultList
+                        }
+
                         ScrollBar.vertical: ThemedScrollBar {
                             policy: ScrollBar.AsNeeded
                         }
 
                         delegate: Rectangle {
+                            id: folderResultCard
+
                             width: ListView.view.width
                             height: reasons.length > 0 ? 100 : 82
                             radius: 16
@@ -785,6 +977,29 @@ Rectangle {
                                     onClicked: if (viewModel) viewModel.locateFolder(folderKey)
                                 }
                             }
+
+                            ThemedMenu {
+                                id: folderContextMenu
+
+                                ThemedMenuItem {
+                                    text: "打开所在目录"
+                                    enabled: available
+                                    onTriggered: if (viewModel) viewModel.locateFolder(folderKey)
+                                }
+                                ThemedMenuItem {
+                                    text: "复制文件路径"
+                                    onTriggered: if (viewModel) viewModel.copyFolderPath(folderKey)
+                                }
+                            }
+
+                            MouseArea {
+                                id: folderContextArea
+                                anchors.fill: parent
+                                acceptedButtons: Qt.RightButton
+                                onClicked: function(mouse) {
+                                    folderContextMenu.popup(folderContextArea, mouse.x, mouse.y)
+                                }
+                            }
                         }
                     }
 
@@ -834,6 +1049,10 @@ Rectangle {
                         model: viewModel ? viewModel.assetModel : null
                         currentIndex: viewModel ? viewModel.selectedVideoIndex : -1
 
+                    MiddleDragScrollHandler {
+                        flickable: resultList
+                    }
+
                     ScrollBar.vertical: ThemedScrollBar {
                         policy: ScrollBar.AsNeeded
                     }
@@ -843,16 +1062,25 @@ Rectangle {
                     }
 
                     delegate: Rectangle {
+                        id: assetResultCard
+                        readonly property bool quickSearchReveal: root.quickSearchRevealActive
+                            && viewModel
+                            && viewModel.quickSearchRevealVideoKey === videoKey
+
                         width: ListView.view.width
                         height: 118 + (searchReasons.length > 0 ? 20 : 0) + (errorMessage.length > 0 ? 20 : 0)
                         radius: 18
-                        color: viewModel && viewModel.selectedAssetKey === assetKey ? Theme.selectedBg : Theme.bg
-                        border.width: 1
-                        border.color: viewModel && viewModel.selectedAssetKey === assetKey ? Theme.blue : Theme.line
+                        color: quickSearchReveal
+                            ? Qt.rgba(0.20, 0.48, 0.95, 0.18)
+                            : (viewModel && viewModel.selectedAssetKey === assetKey ? Theme.selectedBg : Theme.bg)
+                        border.width: quickSearchReveal ? 3 : 1
+                        border.color: quickSearchReveal
+                            ? Theme.blue
+                            : (viewModel && viewModel.selectedAssetKey === assetKey ? Theme.blue : Theme.line)
 
                         MouseArea {
                             anchors.fill: parent
-                            anchors.rightMargin: 112
+                            anchors.rightMargin: 0
                             onClicked: {
                                 root.forceActiveFocus()
                                 if (viewModel) {
@@ -883,6 +1111,27 @@ Rectangle {
                                     source: root.imageFileSource(thumbnailPath)
                                     sourceSize.width: Math.max(1, Math.round(width))
                                     sourceSize.height: Math.max(1, Math.round(height))
+                                }
+
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.top: parent.top
+                                    anchors.margins: 8
+                                    width: assetRankText.implicitWidth + 16
+                                    height: 26
+                                    radius: 13
+                                    color: Qt.rgba(0.02, 0.03, 0.05, 0.82)
+                                    border.width: 1
+                                    border.color: Qt.rgba(1, 1, 1, 0.24)
+
+                                    Text {
+                                        id: assetRankText
+                                        anchors.centerIn: parent
+                                        text: "#" + resultRank
+                                        color: "white"
+                                        font.pixelSize: 12
+                                        font.weight: Font.Bold
+                                    }
                                 }
 
                                 Text {
@@ -998,32 +1247,51 @@ Rectangle {
                                         font.pixelSize: 12
                                     }
 
-                                    Text {
-                                        text: confirmationStatusLabel
-                                        color: Theme.muted
-                                        font.pixelSize: 12
-                                    }
                                 }
                             }
+                        }
 
-                            ColumnLayout {
-                                Layout.preferredWidth: 88
-                                Layout.fillHeight: true
-                                spacing: 6
+                        Rectangle {
+                            id: assetRevealRing
+                            anchors.fill: parent
+                            anchors.margins: 5
+                            radius: parent.radius - 4
+                            color: "transparent"
+                            border.width: 2
+                            border.color: Theme.blue
+                            visible: assetResultCard.quickSearchReveal
+                            z: 20
 
-                                Item { Layout.fillHeight: true }
+                            SequentialAnimation on opacity {
+                                running: assetRevealRing.visible
+                                loops: Animation.Infinite
+                                NumberAnimation { from: 1.0; to: 0.28; duration: 480; easing.type: Easing.InOutQuad }
+                                NumberAnimation { from: 0.28; to: 1.0; duration: 480; easing.type: Easing.InOutQuad }
+                            }
+                        }
 
-                                ActionButton {
-                                    Layout.preferredWidth: 82
-                                    Layout.preferredHeight: 32
-                                    visible: isConfirmed || canConfirm
-                                    text: isConfirmed ? "已确认" : "确认"
-                                    primary: canConfirm
-                                    enabled: viewModel && canConfirm
-                                    onClicked: if (viewModel) viewModel.confirmVideo(assetKey)
+                        ThemedMenu {
+                            id: assetContextMenu
+
+                            ThemedMenuItem {
+                                text: "打开所在目录"
+                                onTriggered: if (viewModel) viewModel.openAssetFolder(videoKey)
+                            }
+                            ThemedMenuItem {
+                                text: "复制文件路径"
+                                onTriggered: if (viewModel) viewModel.copyAssetPath(videoKey)
+                            }
+                        }
+
+                        MouseArea {
+                            id: assetContextArea
+                            anchors.fill: parent
+                            acceptedButtons: Qt.RightButton
+                            onClicked: function(mouse) {
+                                if (viewModel) {
+                                    viewModel.selectVideo(videoKey)
                                 }
-
-                                Item { Layout.fillHeight: true }
+                                assetContextMenu.popup(assetContextArea, mouse.x, mouse.y)
                             }
                         }
 
@@ -1055,6 +1323,11 @@ Rectangle {
                     anchors.fill: parent
                     anchors.margins: 14
                     clip: true
+
+                    MiddleDragScrollHandler {
+                        parent: detailScroll.contentItem
+                        flickable: detailScroll.contentItem
+                    }
 
                     ColumnLayout {
                         width: detailScroll.availableWidth
@@ -1143,13 +1416,6 @@ Rectangle {
                                 onClicked: if (viewModel) viewModel.analyzeSelected()
                             }
 
-                            ActionButton {
-                                Layout.preferredWidth: 98
-                                Layout.preferredHeight: 34
-                                text: viewModel && viewModel.selectedConfirmationStatusLabel === "已确认" ? "已确认" : "确认结果"
-                                enabled: viewModel && viewModel.canConfirmSelected
-                                onClicked: if (viewModel) viewModel.confirmSelected()
-                            }
                         }
 
                         RowLayout {
@@ -1341,14 +1607,6 @@ Rectangle {
                                     elide: Text.ElideRight
                                 }
 
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: "确认状态：" + (viewModel ? viewModel.selectedConfirmationStatusLabel : "")
-                                    color: Theme.muted
-                                    wrapMode: Text.WrapAnywhere
-                                    maximumLineCount: 2
-                                    elide: Text.ElideRight
-                                }
                             }
                         }
 
@@ -1771,6 +2029,11 @@ Rectangle {
             contentWidth: availableWidth
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
+            MiddleDragScrollHandler {
+                parent: batchAnalyzeScroll.contentItem
+                flickable: batchAnalyzeScroll.contentItem
+            }
+
             ColumnLayout {
                 width: batchAnalyzeScroll.availableWidth
                 spacing: 14
@@ -1961,6 +2224,11 @@ Rectangle {
                     anchors.fill: parent
                     anchors.margins: 10
                     clip: true
+
+                    MiddleDragScrollHandler {
+                        parent: dimensionDraftScroll.contentItem
+                        flickable: dimensionDraftScroll.contentItem
+                    }
 
                     ColumnLayout {
                         width: dimensionDraftScroll.availableWidth

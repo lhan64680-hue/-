@@ -1,5 +1,6 @@
 #include "infrastructure/db/GlobalDatabaseManager.h"
 
+#include "domain/Enums.h"
 #include "infrastructure/db/DatabaseMigration.h"
 #include "shared/Paths.h"
 
@@ -279,6 +280,10 @@ QSqlDatabase GlobalDatabaseManager::openThreadConnection(const QString &connecti
         if (errorMessage) {
             *errorMessage = db.lastError().text();
         }
+        return db;
+    }
+    if (!DatabaseMigration::configureSqlite(db, errorMessage)) {
+        db.close();
     }
     return db;
 }
@@ -473,8 +478,11 @@ bool GlobalDatabaseManager::removeProjectReference(const QString &projectUuid, c
 bool GlobalDatabaseManager::initializeSchema(QSqlDatabase &db, bool databaseExistedBeforeOpen, QString *errorMessage)
 {
     auto version = currentSchemaVersion(db);
-    if (version < 11
-        && !DatabaseMigration::createUpgradeBackup(db, 11, databaseExistedBeforeOpen, errorMessage)) {
+    if (version < CurrentSchemaVersion
+        && !DatabaseMigration::createUpgradeBackup(db,
+                                                    CurrentSchemaVersion,
+                                                    databaseExistedBeforeOpen,
+                                                    errorMessage)) {
         return false;
     }
     if (!DatabaseMigration::configureSqlite(db, errorMessage)) {
@@ -570,6 +578,18 @@ bool GlobalDatabaseManager::initializeSchema(QSqlDatabase &db, bool databaseExis
     } else if (!ensureCaptureTimeSchemaCompatibility(db, errorMessage)) {
         return rollback();
     }
+    if (version < 12) {
+        if (!migrateToVersion12(db, errorMessage)) {
+            return rollback();
+        }
+        version = 12;
+    }
+    if (version < 13) {
+        if (!migrateToVersion13(db, errorMessage)) {
+            return rollback();
+        }
+        version = 13;
+    }
 
     if (!db.commit()) {
         if (errorMessage) {
@@ -620,6 +640,7 @@ bool GlobalDatabaseManager::createSchema(QSqlDatabase &db, QString *errorMessage
                        "analysis_status INTEGER NOT NULL DEFAULT 0,"
                        "confirmation_status INTEGER NOT NULL DEFAULT 0,"
                        "technical_summary TEXT NOT NULL DEFAULT '',"
+                       "embedded_metadata_text TEXT NOT NULL DEFAULT '',"
                        "source_text TEXT NOT NULL DEFAULT '',"
                        "error_message TEXT,"
                        "last_synced_at TEXT NOT NULL DEFAULT '',"
@@ -819,6 +840,7 @@ bool GlobalDatabaseManager::ensureSchemaCompatibility(QSqlDatabase &db, QString 
                            {QStringLiteral("asset_type"), QStringLiteral("asset_type INTEGER NOT NULL DEFAULT 1")},
                            {QStringLiteral("thumbnail_status"), QStringLiteral("thumbnail_status INTEGER NOT NULL DEFAULT 0")},
                            {QStringLiteral("technical_summary"), QStringLiteral("technical_summary TEXT NOT NULL DEFAULT ''")},
+                           {QStringLiteral("embedded_metadata_text"), QStringLiteral("embedded_metadata_text TEXT NOT NULL DEFAULT ''")},
                            {QStringLiteral("source_text"), QStringLiteral("source_text TEXT NOT NULL DEFAULT ''")},
                            {QStringLiteral("capture_time"), QStringLiteral("capture_time TEXT NOT NULL DEFAULT ''")},
                            {QStringLiteral("capture_date"), QStringLiteral("capture_date TEXT NOT NULL DEFAULT ''")},
@@ -920,6 +942,65 @@ bool GlobalDatabaseManager::migrateToVersion11(QSqlDatabase &db, QString *errorM
         return false;
     }
     return setSchemaVersion(db, 11, errorMessage);
+}
+
+bool GlobalDatabaseManager::migrateToVersion12(QSqlDatabase &db, QString *errorMessage)
+{
+    const auto confirmed = static_cast<int>(ConfirmationStatus::Confirmed);
+    const auto ready = static_cast<int>(VideoAnalysisStatus::Ready);
+
+    QSqlQuery assets(db);
+    assets.prepare(QStringLiteral(
+        "UPDATE global_video_asset SET confirmation_status = ?, updated_at = ? "
+        "WHERE analysis_status = ? AND confirmation_status <> ?"));
+    assets.addBindValue(confirmed);
+    assets.addBindValue(QDateTime::currentDateTime().toString(Qt::ISODate));
+    assets.addBindValue(ready);
+    assets.addBindValue(confirmed);
+    if (!assets.exec()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("迁移历史解析结果为自动生效失败：%1")
+                                .arg(assets.lastError().text());
+        }
+        return false;
+    }
+
+    QSqlQuery results(db);
+    results.prepare(QStringLiteral(
+        "UPDATE video_analysis_result SET confirmed_at = COALESCE(NULLIF(confirmed_at, ''), analyzed_at) "
+        "WHERE video_key IN (SELECT video_key FROM global_video_asset WHERE analysis_status = ?)"));
+    results.addBindValue(ready);
+    if (!results.exec()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("回填历史解析生效时间失败：%1")
+                                .arg(results.lastError().text());
+        }
+        return false;
+    }
+    return setSchemaVersion(db, 12, errorMessage);
+}
+
+bool GlobalDatabaseManager::migrateToVersion13(QSqlDatabase &db, QString *errorMessage)
+{
+    if (!ensureColumns(db,
+                       QStringLiteral("global_video_asset"),
+                       {{QStringLiteral("embedded_metadata_text"),
+                         QStringLiteral("embedded_metadata_text TEXT NOT NULL DEFAULT ''")}},
+                       errorMessage)) {
+        return false;
+    }
+
+    QSqlQuery invalidate(db);
+    if (!invalidate.exec(QStringLiteral(
+            "UPDATE search_index_state SET status = 'dirty', last_error = '', updated_at = '' "
+            "WHERE singleton = 1"))) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("标记真实元数据搜索索引待重建失败：%1")
+                                .arg(invalidate.lastError().text());
+        }
+        return false;
+    }
+    return setSchemaVersion(db, 13, errorMessage);
 }
 
 bool GlobalDatabaseManager::ensureCaptureTimeSchemaCompatibility(QSqlDatabase &db,

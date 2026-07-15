@@ -5,6 +5,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontDatabase>
+#include <QGuiApplication>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QTemporaryDir>
 
 namespace {
@@ -77,11 +81,40 @@ private slots:
         QCOMPARE(text.size(), 64000);
     }
 
+    void extractTextForSummary_readsSearchablePdf()
+    {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        const auto path = QDir(tempDir.path()).filePath(QStringLiteral("brief.pdf"));
+        {
+            const auto fontId = QFontDatabase::addApplicationFont(QStringLiteral("C:/Windows/Fonts/msyh.ttc"));
+            QVERIFY(fontId >= 0);
+            const auto families = QFontDatabase::applicationFontFamilies(fontId);
+            QVERIFY(!families.isEmpty());
+            QPdfWriter writer(path);
+            writer.setResolution(96);
+            QPainter painter(&writer);
+            QVERIFY(painter.isActive());
+            painter.setFont(QFont(families.first(), 16));
+            painter.drawText(QRectF(80, 80, 1600, 400),
+                             Qt::AlignLeft | Qt::TextWordWrap,
+                             QStringLiteral("自动摘要 PDF 正文：雪山广告拍摄计划与独家授权条款"));
+            painter.end();
+        }
+
+        bool truncated = true;
+        QString errorMessage;
+        const auto text = DocumentPreviewService::extractTextForSummary(path, &truncated, &errorMessage);
+
+        QVERIFY2(errorMessage.isEmpty(), qPrintable(errorMessage));
+        QVERIFY2(text.contains(QStringLiteral("雪山广告拍摄计划")), qPrintable(text));
+        QVERIFY(!truncated);
+    }
+
     void extractTextForSummary_skipsMetadataOnlyFormats_data()
     {
         QTest::addColumn<QString>("fileName");
 
-        QTest::newRow("pdf") << QStringLiteral("scan.pdf");
         QTest::newRow("doc") << QStringLiteral("legacy.doc");
         QTest::newRow("xls") << QStringLiteral("legacy.xls");
         QTest::newRow("ppt") << QStringLiteral("legacy.ppt");
@@ -106,6 +139,12 @@ private slots:
     }
 };
 
-QTEST_MAIN(DocumentPreviewServiceTest)
+int main(int argc, char **argv)
+{
+    qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
+    QGuiApplication application(argc, argv);
+    DocumentPreviewServiceTest test;
+    return QTest::qExec(&test, argc, argv);
+}
 
 #include "DocumentPreviewServiceTest.moc"

@@ -46,6 +46,17 @@ ApplicationWindow {
         }
     }
 
+    function restoreToForeground() {
+        if (quickSearchController
+                && typeof quickSearchController.restoreMainWindow === "function"
+                && quickSearchController.restoreMainWindow(root)) {
+            return
+        }
+        root.showNormal()
+        root.raise()
+        root.requestActivate()
+    }
+
     function minimizeToTray() {
         closeConfirmDialog.close()
         if (quickSearchController && quickSearchController.trayAvailable) {
@@ -133,9 +144,7 @@ ApplicationWindow {
     Connections {
         target: quickSearchController
         function onShowMainWindowRequested() {
-            root.showNormal()
-            root.raise()
-            root.requestActivate()
+            root.restoreToForeground()
         }
     }
 
@@ -143,9 +152,7 @@ ApplicationWindow {
         sequence: "Ctrl+K"
         context: Qt.ApplicationShortcut
         onActivated: {
-            root.showNormal()
-            root.raise()
-            root.requestActivate()
+            root.restoreToForeground()
             topCommandBar.focusSearch()
         }
     }
@@ -235,7 +242,7 @@ ApplicationWindow {
         anchors.centerIn: parent
         modal: true
         width: 640
-        height: 300
+        height: 520
         padding: 24
         closePolicy: Popup.CloseOnEscape
 
@@ -248,6 +255,7 @@ ApplicationWindow {
 
         onOpened: {
             sourcePathField.text = ""
+            if (root.shellViewModel) root.shellViewModel.refreshStorageVolumes()
             sourcePathField.forceActiveFocus()
         }
         onRejected: if (root.shellViewModel) root.shellViewModel.cancelAddSourceDirectory()
@@ -271,7 +279,7 @@ ApplicationWindow {
 
             Text {
                 Layout.fillWidth: true
-                text: "可以浏览本地文件夹，也可以直接输入 UNC 网络共享路径。请确保当前 Windows 账户有读取权限。"
+                text: "可添加整个磁盘卷进行全盘索引，也可浏览本地文件夹或输入 UNC 网络共享路径。请确保当前 Windows 账户有读取权限。"
                 color: Theme.muted
                 font.pixelSize: 14
                 wrapMode: Text.Wrap
@@ -285,6 +293,92 @@ ApplicationWindow {
                 placeholderText: "例如：\\\\服务器\\共享\\素材"
                 selectByMouse: true
                 Keys.onReturnPressed: sourcePathDialog.submitPath()
+            }
+
+            Text {
+                text: "可用磁盘卷 · 点击后递归索引卷内全部可读文件"
+                color: Theme.text
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 148
+                radius: 10
+                color: Theme.panel2
+                border.width: 1
+                border.color: Theme.line
+
+                ListView {
+                    id: storageVolumeList
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    clip: true
+                    spacing: 4
+                    model: root.shellViewModel ? root.shellViewModel.storageVolumes : []
+
+                    delegate: Rectangle {
+                        required property var modelData
+                        width: storageVolumeList.width
+                        height: 62
+                        radius: 8
+                        color: Theme.panel
+
+                        Column {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 12
+                            anchors.right: addVolumeButton.left
+                            anchors.rightMargin: 12
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 3
+
+                            Text {
+                                width: parent.width
+                                text: modelData.label
+                                color: Theme.text
+                                font.pixelSize: 14
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideMiddle
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: modelData.driveType + " · " + modelData.capacityText
+                                      + (modelData.fileSystem.length > 0 ? " · " + modelData.fileSystem : "")
+                                color: Theme.muted
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        ActionButton {
+                            id: addVolumeButton
+                            width: 104
+                            height: 38
+                            anchors.right: parent.right
+                            anchors.rightMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "添加全盘"
+                            primary: true
+                            onClicked: {
+                                if (root.shellViewModel.importStorageVolume(modelData.rootPath)) {
+                                    sourcePathDialog.close()
+                                }
+                            }
+                        }
+                    }
+
+                    ScrollBar.vertical: ThemedScrollBar { }
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: storageVolumeList.count === 0
+                    text: "未发现可用磁盘卷"
+                    color: Theme.muted
+                    font.pixelSize: 13
+                }
             }
 
             RowLayout {

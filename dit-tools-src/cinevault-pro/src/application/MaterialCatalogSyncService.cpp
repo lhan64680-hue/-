@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QMetaObject>
+#include <QRegularExpression>
 #include <QSet>
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -60,6 +61,7 @@ bool isSupportedTextAsset(AssetType assetType, const QString &extension)
         QStringLiteral("txt"), QStringLiteral("log"), QStringLiteral("md"),
         QStringLiteral("json"), QStringLiteral("csv"), QStringLiteral("tsv"),
         QStringLiteral("xml"), QStringLiteral("yaml"), QStringLiteral("yml"),
+        QStringLiteral("pdf"),
         QStringLiteral("docx"), QStringLiteral("xlsx"), QStringLiteral("pptx"),
         QStringLiteral("srt"), QStringLiteral("ass"), QStringLiteral("vtt")
     };
@@ -94,6 +96,35 @@ QString buildTechnicalSummary(const QString &container, qint64 durationMs, qint6
     if (bitRate > 0) {
         parts.append(Formatters::formatBitRate(bitRate));
     }
+    return parts.join(QStringLiteral(" · "));
+}
+
+QString buildEmbeddedMetadataSummary(const QString &cameraMake,
+                                     const QString &cameraModel,
+                                     const QString &lensModel,
+                                     int width,
+                                     int height,
+                                     double frameRate,
+                                     const QString &videoCodec,
+                                     const QString &colorSpace,
+                                     int sampleRate,
+                                     int channels,
+                                     const QString &timecode)
+{
+    QStringList parts;
+    const auto camera = QStringList{cameraMake.trimmed(), cameraModel.trimmed()}
+                            .filter(QRegularExpression(QStringLiteral(".+")))
+                            .join(QLatin1Char(' '));
+    if (!camera.isEmpty()) parts.append(camera);
+    if (!lensModel.trimmed().isEmpty()) parts.append(lensModel.trimmed());
+    if (width > 0 && height > 0) parts.append(QStringLiteral("%1×%2").arg(width).arg(height));
+    if (frameRate > 0) parts.append(QStringLiteral("%1 fps").arg(frameRate, 0, 'f', frameRate < 10 ? 2 : 1));
+    if (!videoCodec.trimmed().isEmpty()) parts.append(videoCodec.trimmed());
+    if (!colorSpace.trimmed().isEmpty()) parts.append(colorSpace.trimmed());
+    if (sampleRate > 0) parts.append(QStringLiteral("%1 Hz").arg(sampleRate));
+    if (channels > 0) parts.append(QStringLiteral("%1 声道").arg(channels));
+    if (!timecode.trimmed().isEmpty()) parts.append(QStringLiteral("TC %1").arg(timecode.trimmed()));
+    parts.removeDuplicates();
     return parts.join(QStringLiteral(" · "));
 }
 
@@ -190,10 +221,15 @@ QVector<GlobalVideoAsset> fetchProjectAssets(QSqlDatabase &projectDb, const Proj
         "SELECT af.id, af.source_root_id, COALESCE(sr.name, ''), COALESCE(sr.path, ''), af.name, COALESCE(af.extension, ''), "
         "af.absolute_path, af.relative_path, af.asset_type, af.size_bytes, af.modified_at, "
         "COALESCE(mm.duration_ms, 0), COALESCE(mm.container, ''), COALESCE(mm.bit_rate, 0), COALESCE(mm.raw_json, ''), "
+        "COALESCE(em.capture_time, ''), COALESCE(em.camera_make, ''), COALESCE(em.camera_model, ''), "
+        "COALESCE(em.lens_model, ''), COALESCE(em.width, 0), COALESCE(em.height, 0), COALESCE(em.frame_rate, 0), "
+        "COALESCE(em.video_codec, ''), COALESCE(em.color_space, ''), COALESCE(em.sample_rate, 0), "
+        "COALESCE(em.channels, 0), COALESCE(em.timecode, ''), COALESCE(em.search_text, ''), "
         "CASE WHEN COALESCE(th.status, 0) = 1 THEN COALESCE(th.image_path, '') ELSE '' END, COALESCE(th.status, 0) "
         "FROM asset_file af "
         "LEFT JOIN source_root sr ON sr.id = af.source_root_id "
         "LEFT JOIN media_metadata mm ON mm.asset_id = af.id "
+        "LEFT JOIN embedded_metadata em ON em.asset_id = af.id AND em.status = 1 "
         "LEFT JOIN thumbnail th ON th.asset_id = af.id "
         "ORDER BY af.id"));
     if (!execQuery(query, errorMessage)) {
@@ -219,9 +255,18 @@ QVector<GlobalVideoAsset> fetchProjectAssets(QSqlDatabase &projectDb, const Proj
         asset.sizeBytes = query.value(9).toLongLong();
         asset.modifiedAt = query.value(10).toString();
         asset.durationMs = query.value(11).toLongLong();
-        asset.technicalSummary = buildTechnicalSummary(query.value(12).toString(), asset.durationMs, query.value(13).toLongLong());
-        asset.thumbnailPath = query.value(15).toString();
-        asset.thumbnailStatus = static_cast<ThumbnailStatus>(query.value(16).toInt());
+        const auto ffprobeSummary = buildTechnicalSummary(query.value(12).toString(), asset.durationMs, query.value(13).toLongLong());
+        const auto embeddedSummary = buildEmbeddedMetadataSummary(
+            query.value(16).toString(), query.value(17).toString(), query.value(18).toString(),
+            query.value(19).toInt(), query.value(20).toInt(), query.value(21).toDouble(),
+            query.value(22).toString(), query.value(23).toString(), query.value(24).toInt(),
+            query.value(25).toInt(), query.value(26).toString());
+        asset.technicalSummary = QStringList{ffprobeSummary, embeddedSummary}
+                                     .filter(QRegularExpression(QStringLiteral(".+")))
+                                     .join(QStringLiteral(" · "));
+        asset.embeddedMetadataText = query.value(27).toString();
+        asset.thumbnailPath = query.value(28).toString();
+        asset.thumbnailStatus = static_cast<ThumbnailStatus>(query.value(29).toInt());
         asset.videoKey = QStringLiteral("%1:%2").arg(project.id).arg(asset.assetId);
         asset.assetKey = asset.videoKey;
         const auto parentRelativePath = FolderPathMetadata::parentRelativePath(asset.relativePath);
@@ -232,13 +277,22 @@ QVector<GlobalVideoAsset> fetchProjectAssets(QSqlDatabase &projectDb, const Proj
         const auto folderDate = FolderPathMetadata::inferDate(
             FolderPathMetadata::folderName(sourceRootPath, asset.sourceRootName),
             parentRelativePath);
-        const auto captureTime = captureTimeResolver.resolve(query.value(14).toString(),
-                                                             folderDate.normalizedDate,
-                                                             asset.modifiedAt);
-        asset.captureTime = captureTime.captureTime;
-        asset.captureDate = captureTime.captureDate;
-        asset.captureTimeSource = captureTime.source;
-        asset.captureTimeConfidence = captureTime.confidence;
+        const auto embeddedCaptureTime = query.value(15).toString().trimmed();
+        const auto parsedEmbeddedTime = QDateTime::fromString(embeddedCaptureTime, Qt::ISODate);
+        if (!embeddedCaptureTime.isEmpty() && parsedEmbeddedTime.isValid()) {
+            asset.captureTime = embeddedCaptureTime;
+            asset.captureDate = parsedEmbeddedTime.date().toString(Qt::ISODate);
+            asset.captureTimeSource = QStringLiteral("ExifTool");
+            asset.captureTimeConfidence = 0.99;
+        } else {
+            const auto captureTime = captureTimeResolver.resolve(query.value(14).toString(),
+                                                                 folderDate.normalizedDate,
+                                                                 asset.modifiedAt);
+            asset.captureTime = captureTime.captureTime;
+            asset.captureDate = captureTime.captureDate;
+            asset.captureTimeSource = captureTime.source;
+            asset.captureTimeConfidence = captureTime.confidence;
+        }
         const auto sourceKey = FolderPathMetadata::normalizedPathKey(sourceRootPath);
         if (!sourceAvailability.contains(sourceKey)) {
             sourceAvailability.insert(sourceKey, QFileInfo(sourceRootPath).isDir());
@@ -436,6 +490,34 @@ bool upsertSearchRow(QSqlDatabase &globalDb, const GlobalVideoAsset &asset, bool
         return false;
     }
 
+    auto summary = emptyIfNull(asset.summary);
+    auto keywords = asset.keywords.join(QLatin1Char(' '));
+    QSqlQuery analysis(globalDb);
+    analysis.prepare(QStringLiteral(
+        "SELECT COALESCE(summary, ''), COALESCE(keywords_json, '') "
+        "FROM video_analysis_result WHERE video_key = ?"));
+    analysis.addBindValue(asset.videoKey);
+    if (!execQuery(analysis, errorMessage)) {
+        return false;
+    }
+    if (analysis.next()) {
+        summary = analysis.value(0).toString();
+        keywords = analysis.value(1).toString();
+    }
+
+    QString captions;
+    QSqlQuery frameText(globalDb);
+    frameText.prepare(QStringLiteral(
+        "SELECT GROUP_CONCAT(TRIM(COALESCE(caption, '') || ' ' || COALESCE(ocr_text, '')), ' ') "
+        "FROM video_frame_analysis WHERE video_key = ?"));
+    frameText.addBindValue(asset.videoKey);
+    if (!execQuery(frameText, errorMessage)) {
+        return false;
+    }
+    if (frameText.next()) {
+        captions = frameText.value(0).toString();
+    }
+
     QSqlQuery query(globalDb);
     query.prepare(QStringLiteral(
         "INSERT INTO video_search_fts "
@@ -450,10 +532,11 @@ bool upsertSearchRow(QSqlDatabase &globalDb, const GlobalVideoAsset &asset, bool
     query.addBindValue(asset.absolutePath);
     query.addBindValue(Formatters::assetTypeLabel(asset.assetType));
     query.addBindValue(asset.extension);
-    query.addBindValue(emptyIfNull(asset.technicalSummary));
-    query.addBindValue(emptyIfNull(asset.summary));
-    query.addBindValue(asset.keywords.join(QStringLiteral(" ")));
-    query.addBindValue(QStringLiteral(""));
+    query.addBindValue(QStringList{emptyIfNull(asset.technicalSummary), emptyIfNull(asset.embeddedMetadataText)}
+                           .join(QLatin1Char(' ')));
+    query.addBindValue(summary);
+    query.addBindValue(keywords);
+    query.addBindValue(captions);
     query.addBindValue(emptyIfNull(asset.sourceText));
     return execQuery(query, errorMessage);
 }
@@ -690,9 +773,9 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         "(video_key, project_uuid, project_name, project_database_path, source_root_id, source_root_name, folder_key, is_available, asset_id, "
         "file_name, extension, absolute_path, relative_path, asset_type, size_bytes, modified_at, "
         "capture_time, capture_date, capture_time_source, capture_time_confidence, duration_ms, "
-        "thumbnail_path, thumbnail_status, analysis_status, confirmation_status, technical_summary, source_text, "
+        "thumbnail_path, thumbnail_status, analysis_status, confirmation_status, technical_summary, embedded_metadata_text, source_text, "
         "error_message, last_synced_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(video_key) DO UPDATE SET "
         "project_uuid = excluded.project_uuid, "
         "project_name = excluded.project_name, "
@@ -719,6 +802,7 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         "analysis_status = excluded.analysis_status, "
         "confirmation_status = excluded.confirmation_status, "
         "technical_summary = excluded.technical_summary, "
+        "embedded_metadata_text = excluded.embedded_metadata_text, "
         "source_text = CASE WHEN global_video_asset.size_bytes != excluded.size_bytes "
         "OR global_video_asset.modified_at != excluded.modified_at THEN excluded.source_text ELSE global_video_asset.source_text END, "
         "error_message = excluded.error_message, "
@@ -746,12 +830,18 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         const bool changed = !hasExisting
             || existing.sizeBytes != asset.sizeBytes
             || existing.modifiedAt != asset.modifiedAt;
+        const bool newlyAnalyzable = hasExisting
+            && !changed
+            && existing.analysisStatus == VideoAnalysisStatus::IndexedOnly
+            && canAnalyzeAsset(asset.assetType, asset.extension);
         asset.technicalSummary = emptyIfNull(asset.technicalSummary);
         asset.captureTime = emptyIfNull(asset.captureTime);
         asset.captureDate = emptyIfNull(asset.captureDate);
         asset.captureTimeSource = emptyIfNull(asset.captureTimeSource);
         asset.sourceText = changed ? QStringLiteral("") : emptyIfNull(existing.sourceText);
-        const auto errorMessageText = changed ? QStringLiteral("") : emptyIfNull(existing.errorMessage);
+        const auto errorMessageText = (changed || newlyAnalyzable)
+            ? QStringLiteral("")
+            : emptyIfNull(existing.errorMessage);
 
         if (changed) {
             clearPlan.addBindValue(asset.videoKey);
@@ -825,9 +915,14 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
         upsert.addBindValue(asset.durationMs);
         upsert.addBindValue(asset.thumbnailPath);
         upsert.addBindValue(static_cast<int>(asset.thumbnailStatus));
-        upsert.addBindValue(static_cast<int>(changed ? initialAnalysisStatusForAsset(asset.assetType, asset.extension) : existing.analysisStatus));
-        upsert.addBindValue(static_cast<int>(changed ? ConfirmationStatus::Pending : existing.confirmationStatus));
+        upsert.addBindValue(static_cast<int>((changed || newlyAnalyzable)
+                                                 ? initialAnalysisStatusForAsset(asset.assetType, asset.extension)
+                                                 : existing.analysisStatus));
+        upsert.addBindValue(static_cast<int>((changed || newlyAnalyzable)
+                                                 ? ConfirmationStatus::Pending
+                                                 : existing.confirmationStatus));
         upsert.addBindValue(asset.technicalSummary);
+        upsert.addBindValue(asset.embeddedMetadataText);
         upsert.addBindValue(asset.sourceText);
         upsert.addBindValue(errorMessageText);
         upsert.addBindValue(now);
@@ -844,7 +939,7 @@ bool syncProjectIntoGlobal(QSqlDatabase &globalDb,
             return false;
         }
 
-        if (changed && !upsertSearchRow(globalDb, asset, hasFts5, errorMessage)) {
+        if (!upsertSearchRow(globalDb, asset, hasFts5, errorMessage)) {
             globalDb.rollback();
             return false;
         }

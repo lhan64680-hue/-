@@ -11,6 +11,7 @@ public:
     ~AppBootstrap();
 
     bool run();
+    bool activateMainWindow();
 
 private:
     std::unique_ptr<AppContext> m_context;

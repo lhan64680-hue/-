@@ -61,6 +61,14 @@ enum class SearchResultTarget : int {
     Frames = 2
 };
 
+enum class SearchResultQuickFilter : int {
+    Smart = 0,
+    Video = 1,
+    Frames = 2,
+    Image = 3,
+    Document = 4
+};
+
 struct SearchDateConstraint {
     QString startDate;
     QString endDate;
@@ -94,6 +102,10 @@ struct ParsedMaterialQuery {
     bool frameIntent = false;
     bool folderByAssetCriteria = false;
     QString ocrText;
+    // Canonical entity labels explicitly present in the user's text. They are
+    // kept separate from strictEntities because modifier ownership may require
+    // the text model to resolve a multi-entity relation.
+    QStringList explicitEntityLabels;
     QVector<StrictEntityConstraint> strictEntities;
     QStringList interpretationLabels;
     QStringList ignoredIntentTerms;
@@ -115,11 +127,13 @@ struct ModelSearchUnderstanding {
     QString explanation;
 };
 
-struct ModelFrameRerankScore {
-    QString frameKey;
-    bool relevant = false;
-    double score = 0.0;
-    QString reason;
+struct SearchReliabilityAssessment {
+    bool shouldUseAssistant = false;
+    double score = 1.0;
+    qsizetype resultCount = 0;
+    double bestResultScore = 0.0;
+    double bestResultConfidence = 0.0;
+    QStringList reasons;
 };
 
 struct FolderSearchHit {
@@ -170,6 +184,7 @@ struct FrameSearchHit {
 
 struct MaterialSearchResult {
     ParsedMaterialQuery parsedQuery;
+    SearchReliabilityAssessment reliability;
     QVector<FolderSearchHit> folders;
     QVector<GlobalVideoAsset> assets;
     QVector<FrameSearchHit> frames;
@@ -189,6 +204,7 @@ struct MaterialSearchScope {
     int analysisStatusFilter = -1;
     int confirmationStatusFilter = -1;
     int assetTypeFilter = -1;
+    SearchResultQuickFilter resultQuickFilter = SearchResultQuickFilter::Smart;
     qsizetype limit = 2000;
 };
 

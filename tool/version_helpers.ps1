@@ -32,3 +32,89 @@ function Get-NextDistVersion {
     $latest = $versions[-1]
     return "v{0}.{1}.{2}" -f $latest.Major, $latest.Minor, ($latest.Patch + 1)
 }
+
+function ConvertTo-CineVaultVersionParts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Version
+    )
+
+    $match = [regex]::Match($Version.Trim(), '^v?(\d+)\.(\d+)\.(\d+)$')
+    if (-not $match.Success) {
+        throw "Invalid CineVault semantic version: $Version"
+    }
+
+    return [PSCustomObject]@{
+        Major = [long]$match.Groups[1].Value
+        Minor = [long]$match.Groups[2].Value
+        Patch = [long]$match.Groups[3].Value
+    }
+}
+
+function Format-CineVaultVersionTag {
+    param(
+        [Parameter(Mandatory = $true)]
+        $VersionParts
+    )
+
+    return "v{0}.{1}.{2}" -f $VersionParts.Major, $VersionParts.Minor, $VersionParts.Patch
+}
+
+function Get-NormalizedCineVaultVersionTag {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Version
+    )
+
+    return Format-CineVaultVersionTag (ConvertTo-CineVaultVersionParts -Version $Version)
+}
+
+function Compare-CineVaultVersions {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Left,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Right
+    )
+
+    $leftParts = ConvertTo-CineVaultVersionParts -Version $Left
+    $rightParts = ConvertTo-CineVaultVersionParts -Version $Right
+
+    foreach ($property in @('Major', 'Minor', 'Patch')) {
+        if ($leftParts.$property -lt $rightParts.$property) {
+            return -1
+        }
+        if ($leftParts.$property -gt $rightParts.$property) {
+            return 1
+        }
+    }
+
+    return 0
+}
+
+function Get-NextCineVaultReleaseVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LatestVersion,
+
+        [string]$MinimumVersion = 'v0.1.168'
+    )
+
+    $latest = ConvertTo-CineVaultVersionParts -Version $LatestVersion
+    if ($latest.Patch -eq [long]::MaxValue) {
+        throw "Patch version cannot be incremented: $LatestVersion"
+    }
+
+    $candidate = Format-CineVaultVersionTag ([PSCustomObject]@{
+        Major = $latest.Major
+        Minor = $latest.Minor
+        Patch = $latest.Patch + 1
+    })
+    $minimum = Get-NormalizedCineVaultVersionTag -Version $MinimumVersion
+
+    if ((Compare-CineVaultVersions -Left $candidate -Right $minimum) -lt 0) {
+        return $minimum
+    }
+    return $candidate
+}

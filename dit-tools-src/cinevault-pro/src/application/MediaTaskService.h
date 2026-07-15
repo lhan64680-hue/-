@@ -29,7 +29,16 @@ signals:
     void mediaCatalogChanged();
 
 private:
-    QVector<AssetFile> fetchAssets(QSqlDatabase &db, qint64 sourceRootId, const QList<AssetType> &assetTypes, QString *errorMessage) const;
+    enum class PendingWork {
+        Metadata,
+        Thumbnail
+    };
+
+    QVector<AssetFile> fetchAssets(QSqlDatabase &db,
+                                   qint64 sourceRootId,
+                                   const QList<AssetType> &assetTypes,
+                                   PendingWork pendingWork,
+                                   QString *errorMessage) const;
     void runMediaJobs(qint64 sourceRootId,
                       const QString &sourceName,
                       const QString &projectDatabasePath,

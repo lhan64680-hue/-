@@ -61,11 +61,15 @@ ImportService::ImportService(DatabaseManager *databaseManager, JobService *jobSe
     , m_scanEngine(scanEngine)
 {
     connect(m_scanEngine, &ScanEngine::scanBatchCommitted, this, &ImportService::catalogChanged);
-    connect(m_scanEngine, &ScanEngine::scanFinished, this, &ImportService::catalogChanged);
-    connect(m_scanEngine, &ScanEngine::scanFailed, this, [this](qint64, const QString &message) {
+    connect(m_scanEngine, &ScanEngine::scanFinished, this, [this](qint64 sourceRootId) {
+        emit catalogChanged();
+        emit sourceScanFinished(sourceRootId);
+    });
+    connect(m_scanEngine, &ScanEngine::scanFailed, this, [this](qint64 sourceRootId, const QString &message) {
         m_lastMessage = message;
         emit importStateChanged();
         emit catalogChanged();
+        emit sourceScanFailed(sourceRootId, message);
     });
 }
 
@@ -133,17 +137,120 @@ bool ImportService::importDirectory(const QString &directoryPath, QString *error
     sourceRoot.path = normalizedPath;
     sourceRoot.status = QStringLiteral("scanning");
 
-    const auto jobId = m_jobService->engine()->createJob(JobType::Scan,
-                                                         QStringLiteral("扫描 %1").arg(sourceRoot.name),
-                                                         QStringLiteral("准备扫描目录"),
-                                                         sourceRoot.id,
-                                                         sourceRootJobSubject(sourceRoot),
-                                                         scanProgressContext());
-    m_scanEngine->startScan(sourceRoot, jobId);
+    if (!startSourceScan(sourceRoot,
+                         QStringLiteral("扫描"),
+                         QStringLiteral("准备扫描目录"),
+                         errorMessage)) {
+        QSqlQuery cleanup(m_databaseManager->database());
+        cleanup.prepare(QStringLiteral("DELETE FROM source_root WHERE id = ?"));
+        cleanup.addBindValue(sourceRoot.id);
+        cleanup.exec();
+        return false;
+    }
 
     m_lastMessage = QStringLiteral("已开始导入素材源：%1").arg(sourceRoot.name);
     emit importStateChanged();
     emit catalogChanged();
+    emit sourceRootsChanged();
+    return true;
+}
+
+QVector<SourceRoot> ImportService::sourceRoots() const
+{
+    QVector<SourceRoot> roots;
+    if (!m_databaseManager || !m_databaseManager->hasOpenProject()) {
+        return roots;
+    }
+
+    QSqlQuery query(m_databaseManager->database());
+    if (!query.exec(QStringLiteral(
+            "SELECT id, name, path, status, total_files, total_folders, total_size_bytes, video_count, audio_count, image_count, other_count, warning_count, COALESCE(scan_version, 0) "
+            "FROM source_root ORDER BY id"))) {
+        return roots;
+    }
+    while (query.next()) {
+        roots.append(readSourceRoot(query));
+    }
+    return roots;
+}
+
+bool ImportService::rescanSourceRoot(qint64 sourceRootId,
+                                     const QString &reason,
+                                     QString *errorMessage)
+{
+    if (!m_databaseManager || !m_databaseManager->hasOpenProject()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("当前没有打开的项目。");
+        }
+        return false;
+    }
+
+    QSqlQuery query(m_databaseManager->database());
+    query.prepare(QStringLiteral(
+        "SELECT id, name, path, status, total_files, total_folders, total_size_bytes, video_count, audio_count, image_count, other_count, warning_count, COALESCE(scan_version, 0) "
+        "FROM source_root WHERE id = ?"));
+    query.addBindValue(sourceRootId);
+    if (!query.exec() || !query.next()) {
+        if (errorMessage) {
+            *errorMessage = query.lastError().text().trimmed().isEmpty()
+                ? QStringLiteral("素材源不存在或已移除。")
+                : query.lastError().text();
+        }
+        return false;
+    }
+
+    const auto sourceRoot = readSourceRoot(query);
+    const QFileInfo info(sourceRoot.path);
+    if (!info.exists() || !info.isDir() || !info.isReadable()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("素材源当前不可访问：%1").arg(sourceRoot.path);
+        }
+        return false;
+    }
+
+    const auto detail = reason.trimmed().isEmpty()
+        ? QStringLiteral("正在重新扫描素材源")
+        : reason.trimmed();
+    if (!startSourceScan(sourceRoot, QStringLiteral("更新索引"), detail, errorMessage)) {
+        return false;
+    }
+    m_lastMessage = QStringLiteral("已开始后台更新索引：%1").arg(sourceRoot.name);
+    emit importStateChanged();
+    return true;
+}
+
+bool ImportService::startSourceScan(const SourceRoot &sourceRoot,
+                                    const QString &titlePrefix,
+                                    const QString &detail,
+                                    QString *errorMessage)
+{
+    if (!m_jobService || !m_jobService->engine() || !m_scanEngine) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("扫描服务尚未就绪。");
+        }
+        return false;
+    }
+
+    const auto now = QDateTime::currentDateTime().toString(Qt::ISODate);
+    QSqlQuery markScanning(m_databaseManager->database());
+    markScanning.prepare(QStringLiteral("UPDATE source_root SET status = ?, updated_at = ? WHERE id = ?"));
+    markScanning.addBindValue(QStringLiteral("scanning"));
+    markScanning.addBindValue(now);
+    markScanning.addBindValue(sourceRoot.id);
+    if (!markScanning.exec()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("更新素材源扫描状态失败：%1").arg(markScanning.lastError().text());
+        }
+        return false;
+    }
+
+    const auto jobId = m_jobService->engine()->createJob(JobType::Scan,
+                                                         QStringLiteral("%1 %2").arg(titlePrefix, sourceRoot.name),
+                                                         detail,
+                                                         sourceRoot.id,
+                                                         sourceRootJobSubject(sourceRoot),
+                                                         scanProgressContext());
+    m_scanEngine->startScan(sourceRoot, jobId);
     return true;
 }
 
@@ -181,22 +288,10 @@ void ImportService::rescanLegacySourceRoots()
         return;
     }
 
-    const auto now = QDateTime::currentDateTime().toString(Qt::ISODate);
     for (const auto &sourceRoot : legacyRoots) {
-        QSqlQuery markScanning(m_databaseManager->database());
-        markScanning.prepare(QStringLiteral("UPDATE source_root SET status = ?, updated_at = ? WHERE id = ?"));
-        markScanning.addBindValue(QStringLiteral("scanning"));
-        markScanning.addBindValue(now);
-        markScanning.addBindValue(sourceRoot.id);
-        markScanning.exec();
-
-        const auto jobId = m_jobService->engine()->createJob(JobType::Scan,
-                                                             QStringLiteral("补扫历史素材源 %1").arg(sourceRoot.name),
-                                                             QStringLiteral("正在升级旧素材目录索引为全部文件"),
-                                                             sourceRoot.id,
-                                                             sourceRootJobSubject(sourceRoot),
-                                                             scanProgressContext());
-        m_scanEngine->startScan(sourceRoot, jobId);
+        startSourceScan(sourceRoot,
+                        QStringLiteral("补扫历史素材源"),
+                        QStringLiteral("正在升级旧素材目录索引为全部文件"));
     }
 
     m_lastMessage = QStringLiteral("已开始补扫 %1 个历史素材源，完成后素材管理中心会显示全部文件。").arg(legacyRoots.size());

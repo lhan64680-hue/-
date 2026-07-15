@@ -1,14 +1,18 @@
 #include "ui/viewmodels/MaterialCenterViewModel.h"
 
+#include "shared/FileRevealService.h"
+
 #include "application/MaterialCatalogSyncService.h"
 #include "application/MaterialCenterQueryService.h"
 #include "application/ProjectService.h"
 #include "application/SearchDocumentSyncService.h"
 #include "application/VideoAnalysisService.h"
 #include "core/search/SearchQueryUnderstanding.h"
+#include "core/search/SearchResultFusion.h"
 #include "core/thumbnail/ContactSheetBuilder.h"
 #include "infrastructure/config/AppSettings.h"
-#include "infrastructure/network/VisionApiClient.h"
+#include "infrastructure/search/LocalSearchAssistantRuntime.h"
+#include "infrastructure/search/SearchAssistantClient.h"
 #include "shared/Formatters.h"
 #include "shared/Paths.h"
 #include "shared/VisualAnalysisMetadata.h"
@@ -16,10 +20,13 @@
 #include "ui/models/MaterialCenterFrameListModel.h"
 #include "ui/models/MaterialCenterListModel.h"
 
+#include <QClipboard>
 #include <QDesktopServices>
+#include <QDir>
 #include <QFileInfo>
 #include <QFile>
 #include <QFutureWatcher>
+#include <QGuiApplication>
 #include <QRegularExpression>
 #include <QSet>
 #include <QStringList>
@@ -33,6 +40,20 @@ namespace {
 constexpr int kInitialVisibleFrameCount = 24;
 constexpr int kVisibleFrameBatchSize = 24;
 constexpr int kMaxFrameRetryCount = 3;
+
+bool sameProjectDatabasePath(const QString &left, const QString &right)
+{
+    const auto trimmedLeft = left.trimmed();
+    const auto trimmedRight = right.trimmed();
+    if (trimmedLeft.isEmpty() || trimmedRight.isEmpty()) {
+        return false;
+    }
+    const auto normalizedLeft = QDir::cleanPath(QFileInfo(trimmedLeft).absoluteFilePath());
+    const auto normalizedRight = QDir::cleanPath(QFileInfo(trimmedRight).absoluteFilePath());
+    return !normalizedLeft.isEmpty()
+        && !normalizedRight.isEmpty()
+        && normalizedLeft.compare(normalizedRight, Qt::CaseInsensitive) == 0;
+}
 
 QVariantList prependAllOption(const QVariantList &items, const QString &label)
 {
@@ -175,7 +196,7 @@ QString readyAnalysisHint(const GlobalVideoAsset &asset)
     if (asset.analysisTask.skippedFrames > 0) {
         return QStringLiteral("解析完成，已跳过 %1 帧，可手动补解析。").arg(asset.analysisTask.skippedFrames);
     }
-    return QStringLiteral("解析完成，可确认或重新解析。");
+    return QStringLiteral("解析完成，结果已自动生效，可按需重新解析。");
 }
 
 bool canRetryFrame(const FrameAnalysisRecord &frame)
@@ -212,12 +233,6 @@ bool canAnalyzeAsset(const GlobalVideoAsset &asset)
         || isSupportedTextAsset(asset.assetType, asset.extension);
 }
 
-bool canConfirmAsset(const GlobalVideoAsset &asset)
-{
-    return asset.analysisStatus == VideoAnalysisStatus::Ready
-        && asset.confirmationStatus != ConfirmationStatus::Confirmed;
-}
-
 QString previewText(QString text)
 {
     text = text.simplified();
@@ -235,13 +250,6 @@ struct SearchUnderstandingTaskResult {
     QString errorMessage;
 };
 
-struct FrameRerankTaskResult {
-    QString cacheKey;
-    QString queryText;
-    int generation = 0;
-    std::optional<QVector<ModelFrameRerankScore>> scores;
-    QString errorMessage;
-};
 }
 
 MaterialCenterViewModel::MaterialCenterViewModel(MaterialCenterQueryService *queryService,
@@ -250,7 +258,8 @@ MaterialCenterViewModel::MaterialCenterViewModel(MaterialCenterQueryService *que
                                                  VideoAnalysisService *analysisService,
                                                  ProjectService *projectService,
                                                  AppSettings *settings,
-                                                 VisionApiClient *visionApiClient,
+                                                 LocalSearchAssistantRuntime *localSearchAssistantRuntime,
+                                                 SearchAssistantClient *searchAssistantClient,
                                                  QObject *parent)
     : QObject(parent)
     , m_queryService(queryService)
@@ -259,7 +268,8 @@ MaterialCenterViewModel::MaterialCenterViewModel(MaterialCenterQueryService *que
     , m_analysisService(analysisService)
     , m_projectService(projectService)
     , m_settings(settings)
-    , m_visionApiClient(visionApiClient)
+    , m_localSearchAssistantRuntime(localSearchAssistantRuntime)
+    , m_searchAssistantClient(searchAssistantClient)
     , m_model(new MaterialCenterListModel(this))
     , m_folderModel(new MaterialCenterFolderListModel(this))
     , m_frameModel(new MaterialCenterFrameListModel(this))
@@ -276,8 +286,33 @@ MaterialCenterViewModel::MaterialCenterViewModel(MaterialCenterQueryService *que
     connect(m_contactSheetBuildTimer, &QTimer::timeout, this, &MaterialCenterViewModel::buildPendingContactSheet);
 
     m_searchRefreshTimer->setSingleShot(true);
-    m_searchRefreshTimer->setInterval(250);
+    // Keep local results responsive while avoiding one model request per
+    // keystroke. Every stable non-empty query is still sent to the local text
+    // assistant after this short debounce.
+    m_searchRefreshTimer->setInterval(400);
     connect(m_searchRefreshTimer, &QTimer::timeout, this, &MaterialCenterViewModel::reload);
+
+    if (m_localSearchAssistantRuntime) {
+        connect(m_localSearchAssistantRuntime,
+                &LocalSearchAssistantRuntime::ready,
+                this,
+                [this]() {
+            if (m_searchText.simplified().isEmpty()) {
+                return;
+            }
+            startSearchUnderstanding(m_lastParsedQuery);
+        });
+        connect(m_localSearchAssistantRuntime,
+                &LocalSearchAssistantRuntime::failed,
+                this,
+                [this](const QString &errorMessage) {
+            m_searchAssistantBusy = !m_searchUnderstandingInFlight.isEmpty();
+            m_searchAssistantUsed = false;
+            m_searchAssistantStatusText = QStringLiteral("内置查询助手不可用，已保留本地搜索：%1")
+                .arg(errorMessage);
+            emit searchStateChanged();
+        });
+    }
 
     if (m_searchDocumentSyncService) {
         connect(m_searchDocumentSyncService,
@@ -403,21 +438,16 @@ MaterialCenterFrameListModel *MaterialCenterViewModel::frameModel() const
 QString MaterialCenterViewModel::statusText() const
 {
     int readyCount = 0;
-    int pendingConfirmCount = 0;
     for (const auto &asset : m_assets) {
         if (asset.analysisStatus == VideoAnalysisStatus::Ready) {
             ++readyCount;
-            if (asset.confirmationStatus == ConfirmationStatus::Pending) {
-                ++pendingConfirmCount;
-            }
         }
     }
-    return QStringLiteral("当前结果 %1 个文件夹 · %2 条素材 · %3 个视觉帧 · 已解析 %4 条 · 待确认 %5 条")
+    return QStringLiteral("当前结果 %1 个文件夹 · %2 条素材 · %3 个视觉帧 · 已解析 %4 条")
         .arg(m_folders.size())
         .arg(m_assets.size())
         .arg(m_frames.size())
-        .arg(readyCount)
-        .arg(pendingConfirmCount);
+        .arg(readyCount);
 }
 
 QString MaterialCenterViewModel::message() const
@@ -442,7 +472,8 @@ int MaterialCenterViewModel::frameCount() const
 
 bool MaterialCenterViewModel::frameSearchMode() const
 {
-    return hasActiveSearch()
+    return (hasActiveSearch()
+            || m_searchResultFilter == static_cast<int>(SearchResultQuickFilter::Frames))
         && m_lastParsedQuery.resultTarget == SearchResultTarget::Frames;
 }
 
@@ -563,14 +594,14 @@ int MaterialCenterViewModel::assetTypeFilter() const
     return m_assetTypeFilter;
 }
 
+int MaterialCenterViewModel::searchResultFilter() const
+{
+    return m_searchResultFilter;
+}
+
 int MaterialCenterViewModel::analysisStatusFilter() const
 {
     return m_analysisStatusFilter;
-}
-
-int MaterialCenterViewModel::confirmationStatusFilter() const
-{
-    return m_confirmationStatusFilter;
 }
 
 QVariantList MaterialCenterViewModel::analysisStatusOptions() const
@@ -582,15 +613,6 @@ QVariantList MaterialCenterViewModel::analysisStatusOptions() const
         QVariantMap{{QStringLiteral("value"), static_cast<int>(VideoAnalysisStatus::Ready)}, {QStringLiteral("label"), QStringLiteral("已解析")}},
         QVariantMap{{QStringLiteral("value"), static_cast<int>(VideoAnalysisStatus::Failed)}, {QStringLiteral("label"), QStringLiteral("解析失败")}},
         QVariantMap{{QStringLiteral("value"), static_cast<int>(VideoAnalysisStatus::IndexedOnly)}, {QStringLiteral("label"), QStringLiteral("仅索引")}}
-    };
-}
-
-QVariantList MaterialCenterViewModel::confirmationStatusOptions() const
-{
-    return {
-        QVariantMap{{QStringLiteral("value"), -1}, {QStringLiteral("label"), QStringLiteral("全部确认状态")}},
-        QVariantMap{{QStringLiteral("value"), static_cast<int>(ConfirmationStatus::Pending)}, {QStringLiteral("label"), QStringLiteral("未确认")}},
-        QVariantMap{{QStringLiteral("value"), static_cast<int>(ConfirmationStatus::Confirmed)}, {QStringLiteral("label"), QStringLiteral("已确认")}}
     };
 }
 
@@ -616,6 +638,46 @@ int MaterialCenterViewModel::selectedVideoIndex() const
         }
     }
     return -1;
+}
+
+QString MaterialCenterViewModel::quickSearchRevealVideoKey() const
+{
+    return m_quickSearchRevealVideoKey;
+}
+
+int MaterialCenterViewModel::quickSearchRevealFrameNumber() const
+{
+    return m_quickSearchRevealFrameNumber;
+}
+
+int MaterialCenterViewModel::quickSearchRevealIndex() const
+{
+    const auto targetKey = m_quickSearchRevealVideoKey.trimmed();
+    if (targetKey.isEmpty()) {
+        return -1;
+    }
+    if (frameSearchMode()) {
+        for (int index = 0; index < m_frames.size(); ++index) {
+            const auto &frame = m_frames.at(index);
+            if (frame.videoKey == targetKey
+                && (m_quickSearchRevealFrameNumber < 0
+                    || frame.frameNumber == m_quickSearchRevealFrameNumber)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+    for (int index = 0; index < m_assets.size(); ++index) {
+        if (m_assets.at(index).videoKey == targetKey) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+int MaterialCenterViewModel::quickSearchRevealRevision() const
+{
+    return m_quickSearchRevealRevision;
 }
 
 bool MaterialCenterViewModel::hasSelection() const
@@ -752,11 +814,6 @@ QString MaterialCenterViewModel::selectedAnalysisStatusLabel() const
     return Formatters::videoAnalysisStatusLabel(m_detail.asset.analysisStatus, m_detail.asset.confirmationStatus);
 }
 
-QString MaterialCenterViewModel::selectedConfirmationStatusLabel() const
-{
-    return Formatters::confirmationStatusLabel(m_detail.asset.confirmationStatus);
-}
-
 bool MaterialCenterViewModel::selectedAnalysisBusy() const
 {
     const auto state = selectedProgressState().state;
@@ -833,11 +890,6 @@ bool MaterialCenterViewModel::canAnalyzeSelected() const
     return hasSelection() && canAnalyzeAsset(m_detail.asset) && !selectedAnalysisBusy();
 }
 
-bool MaterialCenterViewModel::canConfirmSelected() const
-{
-    return hasSelection() && canConfirmAsset(m_detail.asset);
-}
-
 bool MaterialCenterViewModel::selectedDimensionAnalysisBusy() const
 {
     return selectedDimensionProgressState().running;
@@ -888,16 +940,6 @@ int MaterialCenterViewModel::queuedAnalysisCount() const
     return m_queuedAnalysisCount;
 }
 
-bool MaterialCenterViewModel::canConfirmVisible() const
-{
-    for (const auto &asset : m_assets) {
-        if (canConfirmAsset(asset)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 bool MaterialCenterViewModel::hasAnalyzedVisible() const
 {
     for (const auto &asset : m_assets) {
@@ -927,6 +969,30 @@ void MaterialCenterViewModel::reload()
     startSearchUnderstanding(m_lastParsedQuery);
 }
 
+void MaterialCenterViewModel::prepareGlobalQuickSearch()
+{
+    m_searchRefreshTimer->stop();
+    ++m_searchGeneration;
+    m_searchText.clear();
+    m_projectFilter.clear();
+    m_sourceFilter.clear();
+    m_assetTypeFilter = -1;
+    m_searchResultFilter = static_cast<int>(SearchResultQuickFilter::Smart);
+    m_analysisStatusFilter = -1;
+    m_searchAssistantBusy = false;
+    m_searchAssistantUsed = false;
+    m_searchAssistantStatusText.clear();
+    m_searchWarningMessage.clear();
+    m_searchInterpretationText.clear();
+    m_searchEmptyReason.clear();
+    m_lastParsedQuery = {};
+    m_quickSearchRevealVideoKey.clear();
+    m_quickSearchRevealFrameNumber = -1;
+    ++m_quickSearchRevealRevision;
+    emit quickSearchRevealChanged();
+    reload();
+}
+
 void MaterialCenterViewModel::executeSearch(const ModelSearchUnderstanding *modelUnderstanding)
 {
     if (!m_queryService) {
@@ -937,12 +1003,46 @@ void MaterialCenterViewModel::executeSearch(const ModelSearchUnderstanding *mode
     scope.projectUuid = m_projectFilter;
     scope.sourceRootName = m_sourceFilter;
     scope.analysisStatusFilter = m_analysisStatusFilter;
-    scope.confirmationStatusFilter = m_confirmationStatusFilter;
+    scope.confirmationStatusFilter = -1;
     scope.assetTypeFilter = m_assetTypeFilter;
-    const auto result = m_queryService->searchMaterials(m_searchText,
-                                                        scope,
-                                                        QDate::currentDate(),
-                                                        modelUnderstanding);
+    scope.resultQuickFilter = static_cast<SearchResultQuickFilter>(m_searchResultFilter);
+    auto result = m_queryService->searchMaterials(m_searchText,
+                                                  scope,
+                                                  QDate::currentDate(),
+                                                  modelUnderstanding);
+    if (!modelUnderstanding) {
+        m_lastBaselineSearchResult = result;
+        m_lastBaselineSearchGeneration = m_searchGeneration;
+    } else if (m_lastBaselineSearchGeneration == m_searchGeneration
+               && m_lastBaselineSearchResult.parsedQuery.originalText.simplified()
+                   == m_searchText.simplified()) {
+        auto outcome = SearchResultFusion::preserveBaselineRecall(
+            m_lastBaselineSearchResult,
+            result);
+        result = std::move(outcome.result);
+        switch (outcome.protection) {
+        case SearchRecallProtection::EnhancedResultEmpty:
+            m_searchAssistantUsed = false;
+            m_searchAssistantStatusText = QStringLiteral(
+                "模型条件过窄，已保留 %1 条原向量/本地召回结果")
+                                              .arg(outcome.preservedHitCount);
+            break;
+        case SearchRecallProtection::ResultTargetChanged:
+            m_searchAssistantUsed = false;
+            m_searchAssistantStatusText = QStringLiteral(
+                "模型改变了结果类型，已保留 %1 条原向量/本地召回结果")
+                                              .arg(outcome.preservedHitCount);
+            break;
+        case SearchRecallProtection::BaselineHitsAdded:
+            m_searchAssistantUsed = true;
+            m_searchAssistantStatusText = QStringLiteral(
+                "内置文本模型已辅助排序，并保留 %1 条原向量/本地召回结果")
+                                              .arg(outcome.preservedHitCount);
+            break;
+        case SearchRecallProtection::None:
+            break;
+        }
+    }
     applySearchResult(result);
 }
 
@@ -955,6 +1055,7 @@ void MaterialCenterViewModel::applySearchResult(const MaterialSearchResult &resu
     m_searchWarningMessage = result.warningMessage;
     m_searchInterpretationText = result.parsedQuery.interpretationLabels.join(QStringLiteral(" · "));
     m_lastParsedQuery = result.parsedQuery;
+    m_lastSearchReliability = result.reliability;
     m_excludedPartialCount = result.excludedPartialCount;
     m_searchEmptyReason.clear();
     if (hasActiveSearch() && m_folders.isEmpty() && m_assets.isEmpty() && m_frames.isEmpty()) {
@@ -971,7 +1072,22 @@ void MaterialCenterViewModel::applySearchResult(const MaterialSearchResult &resu
     m_model->setItems(m_assets);
     m_frameModel->setItems(m_frames);
 
-    QString selectedKey = m_detail.asset.videoKey.trimmed();
+    const auto revealKey = m_quickSearchRevealVideoKey.trimmed();
+    const bool revealAssetVisible = std::any_of(m_assets.cbegin(),
+                                                m_assets.cend(),
+                                                [&revealKey](const auto &asset) {
+                                                    return asset.videoKey == revealKey;
+                                                });
+    const bool revealFrameVisible = std::any_of(m_frames.cbegin(),
+                                                m_frames.cend(),
+                                                [this, &revealKey](const auto &frame) {
+                                                    return frame.videoKey == revealKey
+                                                        && (m_quickSearchRevealFrameNumber < 0
+                                                            || frame.frameNumber == m_quickSearchRevealFrameNumber);
+                                                });
+    QString selectedKey = (revealAssetVisible || revealFrameVisible)
+        ? revealKey
+        : m_detail.asset.videoKey.trimmed();
     const bool selectedFrameVisible = std::any_of(m_frames.cbegin(),
                                                   m_frames.cend(),
                                                   [&selectedKey](const auto &frame) {
@@ -997,17 +1113,17 @@ void MaterialCenterViewModel::applySearchResult(const MaterialSearchResult &resu
 QString MaterialCenterViewModel::searchUnderstandingCacheKey(const QString &queryText,
                                                               const QDate &referenceDate) const
 {
-    if (!m_settings) {
-        return {};
-    }
-    return QStringLiteral("v1|%1|%2|%3|%4")
+    const auto modelIdentity = m_localSearchAssistantRuntime
+        ? m_localSearchAssistantRuntime->modelName().toCaseFolded()
+        : QStringLiteral("builtin-unavailable");
+    return QStringLiteral("v4|%1|%2|%3")
         .arg(referenceDate.toString(Qt::ISODate),
-             m_settings->visionBaseUrl().toCaseFolded(),
-             m_settings->visionModel().toCaseFolded(),
+             modelIdentity,
              queryText.simplified().toCaseFolded());
 }
 
-void MaterialCenterViewModel::startSearchUnderstanding(const ParsedMaterialQuery &localQuery)
+void MaterialCenterViewModel::startSearchUnderstanding(
+    const ParsedMaterialQuery &localQuery)
 {
     const auto queryText = m_searchText.simplified();
     if (queryText.isEmpty()) {
@@ -1017,33 +1133,24 @@ void MaterialCenterViewModel::startSearchUnderstanding(const ParsedMaterialQuery
         emit searchStateChanged();
         return;
     }
-    if (m_settings && m_settings->localOnlySearch()) {
-        m_searchAssistantStatusText = QStringLiteral("仅本地搜索已启用，不会发送查询文字或候选帧");
-        m_searchAssistantBusy = false;
-        m_searchAssistantUsed = false;
-        emit searchStateChanged();
-        return;
-    }
     if (m_settings && !m_settings->searchAssistantEnabled()) {
-        m_searchAssistantStatusText = QStringLiteral("模型查询辅助已关闭，当前使用本地查询理解");
+        m_searchAssistantStatusText = QStringLiteral("内置文本查询助手已关闭，当前使用本地规则与混合检索");
         m_searchAssistantBusy = false;
         m_searchAssistantUsed = false;
         emit searchStateChanged();
-        startFrameRerank(localQuery);
         return;
     }
     if (localQuery.semanticText.trimmed().isEmpty()
         && localQuery.strictEntities.isEmpty()
         && localQuery.ocrText.trimmed().isEmpty()) {
-        m_searchAssistantStatusText = QStringLiteral("本地规则已完整理解日期、类型与目标，无需调用视觉语言模型");
+        m_searchAssistantStatusText = QStringLiteral("本地规则已完整理解日期、类型与目标，无需调用查询助手");
         m_searchAssistantBusy = false;
         m_searchAssistantUsed = false;
         emit searchStateChanged();
-        startFrameRerank(localQuery);
         return;
     }
-    if (!m_settings) {
-        m_searchAssistantStatusText = QStringLiteral("视觉语言模型未完整配置，已使用本地查询理解");
+    if (!m_localSearchAssistantRuntime || !m_searchAssistantClient) {
+        m_searchAssistantStatusText = QStringLiteral("内置查询助手未初始化，已使用本地查询理解");
         m_searchAssistantBusy = false;
         m_searchAssistantUsed = false;
         emit searchStateChanged();
@@ -1057,7 +1164,7 @@ void MaterialCenterViewModel::startSearchUnderstanding(const ParsedMaterialQuery
         bool applied = false;
         SearchQueryUnderstanding::merge(localQuery, cached.value(), &applied);
         if (applied) {
-            m_searchAssistantStatusText = QStringLiteral("视觉语言模型已辅助理解（缓存）");
+            m_searchAssistantStatusText = QStringLiteral("内置文本模型已辅助理解（缓存）");
             m_searchAssistantUsed = true;
             executeSearch(&cached.value());
         } else {
@@ -1066,34 +1173,33 @@ void MaterialCenterViewModel::startSearchUnderstanding(const ParsedMaterialQuery
         }
         m_searchAssistantBusy = false;
         emit searchStateChanged();
-        startFrameRerank(m_lastParsedQuery);
         return;
     }
     if (m_searchUnderstandingInFlight.contains(cacheKey)) {
-        m_searchAssistantStatusText = QStringLiteral("视觉语言模型正在理解当前搜索…");
+        m_searchAssistantStatusText = QStringLiteral("内置文本模型正在理解当前搜索…");
         m_searchAssistantBusy = true;
         emit searchStateChanged();
         return;
     }
-    if (!m_visionApiClient
-        || m_settings->visionBaseUrl().isEmpty()
-        || m_settings->visionApiKey().isEmpty()
-        || m_settings->visionModel().isEmpty()) {
-        m_searchAssistantStatusText = QStringLiteral("视觉语言模型未完整配置，已使用本地查询理解");
-        m_searchAssistantBusy = false;
+    if (!m_localSearchAssistantRuntime->isReady()) {
+        const auto started = m_localSearchAssistantRuntime->start();
+        m_searchAssistantStatusText = started
+            ? QStringLiteral("正在按需启动内置文本查询助手…")
+            : QStringLiteral("内置查询助手不可用，已保留本地搜索：%1")
+                  .arg(m_localSearchAssistantRuntime->lastError());
+        m_searchAssistantBusy = started;
         m_searchAssistantUsed = false;
         emit searchStateChanged();
         return;
     }
-    const auto baseUrl = m_settings->visionBaseUrl();
-    const auto apiKey = m_settings->visionApiKey();
-    const auto model = m_settings->visionModel();
-    const auto timeoutSec = qBound(5, m_settings->analysisTimeoutSec(), 20);
+    const auto baseUrl = m_localSearchAssistantRuntime->endpoint();
+    const auto model = m_localSearchAssistantRuntime->modelName();
+    const auto timeoutSec = 30;
     const auto generation = m_searchGeneration;
-    auto *client = m_visionApiClient;
+    auto *client = m_searchAssistantClient;
     auto *watcher = new QFutureWatcher<SearchUnderstandingTaskResult>(this);
     m_searchUnderstandingInFlight.insert(cacheKey);
-    m_searchAssistantStatusText = QStringLiteral("视觉语言模型正在理解当前搜索…");
+    m_searchAssistantStatusText = QStringLiteral("内置文本模型正在理解当前搜索…");
     m_searchAssistantBusy = true;
     m_searchAssistantUsed = false;
     emit searchStateChanged();
@@ -1105,8 +1211,7 @@ void MaterialCenterViewModel::startSearchUnderstanding(const ParsedMaterialQuery
         m_searchUnderstandingInFlight.remove(task.cacheKey);
         if (task.generation != m_searchGeneration
             || task.queryText != m_searchText.simplified()) {
-            m_searchAssistantBusy = !m_searchUnderstandingInFlight.isEmpty()
-                || !m_frameRerankInFlight.isEmpty();
+            m_searchAssistantBusy = !m_searchUnderstandingInFlight.isEmpty();
             emit searchStateChanged();
             return;
         }
@@ -1122,7 +1227,6 @@ void MaterialCenterViewModel::startSearchUnderstanding(const ParsedMaterialQuery
             m_searchAssistantUsed = false;
             m_searchAssistantStatusText = QStringLiteral("模型置信度不足，已使用本地查询理解");
             emit searchStateChanged();
-            startFrameRerank(localQuery);
             return;
         }
         bool applied = false;
@@ -1131,7 +1235,6 @@ void MaterialCenterViewModel::startSearchUnderstanding(const ParsedMaterialQuery
             m_searchAssistantUsed = false;
             m_searchAssistantStatusText = QStringLiteral("模型未发现需要补充的条件，已使用本地理解");
             emit searchStateChanged();
-            startFrameRerank(localQuery);
             return;
         }
         if (m_searchUnderstandingCache.size() >= 64) {
@@ -1139,16 +1242,14 @@ void MaterialCenterViewModel::startSearchUnderstanding(const ParsedMaterialQuery
         }
         m_searchUnderstandingCache.insert(task.cacheKey, *task.understanding);
         m_searchAssistantUsed = true;
-        m_searchAssistantStatusText = QStringLiteral("视觉语言模型已辅助理解");
+        m_searchAssistantStatusText = QStringLiteral("内置文本模型已辅助理解");
         executeSearch(&*task.understanding);
-        startFrameRerank(m_lastParsedQuery);
     });
 
     watcher->setFuture(QtConcurrent::run([client,
                                           queryText,
                                           referenceDate,
                                           baseUrl,
-                                          apiKey,
                                           model,
                                           timeoutSec,
                                           cacheKey,
@@ -1157,189 +1258,14 @@ void MaterialCenterViewModel::startSearchUnderstanding(const ParsedMaterialQuery
         task.cacheKey = cacheKey;
         task.queryText = queryText;
         task.generation = generation;
-        task.understanding = client->understandSearchQuery(queryText,
-                                                          referenceDate,
-                                                          baseUrl,
-                                                          apiKey,
-                                                          model,
-                                                          timeoutSec,
-                                                          &task.errorMessage);
+        task.understanding = client->understandQuery(queryText,
+                                                     referenceDate,
+                                                     baseUrl,
+                                                     model,
+                                                     timeoutSec,
+                                                     &task.errorMessage);
         return task;
     }));
-}
-
-void MaterialCenterViewModel::startFrameRerank(const ParsedMaterialQuery &query)
-{
-    if (query.resultTarget != SearchResultTarget::Frames || m_frames.isEmpty()) {
-        return;
-    }
-    if (m_settings && m_settings->localOnlySearch()) {
-        m_searchAssistantStatusText = QStringLiteral("仅本地搜索已启用，候选帧保持本地排序");
-        m_searchAssistantBusy = false;
-        emit searchStateChanged();
-        return;
-    }
-    if (m_settings && !m_settings->frameRerankEnabled()) {
-        if (!m_searchAssistantUsed) {
-            m_searchAssistantStatusText = QStringLiteral("候选帧视觉复核已关闭，当前使用本地排序");
-        }
-        m_searchAssistantBusy = false;
-        emit searchStateChanged();
-        return;
-    }
-    if (m_settings && !m_settings->allowSearchFrameUpload()) {
-        m_searchAssistantStatusText = m_searchAssistantUsed
-            ? QStringLiteral("模型已辅助理解；候选帧缩略图发送未授权，保留本地排序")
-            : QStringLiteral("候选帧缩略图发送未授权，保留本地排序");
-        m_searchAssistantBusy = false;
-        emit searchStateChanged();
-        return;
-    }
-    if (!m_settings) {
-        return;
-    }
-
-    const auto candidateCount = qMin(8, m_frames.size());
-    QVector<FrameSearchHit> candidates;
-    QStringList candidateKeys;
-    candidates.reserve(candidateCount);
-    for (int index = 0; index < candidateCount; ++index) {
-        candidates.append(m_frames.at(index));
-        candidateKeys.append(m_frames.at(index).frameKey);
-    }
-    const auto cacheKey = QStringLiteral("v1|%1|%2|%3")
-        .arg(m_settings->visionModel().toCaseFolded(),
-             m_searchText.simplified().toCaseFolded(),
-             candidateKeys.join(QLatin1Char('|')));
-    const auto cached = m_frameRerankCache.constFind(cacheKey);
-    if (cached != m_frameRerankCache.cend()) {
-        applyFrameRerank(cached.value());
-        m_searchAssistantBusy = false;
-        m_searchAssistantUsed = true;
-        m_searchAssistantStatusText = QStringLiteral("视觉语言模型已复核候选帧（缓存）");
-        emit searchStateChanged();
-        return;
-    }
-    if (m_frameRerankInFlight.contains(cacheKey)) {
-        m_searchAssistantBusy = true;
-        m_searchAssistantStatusText = QStringLiteral("视觉语言模型正在复核前 %1 个候选帧…").arg(candidateCount);
-        emit searchStateChanged();
-        return;
-    }
-    if (!m_visionApiClient
-        || m_settings->visionBaseUrl().isEmpty()
-        || m_settings->visionApiKey().isEmpty()
-        || m_settings->visionModel().isEmpty()) {
-        m_searchAssistantStatusText = QStringLiteral("视觉语言模型未完整配置，候选帧保持本地排序");
-        m_searchAssistantBusy = false;
-        emit searchStateChanged();
-        return;
-    }
-    const auto queryText = m_searchText.simplified();
-    const auto generation = m_searchGeneration;
-    const auto baseUrl = m_settings->visionBaseUrl();
-    const auto apiKey = m_settings->visionApiKey();
-    const auto model = m_settings->visionModel();
-    const auto timeoutSec = qBound(5, m_settings->analysisTimeoutSec(), 25);
-    auto *client = m_visionApiClient;
-    auto *watcher = new QFutureWatcher<FrameRerankTaskResult>(this);
-    m_frameRerankInFlight.insert(cacheKey);
-    m_searchAssistantBusy = true;
-    m_searchAssistantStatusText = QStringLiteral("视觉语言模型正在复核前 %1 个候选帧…").arg(candidateCount);
-    emit searchStateChanged();
-
-    connect(watcher, &QFutureWatcher<FrameRerankTaskResult>::finished, this, [this, watcher]() {
-        const auto task = watcher->result();
-        watcher->deleteLater();
-        m_frameRerankInFlight.remove(task.cacheKey);
-        if (task.generation != m_searchGeneration
-            || task.queryText != m_searchText.simplified()) {
-            m_searchAssistantBusy = !m_searchUnderstandingInFlight.isEmpty()
-                || !m_frameRerankInFlight.isEmpty();
-            emit searchStateChanged();
-            return;
-        }
-        m_searchAssistantBusy = false;
-        if (!task.scores.has_value()) {
-            m_searchAssistantStatusText = QStringLiteral("候选帧视觉复核失败，已保留原排序：%1")
-                .arg(task.errorMessage.isEmpty() ? QStringLiteral("未知错误") : task.errorMessage);
-            emit searchStateChanged();
-            return;
-        }
-        if (m_frameRerankCache.size() >= 32) {
-            m_frameRerankCache.erase(m_frameRerankCache.begin());
-        }
-        m_frameRerankCache.insert(task.cacheKey, *task.scores);
-        applyFrameRerank(*task.scores);
-        m_searchAssistantUsed = true;
-        m_searchAssistantStatusText = QStringLiteral("视觉语言模型已完成查询理解与候选帧复核");
-        emit searchStateChanged();
-    });
-
-    watcher->setFuture(QtConcurrent::run([client,
-                                          queryText,
-                                          candidates,
-                                          baseUrl,
-                                          apiKey,
-                                          model,
-                                          timeoutSec,
-                                          cacheKey,
-                                          generation]() {
-        FrameRerankTaskResult task;
-        task.cacheKey = cacheKey;
-        task.queryText = queryText;
-        task.generation = generation;
-        task.scores = client->rerankFrameCandidates(queryText,
-                                                    candidates,
-                                                    baseUrl,
-                                                    apiKey,
-                                                    model,
-                                                    timeoutSec,
-                                                    &task.errorMessage);
-        return task;
-    }));
-}
-
-void MaterialCenterViewModel::applyFrameRerank(const QVector<ModelFrameRerankScore> &scores)
-{
-    QHash<QString, ModelFrameRerankScore> byKey;
-    for (const auto &score : scores) {
-        byKey.insert(score.frameKey, score);
-    }
-    for (auto &frame : m_frames) {
-        const auto iterator = byKey.constFind(frame.frameKey);
-        if (iterator == byKey.cend()) {
-            continue;
-        }
-        frame.score = (frame.score * 0.7) + (iterator->score * 0.3);
-        frame.confidence = qBound(0.0,
-                                  (frame.confidence * 0.65) + (iterator->score * 0.35),
-                                  1.0);
-        const auto reason = iterator->reason.trimmed().isEmpty()
-            ? QStringLiteral("模型完成画面复核")
-            : iterator->reason.trimmed();
-        frame.reasons.append(QStringLiteral("视觉模型复核：%1").arg(reason));
-        frame.reasons.removeDuplicates();
-    }
-    std::stable_sort(m_frames.begin(), m_frames.end(), [&byKey](const auto &left, const auto &right) {
-        const auto leftIt = byKey.constFind(left.frameKey);
-        const auto rightIt = byKey.constFind(right.frameKey);
-        const auto category = [](auto iterator, auto end) {
-            if (iterator == end) return 1;
-            return iterator->relevant ? 0 : 2;
-        };
-        const auto leftCategory = category(leftIt, byKey.cend());
-        const auto rightCategory = category(rightIt, byKey.cend());
-        if (leftCategory != rightCategory) {
-            return leftCategory < rightCategory;
-        }
-        if (leftIt != byKey.cend() && rightIt != byKey.cend()
-            && !qFuzzyCompare(leftIt->score, rightIt->score)) {
-            return leftIt->score > rightIt->score;
-        }
-        return left.score > right.score;
-    });
-    m_frameModel->setItems(m_frames);
 }
 
 void MaterialCenterViewModel::setSearchText(const QString &searchText)
@@ -1380,10 +1306,40 @@ void MaterialCenterViewModel::setSourceFilter(const QString &sourceName)
 
 void MaterialCenterViewModel::setAssetTypeFilter(int assetType)
 {
-    if (m_assetTypeFilter == assetType) {
+    if (m_assetTypeFilter == assetType
+        && m_searchResultFilter == static_cast<int>(SearchResultQuickFilter::Smart)) {
         return;
     }
     m_assetTypeFilter = assetType;
+    m_searchResultFilter = static_cast<int>(SearchResultQuickFilter::Smart);
+    reload();
+}
+
+void MaterialCenterViewModel::setSearchResultFilter(int filter)
+{
+    const auto normalized = qBound(
+        static_cast<int>(SearchResultQuickFilter::Smart),
+        filter,
+        static_cast<int>(SearchResultQuickFilter::Document));
+    if (m_searchResultFilter == normalized) {
+        return;
+    }
+    m_searchResultFilter = normalized;
+    switch (static_cast<SearchResultQuickFilter>(normalized)) {
+    case SearchResultQuickFilter::Video:
+        m_assetTypeFilter = static_cast<int>(AssetType::Video);
+        break;
+    case SearchResultQuickFilter::Frames:
+    case SearchResultQuickFilter::Smart:
+        m_assetTypeFilter = -1;
+        break;
+    case SearchResultQuickFilter::Image:
+        m_assetTypeFilter = static_cast<int>(AssetType::Image);
+        break;
+    case SearchResultQuickFilter::Document:
+        m_assetTypeFilter = static_cast<int>(AssetType::Document);
+        break;
+    }
     reload();
 }
 
@@ -1393,15 +1349,6 @@ void MaterialCenterViewModel::setAnalysisStatusFilter(int status)
         return;
     }
     m_analysisStatusFilter = status;
-    reload();
-}
-
-void MaterialCenterViewModel::setConfirmationStatusFilter(int status)
-{
-    if (m_confirmationStatusFilter == status) {
-        return;
-    }
-    m_confirmationStatusFilter = status;
     reload();
 }
 
@@ -1645,61 +1592,6 @@ void MaterialCenterViewModel::analyzeVisibleAll()
                    : message);
 }
 
-void MaterialCenterViewModel::confirmVideo(const QString &videoKey)
-{
-    if (!m_analysisService) {
-        return;
-    }
-
-    const auto normalizedKey = videoKey.trimmed();
-    if (normalizedKey.isEmpty()) {
-        setMessage(QStringLiteral("请先选择一个素材。"));
-        return;
-    }
-
-    if (m_analysisService->confirmVideo(normalizedKey)) {
-        setMessage(QStringLiteral("已确认解析结果，解析图片将永久保留。"));
-        reload();
-    } else {
-        setMessage(QStringLiteral("确认解析结果失败。"));
-    }
-}
-
-void MaterialCenterViewModel::confirmVisible()
-{
-    if (!m_analysisService) {
-        return;
-    }
-
-    QStringList videoKeys;
-    for (const auto &asset : m_assets) {
-        if (canConfirmAsset(asset)) {
-            videoKeys.append(asset.videoKey);
-        }
-    }
-
-    if (videoKeys.isEmpty()) {
-        setMessage(QStringLiteral("当前结果没有待确认素材。"));
-        return;
-    }
-
-    const auto confirmed = m_analysisService->confirmVideos(videoKeys);
-    if (confirmed > 0) {
-        setMessage(QStringLiteral("已确认当前结果中的 %1 条素材，解析图片将永久保留。").arg(confirmed));
-        reload();
-    } else {
-        setMessage(QStringLiteral("全部确认失败。"));
-    }
-}
-
-void MaterialCenterViewModel::confirmSelected()
-{
-    if (!hasSelection()) {
-        return;
-    }
-    confirmVideo(m_detail.asset.videoKey);
-}
-
 bool MaterialCenterViewModel::openSelectedProject()
 {
     if (!hasSelection() || !m_projectService) {
@@ -1726,6 +1618,13 @@ bool MaterialCenterViewModel::openSelectedProject()
         return false;
     }
 
+    if (m_projectService->hasOpenProject()
+        && sameProjectDatabasePath(m_projectService->currentProject().databasePath,
+                                   m_detail.asset.projectDatabasePath)) {
+        setMessage(QStringLiteral("素材所属工程已打开。"));
+        return true;
+    }
+
     QString errorMessage;
     if (!m_projectService->openProject(m_detail.asset.projectDatabasePath, &errorMessage)) {
         setMessage(errorMessage);
@@ -1736,19 +1635,145 @@ bool MaterialCenterViewModel::openSelectedProject()
     return true;
 }
 
+bool MaterialCenterViewModel::openQuickSearchResult(const QString &videoKey)
+{
+    return openQuickSearchResultAtIndex(videoKey, -1);
+}
+
+bool MaterialCenterViewModel::openQuickSearchResultAtIndex(const QString &videoKey,
+                                                             int resultIndex)
+{
+    const auto normalizedKey = videoKey.trimmed();
+    if (normalizedKey.isEmpty()) {
+        setMessage(QStringLiteral("快捷搜索结果缺少素材标识，无法打开。"));
+        return false;
+    }
+
+    const auto targetAsset = assetForFileAction(normalizedKey);
+    if (targetAsset.videoKey.trimmed().isEmpty()
+        || targetAsset.projectDatabasePath.trimmed().isEmpty()) {
+        setMessage(QStringLiteral("无法找到快捷搜索结果所属工程，不能打开素材。"));
+        return false;
+    }
+
+    int targetFrameNumber = -1;
+    if (frameSearchMode()
+        && resultIndex >= 0
+        && resultIndex < m_frames.size()
+        && m_frames.at(resultIndex).videoKey == normalizedKey) {
+        targetFrameNumber = m_frames.at(resultIndex).frameNumber;
+    }
+
+    const auto quickSearchQuery = m_searchText;
+    const auto targetProjectUuid = targetAsset.projectUuid.trimmed();
+    selectVideo(normalizedKey);
+    if (!openSelectedProject()) {
+        return false;
+    }
+
+    // Opening another project clears ShellViewModel's global search text. Keep
+    // the quick-search query stable so the target remains in the result set.
+    if (m_searchText != quickSearchQuery) {
+        setSearchText(quickSearchQuery);
+        m_searchRefreshTimer->stop();
+    }
+
+    m_quickSearchRevealVideoKey = normalizedKey;
+    m_quickSearchRevealFrameNumber = targetFrameNumber;
+    if (!targetProjectUuid.isEmpty()) {
+        m_projectFilter = targetProjectUuid;
+        m_sourceFilter.clear();
+        m_analysisStatusFilter = -1;
+        reload();
+        selectVideo(normalizedKey);
+    }
+    ++m_quickSearchRevealRevision;
+    emit quickSearchRevealChanged();
+    emit quickSearchNavigationRequested(quickSearchQuery);
+    setMessage(QStringLiteral("已进入素材所属工程，并在素材管理中心定位目标。"));
+    return true;
+}
+
+bool MaterialCenterViewModel::openQuickSearchFolderResult(const QString &folderKey)
+{
+    if (!m_projectService) {
+        return false;
+    }
+
+    const auto folder = folderByKey(folderKey);
+    if (folder.folderKey.trimmed().isEmpty()
+        || folder.projectDatabasePath.trimmed().isEmpty()) {
+        setMessage(QStringLiteral("无法找到该文件夹所属工程。"));
+        return false;
+    }
+
+    const auto quickSearchQuery = m_searchText;
+    if (!m_projectService->hasOpenProject()
+        || !sameProjectDatabasePath(m_projectService->currentProject().databasePath,
+                                    folder.projectDatabasePath)) {
+        QString errorMessage;
+        if (!m_projectService->openProject(folder.projectDatabasePath, &errorMessage)) {
+            setMessage(errorMessage);
+            return false;
+        }
+    }
+
+    if (m_searchText != quickSearchQuery) {
+        setSearchText(quickSearchQuery);
+        m_searchRefreshTimer->stop();
+    }
+    m_projectFilter = folder.projectUuid.trimmed();
+    m_sourceFilter.clear();
+    m_analysisStatusFilter = -1;
+    reload();
+    emit quickSearchNavigationRequested(quickSearchQuery);
+    setMessage(QStringLiteral("已进入文件夹所属工程的素材管理中心。"));
+    return true;
+}
+
 void MaterialCenterViewModel::locateSelectedSource()
 {
     if (!hasSelection()) {
         return;
     }
 
-    const QFileInfo info(m_detail.asset.absolutePath);
-    const auto folder = info.exists() ? info.absolutePath() : QFileInfo(m_detail.asset.absolutePath).absolutePath();
-    if (folder.trimmed().isEmpty()) {
-        setMessage(QStringLiteral("无法定位素材文件夹。"));
+    QString errorMessage;
+    if (!FileRevealService::revealFile(m_detail.asset.absolutePath, &errorMessage)) {
+        setMessage(errorMessage.isEmpty() ? QStringLiteral("无法定位素材文件。") : errorMessage);
         return;
     }
-    QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+    setMessage(QStringLiteral("已打开所在目录并选中素材。"));
+}
+
+bool MaterialCenterViewModel::openAssetFolder(const QString &videoKey)
+{
+    const auto asset = assetForFileAction(videoKey);
+    if (asset.videoKey.trimmed().isEmpty() || asset.absolutePath.trimmed().isEmpty()) {
+        setMessage(QStringLiteral("素材所在目录当前不可用。"));
+        return false;
+    }
+
+    QString errorMessage;
+    if (!FileRevealService::revealFile(asset.absolutePath, &errorMessage)) {
+        setMessage(errorMessage.isEmpty() ? QStringLiteral("无法打开素材所在目录。") : errorMessage);
+        return false;
+    }
+    setMessage(QStringLiteral("已打开所在目录并选中素材。"));
+    return true;
+}
+
+bool MaterialCenterViewModel::copyAssetPath(const QString &videoKey)
+{
+    const auto asset = assetForFileAction(videoKey);
+    auto *clipboard = QGuiApplication::clipboard();
+    if (asset.videoKey.trimmed().isEmpty() || asset.absolutePath.trimmed().isEmpty() || !clipboard) {
+        setMessage(QStringLiteral("素材文件路径不可用，无法复制。"));
+        return false;
+    }
+
+    clipboard->setText(QDir::toNativeSeparators(QFileInfo(asset.absolutePath).absoluteFilePath()));
+    setMessage(QStringLiteral("已复制素材文件路径。"));
+    return true;
 }
 
 void MaterialCenterViewModel::openFolderProject(const QString &folderKey)
@@ -1780,9 +1805,26 @@ void MaterialCenterViewModel::locateFolder(const QString &folderKey)
         return;
     }
 
-    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(info.absoluteFilePath()))) {
-        setMessage(QStringLiteral("无法打开文件夹：%1").arg(info.absoluteFilePath()));
+    QString errorMessage;
+    if (!FileRevealService::openDirectory(info.absoluteFilePath(), &errorMessage)) {
+        setMessage(errorMessage.isEmpty()
+                       ? QStringLiteral("无法打开文件夹：%1").arg(info.absoluteFilePath())
+                       : errorMessage);
     }
+}
+
+bool MaterialCenterViewModel::copyFolderPath(const QString &folderKey)
+{
+    const auto folder = folderByKey(folderKey);
+    auto *clipboard = QGuiApplication::clipboard();
+    if (folder.folderKey.trimmed().isEmpty() || folder.absolutePath.trimmed().isEmpty() || !clipboard) {
+        setMessage(QStringLiteral("文件夹路径不可用，无法复制。"));
+        return false;
+    }
+
+    clipboard->setText(QDir::toNativeSeparators(QFileInfo(folder.absolutePath).absoluteFilePath()));
+    setMessage(QStringLiteral("已复制文件夹路径。"));
+    return true;
 }
 
 void MaterialCenterViewModel::toggleSelectedFramesExpanded()
@@ -1834,6 +1876,33 @@ GlobalVideoAsset MaterialCenterViewModel::assetByVideoKey(const QString &videoKe
         if (asset.videoKey == normalizedKey) {
             return asset;
         }
+    }
+    return {};
+}
+
+GlobalVideoAsset MaterialCenterViewModel::assetForFileAction(const QString &videoKey) const
+{
+    const auto normalizedKey = videoKey.trimmed();
+    if (normalizedKey.isEmpty()) {
+        return {};
+    }
+
+    auto asset = assetByVideoKey(normalizedKey);
+    if (!asset.videoKey.trimmed().isEmpty()) {
+        return asset;
+    }
+    if (m_detail.asset.videoKey == normalizedKey
+        && !m_detail.asset.absolutePath.trimmed().isEmpty()) {
+        return m_detail.asset;
+    }
+    if (m_detailCache.contains(normalizedKey)) {
+        asset = m_detailCache.value(normalizedKey).asset;
+        if (!asset.absolutePath.trimmed().isEmpty()) {
+            return asset;
+        }
+    }
+    if (m_queryService) {
+        return m_queryService->fetchDetail(normalizedKey).asset;
     }
     return {};
 }

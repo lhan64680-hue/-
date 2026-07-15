@@ -8,6 +8,8 @@
 #include <QJsonParseError>
 #include <QMap>
 #include <QMimeDatabase>
+#include <QPdfDocument>
+#include <QPdfSelection>
 #include <QRegularExpression>
 #include <QStringConverter>
 #include <QStringList>
@@ -627,6 +629,48 @@ QString extractXlsxPlainText(const QString &path, bool *truncated, QString *erro
     return sections.join(QStringLiteral("\n\n"));
 }
 
+QString extractPdfPlainText(const QString &path, bool *truncated, QString *errorMessage)
+{
+    QPdfDocument document;
+    const auto loadError = document.load(path);
+    if (loadError != QPdfDocument::Error::None || document.status() != QPdfDocument::Status::Ready) {
+        if (errorMessage) {
+            *errorMessage = loadError == QPdfDocument::Error::IncorrectPassword
+                ? QStringLiteral("PDF 已加密，需要密码后才能提取正文。")
+                : QStringLiteral("无法读取 PDF 正文（错误代码 %1）。").arg(static_cast<int>(loadError));
+        }
+        return {};
+    }
+
+    QStringList pages;
+    qsizetype totalCharacters = 0;
+    for (int page = 0; page < document.pageCount(); ++page) {
+        auto pageText = document.getAllText(page).text().trimmed();
+        if (pageText.isEmpty()) {
+            continue;
+        }
+        const auto remaining = kMaxSummaryTextChars - totalCharacters;
+        if (remaining <= 0) {
+            if (truncated) *truncated = true;
+            break;
+        }
+        if (pageText.size() > remaining) {
+            pageText.truncate(remaining);
+            if (truncated) *truncated = true;
+        }
+        pages.append(pageText);
+        totalCharacters += pageText.size() + 2;
+        if (totalCharacters >= kMaxSummaryTextChars) {
+            if (page + 1 < document.pageCount() && truncated) *truncated = true;
+            break;
+        }
+    }
+    if (pages.isEmpty() && errorMessage) {
+        *errorMessage = QStringLiteral("PDF 没有可提取的文字，可能是扫描图片文档。可先执行 OCR 后再生成摘要。");
+    }
+    return pages.join(QStringLiteral("\n\n"));
+}
+
 PreviewPayload buildPreviewPayload(const QString &path)
 {
     const auto suffix = QFileInfo(path).suffix().toLower();
@@ -754,8 +798,7 @@ QString DocumentPreviewService::extractTextForSummary(const QString &path, bool 
 
     const auto suffix = info.suffix().toLower();
     QString text;
-    if (suffix == QStringLiteral("pdf")
-        || suffix == QStringLiteral("doc")
+    if (suffix == QStringLiteral("doc")
         || suffix == QStringLiteral("xls")
         || suffix == QStringLiteral("ppt")) {
         if (errorMessage) {
@@ -763,7 +806,9 @@ QString DocumentPreviewService::extractTextForSummary(const QString &path, bool 
         }
         return {};
     }
-    if (suffix == QStringLiteral("docx")) {
+    if (suffix == QStringLiteral("pdf")) {
+        text = extractPdfPlainText(info.absoluteFilePath(), truncated, errorMessage);
+    } else if (suffix == QStringLiteral("docx")) {
         text = extractDocxPlainText(info.absoluteFilePath(), errorMessage);
     } else if (suffix == QStringLiteral("xlsx")) {
         text = extractXlsxPlainText(info.absoluteFilePath(), truncated, errorMessage);

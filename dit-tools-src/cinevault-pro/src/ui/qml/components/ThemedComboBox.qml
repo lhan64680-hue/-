@@ -84,12 +84,18 @@ ComboBox {
         padding: 1
 
         contentItem: ListView {
+            id: popupList
+
             clip: true
             implicitHeight: contentHeight
             model: control.popup.visible ? control.delegateModel : null
             currentIndex: control.highlightedIndex
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ThemedScrollBar { policy: ScrollBar.AsNeeded }
+
+            MiddleDragScrollHandler {
+                flickable: popupList
+            }
         }
 
         background: Rectangle {

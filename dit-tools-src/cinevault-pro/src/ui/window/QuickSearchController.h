@@ -43,6 +43,7 @@ public:
                                       const QPoint &fallbackPoint);
 
     Q_INVOKABLE void requestQuickSearch();
+    Q_INVOKABLE bool restoreMainWindow(QObject *windowObject);
     Q_INVOKABLE QPoint restoredWindowPosition(int windowWidth, int windowHeight) const;
     Q_INVOKABLE QPoint rememberWindowPosition(int x, int y, int windowWidth, int windowHeight);
 

@@ -3,8 +3,10 @@
 #include "application/FeedbackService.h"
 #include "application/ImportService.h"
 #include "application/ProjectService.h"
+#include "application/StorageVolumeService.h"
 
 #include <QApplication>
+#include <QDir>
 #include <QMessageBox>
 #include <QVariantMap>
 
@@ -31,11 +33,16 @@ QVariantMap workspaceTab(const QString &label, WorkspaceId workspace, int button
 }
 }
 
-ShellViewModel::ShellViewModel(ProjectService *projectService, ImportService *importService, FeedbackService *feedbackService, QObject *parent)
+ShellViewModel::ShellViewModel(ProjectService *projectService,
+                               ImportService *importService,
+                               FeedbackService *feedbackService,
+                               StorageVolumeService *storageVolumeService,
+                               QObject *parent)
     : QObject(parent)
     , m_projectService(projectService)
     , m_importService(importService)
     , m_feedbackService(feedbackService)
+    , m_storageVolumeService(storageVolumeService)
 {
     connect(m_projectService, &ProjectService::projectChanged, this, &ShellViewModel::stateChanged);
     connect(m_importService, &ImportService::importStateChanged, this, [this]() {
@@ -44,6 +51,12 @@ ShellViewModel::ShellViewModel(ProjectService *projectService, ImportService *im
     });
     if (m_feedbackService) {
         connect(m_feedbackService, &FeedbackService::unreadCountChanged, this, &ShellViewModel::stateChanged);
+    }
+    if (m_storageVolumeService) {
+        connect(m_storageVolumeService,
+                &StorageVolumeService::volumesChanged,
+                this,
+                &ShellViewModel::storageVolumesChanged);
     }
 }
 
@@ -131,6 +144,11 @@ int ShellViewModel::feedbackWorkspaceId() const
     return static_cast<int>(WorkspaceId::Feedback);
 }
 
+QVariantList ShellViewModel::storageVolumes() const
+{
+    return m_storageVolumeService ? m_storageVolumeService->volumes() : QVariantList{};
+}
+
 void ShellViewModel::resetProjectUiState()
 {
     if (!m_projectService->hasOpenProject()) {
@@ -162,6 +180,37 @@ void ShellViewModel::enterProjectFromLibrary()
         m_currentWorkspace = WorkspaceId::Library;
         emit currentWorkspaceChanged();
     }
+    emit stateChanged();
+    emit searchRequested(m_globalSearchText);
+}
+
+void ShellViewModel::enterMaterialCenterFromQuickSearch(const QString &searchText)
+{
+    if (!m_projectService->hasOpenProject()) {
+        m_projectEntered = false;
+        m_lastMessage = QStringLiteral("无法定位快捷搜索结果：所属工程尚未打开。");
+        if (m_currentWorkspace != WorkspaceId::ProjectLibrary) {
+            m_currentWorkspace = WorkspaceId::ProjectLibrary;
+            emit currentWorkspaceChanged();
+        }
+        emit stateChanged();
+        return;
+    }
+
+    // Apply the complete navigation state before dispatching the search. This
+    // avoids briefly entering the library workspace and sending the query to
+    // the wrong view model while a project is being opened from quick search.
+    m_projectEntered = true;
+    const bool searchChanged = m_globalSearchText != searchText;
+    if (searchChanged) {
+        m_globalSearchText = searchText;
+        emit globalSearchTextChanged();
+    }
+    if (m_currentWorkspace != WorkspaceId::MaterialCenter) {
+        m_currentWorkspace = WorkspaceId::MaterialCenter;
+        emit currentWorkspaceChanged();
+    }
+    m_lastMessage = QStringLiteral("已进入素材管理中心并定位快捷搜索结果。");
     emit stateChanged();
     emit searchRequested(m_globalSearchText);
 }
@@ -276,6 +325,23 @@ bool ShellViewModel::importSourcePath(const QString &directoryPath)
     }
     emit stateChanged();
     return true;
+}
+
+bool ShellViewModel::importStorageVolume(const QString &rootPath)
+{
+    const auto imported = importSourcePath(rootPath);
+    if (imported) {
+        m_lastMessage = QStringLiteral("已开始建立磁盘卷全盘索引：%1").arg(QDir::toNativeSeparators(rootPath));
+        emit stateChanged();
+    }
+    return imported;
+}
+
+void ShellViewModel::refreshStorageVolumes()
+{
+    if (m_storageVolumeService) {
+        m_storageVolumeService->refresh();
+    }
 }
 
 void ShellViewModel::cancelAddSourceDirectory()

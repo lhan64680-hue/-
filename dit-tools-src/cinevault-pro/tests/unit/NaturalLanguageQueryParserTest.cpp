@@ -95,6 +95,42 @@ private slots:
         QCOMPARE(query.semanticText, QStringLiteral("夜景"));
     }
 
+    void parsesOneCalendarMonthAgoAsExactDate()
+    {
+        NaturalLanguageQueryParser parser;
+        const auto query = parser.parse(QStringLiteral("搜索一个月前的视频素材"),
+                                        QDate(2026, 7, 31));
+
+        QCOMPARE(query.dateConstraint.startDate, QStringLiteral("2026-06-30"));
+        QCOMPARE(query.dateConstraint.endDate, QStringLiteral("2026-06-30"));
+        QCOMPARE(query.dateConstraint.matchedText, QStringLiteral("一个月前"));
+        QCOMPARE(query.assetTypeFilter, static_cast<int>(AssetType::Video));
+        QVERIFY(query.semanticText.isEmpty());
+    }
+
+    void parsesBeforeOneMonthAsCutoffRange()
+    {
+        NaturalLanguageQueryParser parser;
+        const auto query = parser.parse(QStringLiteral("一个月之前的图片"),
+                                        QDate(2026, 7, 15));
+
+        QCOMPARE(query.dateConstraint.startDate, QStringLiteral("0001-01-01"));
+        QCOMPARE(query.dateConstraint.endDate, QStringLiteral("2026-06-14"));
+        QCOMPARE(query.dateConstraint.matchedText, QStringLiteral("一个月之前"));
+        QCOMPARE(query.assetTypeFilter, static_cast<int>(AssetType::Image));
+    }
+
+    void parsesRecentCalendarMonthAsRange()
+    {
+        NaturalLanguageQueryParser parser;
+        const auto query = parser.parse(QStringLiteral("最近一个月的夜景视频"),
+                                        QDate(2026, 7, 15));
+
+        QCOMPARE(query.dateConstraint.startDate, QStringLiteral("2026-06-15"));
+        QCOMPARE(query.dateConstraint.endDate, QStringLiteral("2026-07-15"));
+        QCOMPARE(query.semanticText, QStringLiteral("夜景"));
+    }
+
     void keepsCaptureAsVisualMeaningWithoutDate()
     {
         NaturalLanguageQueryParser parser;
@@ -147,12 +183,15 @@ private slots:
     {
         NaturalLanguageQueryParser parser;
         const auto visual = parser.parse(QStringLiteral("找雨夜里有人撑伞的画面"));
+        QCOMPARE(visual.resultTarget, SearchResultTarget::Frames);
+        QVERIFY(visual.frameIntent);
         QCOMPARE(visual.semanticText, QStringLiteral("雨夜里有人撑伞"));
         QVERIFY(visual.lexicalTerms.contains(QStringLiteral("雨夜")));
         QVERIFY(visual.lexicalTerms.contains(QStringLiteral("撑伞")));
         QVERIFY(visual.lexicalTerms.contains(QStringLiteral("伞")));
 
         const auto ocr = parser.parse(QStringLiteral("找画面文字写着“新品发布”的视频"));
+        QCOMPARE(ocr.resultTarget, SearchResultTarget::Assets);
         QCOMPARE(ocr.ocrText, QStringLiteral("新品发布"));
         QVERIFY(ocr.lexicalTerms.contains(QStringLiteral("新品发布")));
         QVERIFY(ocr.interpretationLabels.contains(QStringLiteral("画面文字：新品发布")));
@@ -173,6 +212,24 @@ private slots:
         QVERIFY(query.strictEntities.first().materials.isEmpty());
         QVERIFY(query.interpretationLabels.contains(QStringLiteral("目标：视觉帧")));
         QVERIFY(!query.lexicalTerms.contains(QStringLiteral("帧")));
+    }
+
+    void pictureAndFrameAreEquivalentResultIntents()
+    {
+        NaturalLanguageQueryParser parser;
+        const auto frame = parser.parse(QStringLiteral("有男人穿着牛仔裤的帧"));
+        const auto picture = parser.parse(QStringLiteral("有男人穿着牛仔裤的画面"));
+
+        QCOMPARE(frame.resultTarget, SearchResultTarget::Frames);
+        QCOMPARE(picture.resultTarget, SearchResultTarget::Frames);
+        QCOMPARE(frame.semanticText, picture.semanticText);
+        QVERIFY(frame.strictEntities.isEmpty());
+        QVERIFY(picture.strictEntities.isEmpty());
+        QCOMPARE(frame.explicitEntityLabels.size(), 2);
+        QVERIFY(frame.explicitEntityLabels.contains(QStringLiteral("男人")));
+        QVERIFY(frame.explicitEntityLabels.contains(QStringLiteral("牛仔裤")));
+        QVERIFY(frame.lexicalTerms.contains(QStringLiteral("男人")));
+        QVERIFY(frame.lexicalTerms.contains(QStringLiteral("牛仔裤")));
     }
 };
 

@@ -94,7 +94,7 @@ bool collectSearchDocuments(QSqlDatabase db,
     assetQuery.prepare(QStringLiteral(
         "SELECT g.video_key, g.project_name, g.source_root_name, g.file_name, "
         "g.extension, g.absolute_path, g.relative_path, g.asset_type, "
-        "g.technical_summary, g.source_text, g.modified_at, g.capture_time, g.capture_date, "
+        "g.technical_summary, g.embedded_metadata_text, g.source_text, g.modified_at, g.capture_time, g.capture_date, "
         "g.capture_time_source, g.capture_time_confidence, g.updated_at, "
         "COALESCE(r.summary, ''), COALESCE(r.keywords_json, ''), "
         "COALESCE(r.scenes_json, ''), COALESCE(r.search_text, ''), "
@@ -120,14 +120,14 @@ bool collectSearchDocuments(QSqlDatabase db,
                     {assetQuery.value(1), assetQuery.value(2), assetQuery.value(3),
                      assetQuery.value(4), assetQuery.value(5), assetQuery.value(6),
                      Formatters::assetTypeLabel(static_cast<AssetType>(assetQuery.value(7).toInt())),
-                     assetQuery.value(8), assetQuery.value(9), assetQuery.value(10),
-                     assetQuery.value(11), assetQuery.value(12), assetQuery.value(13),
-                     assetQuery.value(16), assetQuery.value(17), assetQuery.value(18),
-                     assetQuery.value(19)});
+                     assetQuery.value(8), assetQuery.value(9), assetQuery.value(10), assetQuery.value(11),
+                     assetQuery.value(12), assetQuery.value(13), assetQuery.value(14),
+                     assetQuery.value(17), assetQuery.value(18), assetQuery.value(19),
+                     assetQuery.value(20)});
         assetParts.insert(input.entityKey, std::move(parts));
-        input.sourceUpdatedAt = assetQuery.value(15).toString();
-        updateSourceTimestamp(&input, assetQuery.value(20).toString());
+        input.sourceUpdatedAt = assetQuery.value(16).toString();
         updateSourceTimestamp(&input, assetQuery.value(21).toString());
+        updateSourceTimestamp(&input, assetQuery.value(22).toString());
         byDocumentKey.insert(input.documentKey, std::move(input));
     }
 

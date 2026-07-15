@@ -283,6 +283,10 @@ Rectangle {
                 }
             }
 
+            MiddleDragScrollHandler {
+                flickable: assetGrid
+            }
+
             DragHandler {
                 target: null
                 acceptedDevices: PointerDevice.Mouse
@@ -323,9 +327,14 @@ Rectangle {
                     id: cardContextMenu
 
                     ThemedMenuItem {
-                        text: "打开文件所在目录"
+                        text: "打开所在目录"
                         onTriggered: viewModel.openAssetFolder(assetId)
                     }
+                    ThemedMenuItem {
+                        text: "复制文件路径"
+                        onTriggered: viewModel.copyAssetPath(assetId)
+                    }
+                    ThemedMenuSeparator {}
                     ThemedMenuItem {
                         text: favorite ? "取消收藏" : "收藏"
                         onTriggered: viewModel.toggleAssetFavorite(assetId)
@@ -365,6 +374,12 @@ Rectangle {
             property real dragLastX: 0
             property real dragLastY: 0
             ScrollBar.horizontal: ThemedScrollBar { policy: ScrollBar.AsNeeded }
+
+            MiddleDragScrollHandler {
+                flickable: tableFlick
+                horizontalFlickable: tableFlick
+                verticalFlickable: tableList
+            }
 
             DragHandler {
                 target: null
@@ -454,9 +469,14 @@ Rectangle {
                         id: rowContextMenu
 
                         ThemedMenuItem {
-                            text: "打开文件所在目录"
+                            text: "打开所在目录"
                             onTriggered: viewModel.openAssetFolder(assetId)
                         }
+                        ThemedMenuItem {
+                            text: "复制文件路径"
+                            onTriggered: viewModel.copyAssetPath(assetId)
+                        }
+                        ThemedMenuSeparator {}
                         ThemedMenuItem {
                             text: favorite ? "取消收藏" : "收藏"
                             onTriggered: viewModel.toggleAssetFavorite(assetId)

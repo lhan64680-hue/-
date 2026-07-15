@@ -70,14 +70,15 @@ private:
                 "INSERT INTO global_video_asset("
                 "video_key, project_uuid, project_name, project_database_path, source_root_id, source_root_name, "
                 "asset_id, file_name, extension, absolute_path, relative_path, asset_type, modified_at, "
-                "technical_summary, source_text, updated_at) VALUES "
+                "technical_summary, embedded_metadata_text, source_text, updated_at) VALUES "
                 "('asset-summit', 'project-search', '雪山广告项目', 'G:/projects/search/project.sqlite', "
                 "1, '主摄影机', 1, 'clip001.mov', 'mov', 'G:/projects/search/clip001.mov', "
-                "'山顶日出/clip001.mov', 1, '2026-07-14T07:00:00', 'ProRes 4K', '', "
+                "'山顶日出/clip001.mov', 1, '2026-07-14T07:00:00', 'ProRes 4K', "
+                "'EXIF:Make Sony EXIF:Model AlphaA7M4', '', "
                 "'2026-07-14T08:00:00'), "
                 "('asset-contract', 'project-search', '雪山广告项目', 'G:/projects/search/project.sqlite', "
                 "1, '制作文档', 2, 'contract.md', 'md', 'G:/projects/search/contract.md', "
-                "'docs/contract.md', 6, '2026-07-14T07:00:00', 'Markdown 文档', "
+                "'docs/contract.md', 6, '2026-07-14T07:00:00', 'Markdown 文档', '', "
                 "'品牌独家授权合同', '2026-07-14T08:00:00')"),
             QStringLiteral(
                 "INSERT INTO video_analysis_result("
@@ -145,6 +146,7 @@ private slots:
         QVERIFY(content.contains(QStringLiteral("红色牛仔短裤")));
         QVERIFY(content.contains(QStringLiteral("适合户外运动广告")));
         QVERIFY(content.contains(QStringLiteral("SUMMIT")));
+        QVERIFY(content.contains(QStringLiteral("AlphaA7M4")));
         QCOMPARE(contentQuery.value(1).toString(), QStringLiteral("2026-07-14T09:10:00"));
 
         QSqlQuery frameDocumentQuery(fixture.manager.database());

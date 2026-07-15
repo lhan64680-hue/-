@@ -1,9 +1,11 @@
 #include "ui/viewmodels/SettingsViewModel.h"
 
 #include "application/UpdateService.h"
+#include "application/SearchAssistantLifecycleController.h"
 #include "domain/Enums.h"
 #include "infrastructure/config/AppSettings.h"
 #include "infrastructure/network/VisionApiClient.h"
+#include "infrastructure/search/LocalSearchAssistantRuntime.h"
 #include "shared/Formatters.h"
 #include "shared/Paths.h"
 #include "ui/window/QuickSearchController.h"
@@ -32,6 +34,14 @@ QWidget *dialogParent()
 {
     return QApplication::activeWindow();
 }
+
+QString autoUnloadTimeLabel(int minutes)
+{
+    if (minutes >= 60 && minutes % 60 == 0) {
+        return QStringLiteral("%1小时").arg(minutes / 60);
+    }
+    return QStringLiteral("%1分钟").arg(minutes);
+}
 }
 
 SettingsViewModel::SettingsViewModel(AppSettings *settings,
@@ -39,6 +49,8 @@ SettingsViewModel::SettingsViewModel(AppSettings *settings,
                                      VideoAnalysisService *videoAnalysisService,
                                      UpdateService *updateService,
                                      QuickSearchController *quickSearchController,
+                                     LocalSearchAssistantRuntime *localSearchAssistantRuntime,
+                                     SearchAssistantLifecycleController *searchAssistantLifecycleController,
                                      QObject *parent)
     : QObject(parent)
     , m_settings(settings)
@@ -46,10 +58,24 @@ SettingsViewModel::SettingsViewModel(AppSettings *settings,
     , m_videoAnalysisService(videoAnalysisService)
     , m_updateService(updateService)
     , m_quickSearchController(quickSearchController)
+    , m_localSearchAssistantRuntime(localSearchAssistantRuntime)
+    , m_searchAssistantLifecycleController(searchAssistantLifecycleController)
 {
     if (m_quickSearchController) {
         connect(m_quickSearchController,
                 &QuickSearchController::shortcutStatusChanged,
+                this,
+                &SettingsViewModel::settingsChanged);
+    }
+    if (m_localSearchAssistantRuntime) {
+        connect(m_localSearchAssistantRuntime,
+                &LocalSearchAssistantRuntime::statusChanged,
+                this,
+                &SettingsViewModel::settingsChanged);
+    }
+    if (m_searchAssistantLifecycleController) {
+        connect(m_searchAssistantLifecycleController,
+                &SearchAssistantLifecycleController::lifecycleChanged,
                 this,
                 &SettingsViewModel::settingsChanged);
     }
@@ -123,42 +149,32 @@ void SettingsViewModel::setSearchAssistantEnabled(bool enabled)
 {
     if (!m_settings || m_settings->searchAssistantEnabled() == enabled) return;
     m_settings->setSearchAssistantEnabled(enabled);
+    m_settings->sync();
+    if (m_searchAssistantLifecycleController) {
+        m_searchAssistantLifecycleController->applySettings();
+    }
     emit settingsChanged();
 }
 
-bool SettingsViewModel::frameRerankEnabled() const
+int SettingsViewModel::searchAssistantAutoUnloadMinutes() const
 {
-    return m_settings && m_settings->frameRerankEnabled();
+    return m_settings ? m_settings->searchAssistantAutoUnloadMinutes() : 60;
 }
 
-void SettingsViewModel::setFrameRerankEnabled(bool enabled)
+void SettingsViewModel::setSearchAssistantAutoUnloadMinutes(int minutes)
 {
-    if (!m_settings || m_settings->frameRerankEnabled() == enabled) return;
-    m_settings->setFrameRerankEnabled(enabled);
-    emit settingsChanged();
-}
-
-bool SettingsViewModel::localOnlySearch() const
-{
-    return m_settings && m_settings->localOnlySearch();
-}
-
-void SettingsViewModel::setLocalOnlySearch(bool enabled)
-{
-    if (!m_settings || m_settings->localOnlySearch() == enabled) return;
-    m_settings->setLocalOnlySearch(enabled);
-    emit settingsChanged();
-}
-
-bool SettingsViewModel::allowSearchFrameUpload() const
-{
-    return m_settings && m_settings->allowSearchFrameUpload();
-}
-
-void SettingsViewModel::setAllowSearchFrameUpload(bool enabled)
-{
-    if (!m_settings || m_settings->allowSearchFrameUpload() == enabled) return;
-    m_settings->setAllowSearchFrameUpload(enabled);
+    if (!m_settings) {
+        return;
+    }
+    const auto normalized = qBound(5, minutes, 24 * 60);
+    if (m_settings->searchAssistantAutoUnloadMinutes() == normalized) {
+        return;
+    }
+    m_settings->setSearchAssistantAutoUnloadMinutes(normalized);
+    m_settings->sync();
+    if (m_searchAssistantLifecycleController) {
+        m_searchAssistantLifecycleController->applySettings();
+    }
     emit settingsChanged();
 }
 
@@ -289,6 +305,39 @@ void SettingsViewModel::setCloseButtonBehavior(int value)
     m_settings->setCloseButtonBehavior(normalized);
     m_settings->sync();
     emit settingsChanged();
+}
+
+QString SettingsViewModel::localSearchAssistantStatusText() const
+{
+    const auto unloadMinutes = searchAssistantAutoUnloadMinutes();
+    const auto unloadLabel = autoUnloadTimeLabel(unloadMinutes);
+    if (!searchAssistantEnabled()) {
+        return QStringLiteral("内置文本模型已关闭，不会在软件启动时加载");
+    }
+    if (!m_localSearchAssistantRuntime) {
+        return QStringLiteral("内置文本模型运行时未初始化");
+    }
+    if (!m_localSearchAssistantRuntime->assetsAvailable()) {
+        return QStringLiteral("内置文本模型资产缺失，搜索会自动退回本地规则");
+    }
+    if (m_searchAssistantLifecycleController
+        && m_searchAssistantLifecycleController->isIdleUnloaded()) {
+        return QStringLiteral("软件无操作 %1，模型已自动卸载；恢复操作后会自动重新加载")
+            .arg(unloadLabel);
+    }
+    if (m_localSearchAssistantRuntime->isReady()) {
+        return QStringLiteral("Qwen3 0.6B 本地模型已就绪（GPU：%1）；软件无操作 %2 后自动卸载")
+            .arg(m_localSearchAssistantRuntime->gpuDeviceName(), unloadLabel);
+    }
+    if (m_localSearchAssistantRuntime->isStarting()) {
+        return QStringLiteral("Qwen3 0.6B 本地模型正在启动…");
+    }
+    if (!m_localSearchAssistantRuntime->lastError().isEmpty()) {
+        return QStringLiteral("内置文本模型上次启动失败：%1")
+            .arg(m_localSearchAssistantRuntime->lastError());
+    }
+    return QStringLiteral("Qwen3 0.6B 已内置，将在软件启动后自动加载；无操作 %1 后自动卸载")
+        .arg(unloadLabel);
 }
 
 bool SettingsViewModel::updateBusy() const
@@ -450,9 +499,7 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
                                      const QString &visionApiKey,
                                      const QString &visionModel,
                                      bool searchAssistantEnabled,
-                                     bool frameRerankEnabled,
-                                     bool localOnlySearch,
-                                     bool allowSearchFrameUpload,
+                                     int searchAssistantAutoUnloadMinutes,
                                      bool quickSearchEnabled,
                                      const QString &quickSearchShortcut,
                                      bool startAtLogin,
@@ -494,9 +541,7 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
     m_settings->setVisionApiKey(visionApiKey);
     m_settings->setVisionModel(visionModel);
     m_settings->setSearchAssistantEnabled(searchAssistantEnabled);
-    m_settings->setFrameRerankEnabled(frameRerankEnabled);
-    m_settings->setLocalOnlySearch(localOnlySearch);
-    m_settings->setAllowSearchFrameUpload(allowSearchFrameUpload);
+    m_settings->setSearchAssistantAutoUnloadMinutes(searchAssistantAutoUnloadMinutes);
     m_settings->setQuickSearchEnabled(quickSearchEnabled);
     m_settings->setQuickSearchShortcut(normalizedShortcut);
     m_settings->setStartAtLogin(startAtLogin);
@@ -515,8 +560,11 @@ void SettingsViewModel::saveAndApply(const QString &visionBaseUrl,
     m_settings->setUpdateDownloadMode(updateDownloadMode);
     m_settings->setUpdateManualProxyUrl(updateManualProxyUrl);
     m_settings->sync();
+    if (m_searchAssistantLifecycleController) {
+        m_searchAssistantLifecycleController->applySettings();
+    }
 
-    setLastMessage(QStringLiteral("设置已保存并应用，快捷搜索、素材解析与搜索将使用新参数。"));
+    setLastMessage(QStringLiteral("设置已保存并应用，快捷搜索、模型自动卸载、素材解析与搜索将使用新参数。"));
     emit settingsChanged();
     emit searchSettingsChanged();
 }

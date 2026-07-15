@@ -1,5 +1,7 @@
 #include "application/MaterialCenterQueryService.h"
 
+#include "core/search/SearchReliabilityEvaluator.h"
+
 #include "core/search/SearchEngine.h"
 #include "infrastructure/db/GlobalDatabaseManager.h"
 #include "shared/Formatters.h"
@@ -134,18 +136,43 @@ bool valueMatches(const QString &value, const QString &required)
             || normalizedRequired.contains(normalizedValue));
 }
 
+QStringList entityLabelAliases(const QString &label)
+{
+    const auto normalized = label.simplified().toCaseFolded();
+    const QVector<QStringList> aliasGroups{
+        {QStringLiteral("牛仔裤"), QStringLiteral("长裤"), QStringLiteral("裤子"),
+         QStringLiteral("丹宁裤")},
+        {QStringLiteral("男人"), QStringLiteral("男性"), QStringLiteral("男子"),
+         QStringLiteral("男士")},
+        {QStringLiteral("女人"), QStringLiteral("女性"), QStringLiteral("女子"),
+         QStringLiteral("女士")}
+    };
+    for (const auto &group : aliasGroups) {
+        const bool belongsToGroup = std::any_of(
+            group.cbegin(), group.cend(), [&normalized](const QString &alias) {
+                return normalized == alias || normalized.contains(alias);
+            });
+        if (belongsToGroup) {
+            return group;
+        }
+    }
+    return normalized.isEmpty() ? QStringList{} : QStringList{normalized};
+}
+
 bool entityLabelMatches(const QString &value, const QString &required)
 {
     if (valueMatches(value, required)) {
         return true;
     }
-    const auto normalizedValue = value.simplified().toCaseFolded();
-    const auto normalizedRequired = required.simplified().toCaseFolded();
-    const QStringList denimTrouserLabels{
-        QStringLiteral("牛仔裤"), QStringLiteral("长裤"), QStringLiteral("裤子")
-    };
-    return denimTrouserLabels.contains(normalizedRequired)
-        && denimTrouserLabels.contains(normalizedValue);
+    const auto valueAliases = entityLabelAliases(value);
+    const auto requiredAliases = entityLabelAliases(required);
+    return std::any_of(valueAliases.cbegin(), valueAliases.cend(),
+                       [&requiredAliases](const QString &valueAlias) {
+        return std::any_of(requiredAliases.cbegin(), requiredAliases.cend(),
+                           [&valueAlias](const QString &requiredAlias) {
+            return valueMatches(valueAlias, requiredAlias);
+        });
+    });
 }
 
 bool listContainsAll(const QStringList &values, const QStringList &requiredValues)
@@ -217,7 +244,17 @@ bool frameTextMatchesAllConstraints(const FrameSearchHit &frame,
 {
     const auto searchable = frameSearchableText(frame);
     for (const auto &constraint : constraints) {
-        for (const auto &term : constraint.allTerms()) {
+        const auto labelAliases = entityLabelAliases(constraint.label);
+        const bool labelMatched = std::any_of(
+            labelAliases.cbegin(), labelAliases.cend(), [&searchable](const QString &alias) {
+                return searchable.contains(alias.simplified().toCaseFolded());
+            });
+        if (!labelMatched) {
+            return false;
+        }
+        const auto requiredProperties = constraint.colors
+            + constraint.materials + constraint.attributes;
+        for (const auto &term : requiredProperties) {
             if (!searchable.contains(term.simplified().toCaseFolded())) {
                 return false;
             }
@@ -231,7 +268,11 @@ QString matchingFrameEvidenceText(const FrameSearchHit &frame,
 {
     QStringList normalizedTerms;
     for (const auto &constraint : constraints) {
-        for (const auto &term : constraint.allTerms()) {
+        auto evidenceTerms = entityLabelAliases(constraint.label);
+        evidenceTerms.append(constraint.colors);
+        evidenceTerms.append(constraint.materials);
+        evidenceTerms.append(constraint.attributes);
+        for (const auto &term : evidenceTerms) {
             const auto normalized = term.simplified().toCaseFolded();
             if (!normalized.isEmpty() && !normalizedTerms.contains(normalized)) {
                 normalizedTerms.append(normalized);
@@ -496,10 +537,12 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
     MaterialSearchResult result;
     if (!m_globalDatabaseManager || !m_globalDatabaseManager->isOpen()) {
         result.warningMessage = QStringLiteral("全局素材数据库尚未打开");
+        result.reliability = SearchReliabilityEvaluator::evaluate(result);
         return result;
     }
     if (!m_searchEngine) {
         result.warningMessage = QStringLiteral("混合检索引擎尚未初始化");
+        result.reliability = SearchReliabilityEvaluator::evaluate(result);
         return result;
     }
 
@@ -968,6 +1011,7 @@ MaterialSearchResult MaterialCenterQueryService::searchMaterials(
         }
         result.assets.append(std::move(resolvedAsset));
     }
+    result.reliability = SearchReliabilityEvaluator::evaluate(result);
     return result;
 }
 

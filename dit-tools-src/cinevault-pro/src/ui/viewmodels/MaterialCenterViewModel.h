@@ -20,7 +20,8 @@ class ProjectService;
 class SearchDocumentSyncService;
 class VideoAnalysisService;
 class AppSettings;
-class VisionApiClient;
+class LocalSearchAssistantRuntime;
+class SearchAssistantClient;
 
 class MaterialCenterViewModel : public QObject {
     Q_OBJECT
@@ -53,13 +54,16 @@ class MaterialCenterViewModel : public QObject {
     Q_PROPERTY(QString projectFilter READ projectFilter NOTIFY filtersChanged)
     Q_PROPERTY(QString sourceFilter READ sourceFilter NOTIFY filtersChanged)
     Q_PROPERTY(int assetTypeFilter READ assetTypeFilter NOTIFY filtersChanged)
+    Q_PROPERTY(int searchResultFilter READ searchResultFilter NOTIFY filtersChanged)
     Q_PROPERTY(int analysisStatusFilter READ analysisStatusFilter NOTIFY filtersChanged)
-    Q_PROPERTY(int confirmationStatusFilter READ confirmationStatusFilter NOTIFY filtersChanged)
     Q_PROPERTY(QVariantList analysisStatusOptions READ analysisStatusOptions CONSTANT)
-    Q_PROPERTY(QVariantList confirmationStatusOptions READ confirmationStatusOptions CONSTANT)
     Q_PROPERTY(QString selectedVideoKey READ selectedVideoKey NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedAssetKey READ selectedAssetKey NOTIFY selectionChanged)
     Q_PROPERTY(int selectedVideoIndex READ selectedVideoIndex NOTIFY selectionChanged)
+    Q_PROPERTY(QString quickSearchRevealVideoKey READ quickSearchRevealVideoKey NOTIFY quickSearchRevealChanged)
+    Q_PROPERTY(int quickSearchRevealFrameNumber READ quickSearchRevealFrameNumber NOTIFY quickSearchRevealChanged)
+    Q_PROPERTY(int quickSearchRevealIndex READ quickSearchRevealIndex NOTIFY quickSearchRevealChanged)
+    Q_PROPERTY(int quickSearchRevealRevision READ quickSearchRevealRevision NOTIFY quickSearchRevealChanged)
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedTitle READ selectedTitle NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedProjectName READ selectedProjectName NOTIFY selectionChanged)
@@ -86,14 +90,12 @@ class MaterialCenterViewModel : public QObject {
     Q_PROPERTY(QString selectedFilePath READ selectedFilePath NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedCachePath READ selectedCachePath NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedAnalysisStatusLabel READ selectedAnalysisStatusLabel NOTIFY selectionChanged)
-    Q_PROPERTY(QString selectedConfirmationStatusLabel READ selectedConfirmationStatusLabel NOTIFY selectionChanged)
     Q_PROPERTY(bool selectedAnalysisBusy READ selectedAnalysisBusy NOTIFY analysisProgressChanged)
     Q_PROPERTY(int selectedAnalysisProgress READ selectedAnalysisProgress NOTIFY analysisProgressChanged)
     Q_PROPERTY(QString selectedAnalysisProgressText READ selectedAnalysisProgressText NOTIFY analysisProgressChanged)
     Q_PROPERTY(QString selectedAnalysisError READ selectedAnalysisError NOTIFY analysisProgressChanged)
     Q_PROPERTY(QString analyzeButtonText READ analyzeButtonText NOTIFY analysisProgressChanged)
     Q_PROPERTY(bool canAnalyzeSelected READ canAnalyzeSelected NOTIFY analysisProgressChanged)
-    Q_PROPERTY(bool canConfirmSelected READ canConfirmSelected NOTIFY analysisProgressChanged)
     Q_PROPERTY(bool selectedDimensionAnalysisBusy READ selectedDimensionAnalysisBusy NOTIFY dimensionAnalysisChanged)
     Q_PROPERTY(QString selectedDimensionAnalysisText READ selectedDimensionAnalysisText NOTIFY dimensionAnalysisChanged)
     Q_PROPERTY(QString selectedDimensionAnalysisError READ selectedDimensionAnalysisError NOTIFY dimensionAnalysisChanged)
@@ -101,7 +103,6 @@ class MaterialCenterViewModel : public QObject {
     Q_PROPERTY(bool canAnalyzeVisibleDimensions READ canAnalyzeVisibleDimensions NOTIFY dimensionAnalysisChanged)
     Q_PROPERTY(bool selectedIsVideo READ selectedIsVideo NOTIFY selectionChanged)
     Q_PROPERTY(int queuedAnalysisCount READ queuedAnalysisCount NOTIFY analysisProgressChanged)
-    Q_PROPERTY(bool canConfirmVisible READ canConfirmVisible NOTIFY statusChanged)
     Q_PROPERTY(bool hasAnalyzedVisible READ hasAnalyzedVisible NOTIFY statusChanged)
 
 public:
@@ -111,7 +112,8 @@ public:
                                      VideoAnalysisService *analysisService,
                                      ProjectService *projectService,
                                      AppSettings *settings,
-                                     VisionApiClient *visionApiClient,
+                                     LocalSearchAssistantRuntime *localSearchAssistantRuntime,
+                                     SearchAssistantClient *searchAssistantClient,
                                      QObject *parent = nullptr);
 
     MaterialCenterListModel *model() const;
@@ -142,13 +144,16 @@ public:
     QString projectFilter() const;
     QString sourceFilter() const;
     int assetTypeFilter() const;
+    int searchResultFilter() const;
     int analysisStatusFilter() const;
-    int confirmationStatusFilter() const;
     QVariantList analysisStatusOptions() const;
-    QVariantList confirmationStatusOptions() const;
     QString selectedVideoKey() const;
     QString selectedAssetKey() const;
     int selectedVideoIndex() const;
+    QString quickSearchRevealVideoKey() const;
+    int quickSearchRevealFrameNumber() const;
+    int quickSearchRevealIndex() const;
+    int quickSearchRevealRevision() const;
     bool hasSelection() const;
     QString selectedTitle() const;
     QString selectedProjectName() const;
@@ -175,14 +180,12 @@ public:
     QString selectedFilePath() const;
     QString selectedCachePath() const;
     QString selectedAnalysisStatusLabel() const;
-    QString selectedConfirmationStatusLabel() const;
     bool selectedAnalysisBusy() const;
     int selectedAnalysisProgress() const;
     QString selectedAnalysisProgressText() const;
     QString selectedAnalysisError() const;
     QString analyzeButtonText() const;
     bool canAnalyzeSelected() const;
-    bool canConfirmSelected() const;
     bool selectedDimensionAnalysisBusy() const;
     QString selectedDimensionAnalysisText() const;
     QString selectedDimensionAnalysisError() const;
@@ -190,16 +193,16 @@ public:
     bool canAnalyzeVisibleDimensions() const;
     bool selectedIsVideo() const;
     int queuedAnalysisCount() const;
-    bool canConfirmVisible() const;
     bool hasAnalyzedVisible() const;
 
     Q_INVOKABLE void reload();
+    Q_INVOKABLE void prepareGlobalQuickSearch();
     Q_INVOKABLE void setSearchText(const QString &searchText);
     Q_INVOKABLE void setProjectFilter(const QString &projectUuid);
     Q_INVOKABLE void setSourceFilter(const QString &sourceName);
     Q_INVOKABLE void setAssetTypeFilter(int assetType);
+    Q_INVOKABLE void setSearchResultFilter(int filter);
     Q_INVOKABLE void setAnalysisStatusFilter(int status);
-    Q_INVOKABLE void setConfirmationStatusFilter(int status);
     Q_INVOKABLE void selectVideo(const QString &videoKey);
     Q_INVOKABLE void selectVideoAt(int index);
     Q_INVOKABLE void moveVideoSelection(int delta);
@@ -211,13 +214,16 @@ public:
     Q_INVOKABLE void analyzeVisiblePending();
     Q_INVOKABLE void analyzeVisibleSupplement();
     Q_INVOKABLE void analyzeVisibleAll();
-    Q_INVOKABLE void confirmVideo(const QString &videoKey);
-    Q_INVOKABLE void confirmVisible();
-    Q_INVOKABLE void confirmSelected();
     Q_INVOKABLE bool openSelectedProject();
+    Q_INVOKABLE bool openQuickSearchResult(const QString &videoKey);
+    Q_INVOKABLE bool openQuickSearchResultAtIndex(const QString &videoKey, int resultIndex);
+    Q_INVOKABLE bool openQuickSearchFolderResult(const QString &folderKey);
     Q_INVOKABLE void locateSelectedSource();
+    Q_INVOKABLE bool openAssetFolder(const QString &videoKey);
+    Q_INVOKABLE bool copyAssetPath(const QString &videoKey);
     Q_INVOKABLE void openFolderProject(const QString &folderKey);
     Q_INVOKABLE void locateFolder(const QString &folderKey);
+    Q_INVOKABLE bool copyFolderPath(const QString &folderKey);
     Q_INVOKABLE void toggleSelectedFramesExpanded();
     Q_INVOKABLE void loadMoreSelectedFrames();
     Q_INVOKABLE void showAllSelectedFrames();
@@ -229,6 +235,8 @@ signals:
     void filtersChanged();
     void searchStateChanged();
     void selectionChanged();
+    void quickSearchRevealChanged();
+    void quickSearchNavigationRequested(const QString &searchText);
     void analysisProgressChanged();
     void dimensionAnalysisChanged();
 
@@ -247,6 +255,7 @@ private:
     };
 
     GlobalVideoAsset assetByVideoKey(const QString &videoKey) const;
+    GlobalVideoAsset assetForFileAction(const QString &videoKey) const;
     FolderSearchHit folderByKey(const QString &folderKey) const;
     void prepareSelection(const QString &videoKey);
     void loadPendingDetail();
@@ -259,8 +268,6 @@ private:
     void executeSearch(const ModelSearchUnderstanding *modelUnderstanding = nullptr);
     void applySearchResult(const MaterialSearchResult &result);
     void startSearchUnderstanding(const ParsedMaterialQuery &localQuery);
-    void startFrameRerank(const ParsedMaterialQuery &query);
-    void applyFrameRerank(const QVector<ModelFrameRerankScore> &scores);
     QString searchUnderstandingCacheKey(const QString &queryText, const QDate &referenceDate) const;
     AnalysisProgressState selectedProgressState() const;
     DimensionProgressState selectedDimensionProgressState() const;
@@ -271,7 +278,8 @@ private:
     VideoAnalysisService *m_analysisService = nullptr;
     ProjectService *m_projectService = nullptr;
     AppSettings *m_settings = nullptr;
-    VisionApiClient *m_visionApiClient = nullptr;
+    LocalSearchAssistantRuntime *m_localSearchAssistantRuntime = nullptr;
+    SearchAssistantClient *m_searchAssistantClient = nullptr;
     MaterialCenterListModel *m_model = nullptr;
     MaterialCenterFolderListModel *m_folderModel = nullptr;
     MaterialCenterFrameListModel *m_frameModel = nullptr;
@@ -281,11 +289,12 @@ private:
     VideoAnalysisDetail m_detail;
     QString m_searchText;
     ParsedMaterialQuery m_lastParsedQuery;
+    SearchReliabilityAssessment m_lastSearchReliability;
     QString m_projectFilter;
     QString m_sourceFilter;
     int m_assetTypeFilter = -1;
+    int m_searchResultFilter = static_cast<int>(SearchResultQuickFilter::Smart);
     int m_analysisStatusFilter = -1;
-    int m_confirmationStatusFilter = -1;
     QVariantList m_projectOptions;
     QVariantList m_sourceOptions;
     QVariantList m_assetTypeOptions;
@@ -303,10 +312,13 @@ private:
     bool m_searchAssistantBusy = false;
     bool m_searchAssistantUsed = false;
     int m_searchGeneration = 0;
+    MaterialSearchResult m_lastBaselineSearchResult;
+    int m_lastBaselineSearchGeneration = -1;
+    QString m_quickSearchRevealVideoKey;
+    int m_quickSearchRevealFrameNumber = -1;
+    int m_quickSearchRevealRevision = 0;
     QHash<QString, ModelSearchUnderstanding> m_searchUnderstandingCache;
     QSet<QString> m_searchUnderstandingInFlight;
-    QHash<QString, QVector<ModelFrameRerankScore>> m_frameRerankCache;
-    QSet<QString> m_frameRerankInFlight;
     QHash<QString, AnalysisProgressState> m_analysisProgressByVideoKey;
     QHash<QString, DimensionProgressState> m_dimensionProgressByVideoKey;
     QHash<QString, VideoAnalysisDetail> m_detailCache;

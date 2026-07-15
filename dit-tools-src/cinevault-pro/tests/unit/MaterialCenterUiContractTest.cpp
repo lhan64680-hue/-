@@ -234,8 +234,9 @@ private slots:
         QVERIFY(source.contains(QStringLiteral("scope.projectUuid = m_projectFilter")));
         QVERIFY(source.contains(QStringLiteral("scope.sourceRootName = m_sourceFilter")));
         QVERIFY(source.contains(QStringLiteral("scope.analysisStatusFilter = m_analysisStatusFilter")));
-        QVERIFY(source.contains(QStringLiteral("scope.confirmationStatusFilter = m_confirmationStatusFilter")));
+        QVERIFY(source.contains(QStringLiteral("scope.confirmationStatusFilter = -1")));
         QVERIFY(source.contains(QStringLiteral("scope.assetTypeFilter = m_assetTypeFilter")));
+        QVERIFY(source.contains(QStringLiteral("scope.resultQuickFilter =")));
         QVERIFY(source.contains(QStringLiteral("m_folderModel->setItems(m_folders)")));
         QVERIFY(source.contains(QStringLiteral("m_frameModel->setItems(m_frames)")));
         QVERIFY(source.contains(QStringLiteral("m_semanticSearchAvailable = result.semanticSearchAvailable")));
@@ -247,8 +248,9 @@ private slots:
         QVERIFY(source.contains(QStringLiteral("SearchDocumentSyncService::synchronizationProgress")));
         QVERIFY(source.contains(QStringLiteral("SearchDocumentSyncService::synchronizationFinished")));
         QVERIFY(source.contains(QStringLiteral("m_searchRefreshTimer->start(0)")));
-        QVERIFY(source.contains(QStringLiteral("understandSearchQuery")));
-        QVERIFY(source.contains(QStringLiteral("rerankFrameCandidates")));
+        QVERIFY(source.contains(QStringLiteral("understandQuery")));
+        QVERIFY(!source.contains(QStringLiteral("rerankFrameCandidates")));
+        QVERIFY(!source.contains(QStringLiteral("startFrameRerank")));
         QVERIFY(source.contains(QStringLiteral("task.generation != m_searchGeneration")));
     }
 
@@ -281,20 +283,47 @@ private slots:
             QStringLiteral("enabled: searchInput.text.length > 0"),
             QStringLiteral("shellVm.globalSearchText = \"\""),
             QStringLiteral("searchInput.forceActiveFocus()"),
+            QStringLiteral("text: \"搜索命中\""),
+            QStringLiteral("viewModel.searchResultFilter === 0"),
+            QStringLiteral("viewModel.setSearchResultFilter(1)"),
+            QStringLiteral("viewModel.setSearchResultFilter(2)"),
+            QStringLiteral("viewModel.setSearchResultFilter(3)"),
+            QStringLiteral("viewModel.setSearchResultFilter(4)"),
+            QStringLiteral("text: \"帧画面\""),
+            QStringLiteral("text: \"图片\""),
+            QStringLiteral("MiddleDragScrollHandler"),
             QStringLiteral("viewModel.openFolderProject(folderKey)"),
             QStringLiteral("viewModel.locateFolder(folderKey)"),
+            QStringLiteral("viewModel.openAssetFolder(videoKey)"),
+            QStringLiteral("viewModel.copyAssetPath(videoKey)"),
+            QStringLiteral("viewModel.copyFolderPath(folderKey)"),
+            QStringLiteral("text: \"打开所在目录\""),
+            QStringLiteral("text: \"复制文件路径\""),
             QStringLiteral("viewModel.projectFilter"),
             QStringLiteral("viewModel.sourceFilter"),
             QStringLiteral("viewModel.analysisStatusFilter"),
-            QStringLiteral("viewModel.confirmationStatusFilter"),
             QStringLiteral("searchConfidence"),
             QStringLiteral("searchReasons"),
             QStringLiteral("confidence"),
-            QStringLiteral("reasons")
+            QStringLiteral("reasons"),
+            QStringLiteral("function revealQuickSearchResult()"),
+            QStringLiteral("viewModel.quickSearchRevealVideoKey"),
+            QStringLiteral("viewModel.quickSearchRevealFrameNumber"),
+            QStringLiteral("viewModel.quickSearchRevealIndex"),
+            QStringLiteral("positionViewAtIndex(targetIndex"),
+            QStringLiteral("id: quickSearchRevealTimer"),
+            QStringLiteral("readonly property bool quickSearchReveal")
         };
         for (const auto &contract : contracts) {
             QVERIFY2(source.contains(contract), qPrintable(QStringLiteral("QML 缺少接口：%1").arg(contract)));
         }
+        QVERIFY(source.contains(QStringLiteral("id: frameRankText")));
+        QVERIFY(source.contains(QStringLiteral("id: assetRankText")));
+        QVERIFY(!source.contains(QStringLiteral("text: \"全部确认\"")));
+        QVERIFY(!source.contains(QStringLiteral("text: \"确认结果\"")));
+        QVERIFY(!source.contains(QStringLiteral("viewModel.confirmationStatusFilter")));
+        QVERIFY(!source.contains(QStringLiteral("viewModel.confirmVisible")));
+        QVERIFY(!source.contains(QStringLiteral("viewModel.confirmSelected")));
     }
 
     void batchAnalysisRequiresExplicitSupplementOrRebuildPolicy()
@@ -344,7 +373,7 @@ private slots:
         QVERIFY(rebuild.contains(QStringLiteral("AnalysisRunMode::Rebuild")));
     }
 
-    void searchSettingsExposePrivacyUnlimitedCallsAndQuickSearchContracts()
+    void searchSettingsExposeLocalTextAssistantAndQuickSearchContracts()
     {
         const auto header = sourceFile(QStringLiteral("src/ui/viewmodels/SettingsViewModel.h"));
         const auto implementation = sourceFile(QStringLiteral("src/ui/viewmodels/SettingsViewModel.cpp"));
@@ -356,9 +385,7 @@ private slots:
 
         const QStringList propertyContracts = {
             QStringLiteral("Q_PROPERTY(bool searchAssistantEnabled"),
-            QStringLiteral("Q_PROPERTY(bool frameRerankEnabled"),
-            QStringLiteral("Q_PROPERTY(bool localOnlySearch"),
-            QStringLiteral("Q_PROPERTY(bool allowSearchFrameUpload"),
+            QStringLiteral("Q_PROPERTY(QString localSearchAssistantStatusText"),
             QStringLiteral("Q_PROPERTY(bool quickSearchEnabled"),
             QStringLiteral("Q_PROPERTY(QString quickSearchShortcut"),
             QStringLiteral("Q_PROPERTY(bool startAtLogin"),
@@ -371,18 +398,15 @@ private slots:
         }
 
         const QStringList qmlContracts = {
-            QStringLiteral("模型辅助搜索与隐私"),
-            QStringLiteral("仅本地搜索（不发起任何搜索模型网络请求）"),
-            QStringLiteral("使用视觉语言模型辅助理解自然语言查询"),
-            QStringLiteral("使用视觉语言模型复核前 8 个候选帧"),
-            QStringLiteral("允许将候选帧缩略图发送到已配置的模型接口"),
-            QStringLiteral("enabled: !root.draftLocalOnlySearch && root.draftFrameRerankEnabled"),
+            QStringLiteral("智能搜索与隐私"),
+            QStringLiteral("实时使用内置轻量文本模型辅助理解查询"),
+            QStringLiteral("viewModel.localSearchAssistantStatusText"),
             QStringLiteral("像 Flow Launcher 一样"),
             QStringLiteral("root.draftQuickSearchShortcut"),
             QStringLiteral("viewModel.shortcutFromKeyEvent"),
             QStringLiteral("viewModel.quickSearchStatusText"),
-            QStringLiteral("查询理解只发送搜索文字"),
-            QStringLiteral("候选帧复核会发送最多 8 张缩略图和对应候选 ID")
+            QStringLiteral("搜索始终在本机完成"),
+            QStringLiteral("视觉接口仅用于素材导入和解析，不参与搜索")
         };
         for (const auto &contract : qmlContracts) {
             QVERIFY2(qml.contains(contract),
@@ -392,9 +416,6 @@ private slots:
         verifyOrdered(qml, {
             QStringLiteral("root.draftVisionModel,"),
             QStringLiteral("root.draftSearchAssistantEnabled,"),
-            QStringLiteral("root.draftFrameRerankEnabled,"),
-            QStringLiteral("root.draftLocalOnlySearch,"),
-            QStringLiteral("root.draftAllowSearchFrameUpload,"),
             QStringLiteral("root.draftQuickSearchEnabled,"),
             QStringLiteral("root.draftQuickSearchShortcut,"),
             QStringLiteral("root.draftStartAtLogin,"),
@@ -405,6 +426,9 @@ private slots:
         QVERIFY(!header.contains(QStringLiteral("searchModelCallsToday")));
         QVERIFY(!qml.contains(QStringLiteral("每日搜索模型调用上限")));
         QVERIFY(!qml.contains(QStringLiteral("searchModelBudgetLabel")));
+        QVERIFY(!header.contains(QStringLiteral("frameRerankEnabled")));
+        QVERIFY(!header.contains(QStringLiteral("allowSearchFrameUpload")));
+        QVERIFY(!qml.contains(QStringLiteral("候选帧缩略图")));
         QVERIFY(implementation.contains(QStringLiteral("emit searchSettingsChanged()")));
         QVERIFY(appContext.contains(QStringLiteral("&SettingsViewModel::searchSettingsChanged")));
     }
@@ -416,7 +440,7 @@ private slots:
         QVERIFY2(!settingsQml.isEmpty() && !switchQml.isEmpty(),
                  "无法读取设置页主题开关源码");
 
-        QCOMPARE(settingsQml.count(QStringLiteral("ThemedSwitch {")), 7);
+        QCOMPARE(settingsQml.count(QStringLiteral("ThemedSwitch {")), 4);
         QVERIFY(switchQml.contains(QStringLiteral("color: control.enabled ? Theme.text : Theme.weak")));
         QVERIFY(switchQml.contains(QStringLiteral("palette.windowText: control.enabled ? Theme.text : Theme.weak")));
         QVERIFY(switchQml.contains(QStringLiteral("color: control.checked ? Theme.primaryBg : Theme.inputPressed")));
@@ -427,14 +451,22 @@ private slots:
         const auto mainQml = sourceFile(QStringLiteral("src/ui/qml/Main.qml"));
         const auto shellHeader = sourceFile(QStringLiteral("src/ui/viewmodels/ShellViewModel.h"));
         const auto importSource = sourceFile(QStringLiteral("src/application/ImportService.cpp"));
-        QVERIFY2(!mainQml.isEmpty() && !shellHeader.isEmpty() && !importSource.isEmpty(),
-                 "无法读取素材源网络路径契约源码");
+        const auto volumeService = sourceFile(QStringLiteral("src/application/StorageVolumeService.cpp"));
+        QVERIFY2(!mainQml.isEmpty() && !shellHeader.isEmpty() && !importSource.isEmpty()
+                     && !volumeService.isEmpty(),
+                  "无法读取素材源网络路径契约源码");
 
         QVERIFY(mainQml.contains(QStringLiteral("UNC 网络共享路径")));
         QVERIFY(mainQml.contains(QStringLiteral("root.shellViewModel.importSourcePath(sourcePathField.text)")));
         QVERIFY(shellHeader.contains(QStringLiteral("Q_INVOKABLE bool importSourcePath(const QString &directoryPath)")));
         QVERIFY(importSource.contains(QStringLiteral("FolderPathMetadata::normalizeSourcePath(directoryPath)")));
         QVERIFY(importSource.contains(QStringLiteral("目录不存在或网络路径不可访问")));
+        QVERIFY(mainQml.contains(QStringLiteral("root.shellViewModel.storageVolumes")));
+        QVERIFY(mainQml.contains(QStringLiteral("root.shellViewModel.importStorageVolume(modelData.rootPath)")));
+        QVERIFY(mainQml.contains(QStringLiteral("点击后递归索引卷内全部可读文件")));
+        QVERIFY(shellHeader.contains(QStringLiteral("Q_PROPERTY(QVariantList storageVolumes")));
+        QVERIFY(shellHeader.contains(QStringLiteral("Q_INVOKABLE bool importStorageVolume")));
+        QVERIFY(volumeService.contains(QStringLiteral("QStorageInfo::mountedVolumes()")));
     }
 
     void closeButtonOffersPromptTrayAndExitBehaviors()
@@ -458,45 +490,38 @@ private slots:
         QVERIFY(mainQml.contains(QStringLiteral("Qt.quit()")));
     }
 
-    void modelSearchGatesKeepLocalControlsWithoutCallLimits()
+    void modelSearchUsesLocalTextAssistantOnly()
     {
         const auto source = sourceFile(QStringLiteral("src/ui/viewmodels/MaterialCenterViewModel.cpp"));
-        QVERIFY2(!source.isEmpty(), "无法读取 MaterialCenterViewModel.cpp");
+        const auto visionHeader = sourceFile(
+            QStringLiteral("src/infrastructure/network/VisionApiClient.h"));
+        QVERIFY2(!source.isEmpty() && !visionHeader.isEmpty(),
+                 "无法读取搜索或视觉客户端源码");
 
         const auto understanding = sourceSection(
             source,
             QStringLiteral("void MaterialCenterViewModel::startSearchUnderstanding"),
-            QStringLiteral("void MaterialCenterViewModel::startFrameRerank"));
+            QStringLiteral("void MaterialCenterViewModel::setSearchText"));
         QVERIFY2(!understanding.isEmpty(), "无法定位查询理解门禁");
         verifyOrdered(understanding, {
-            QStringLiteral("m_settings && m_settings->localOnlySearch()"),
             QStringLiteral("!m_settings->searchAssistantEnabled()"),
             QStringLiteral("m_searchUnderstandingCache.constFind(cacheKey)"),
-            QStringLiteral("!m_visionApiClient"),
-            QStringLiteral("client->understandSearchQuery")
+            QStringLiteral("m_localSearchAssistantRuntime->start()"),
+            QStringLiteral("client->understandQuery")
         });
+        QVERIFY(!understanding.contains(QStringLiteral("shouldUseAssistant")));
         QVERIFY(understanding.contains(QStringLiteral("已保留本地搜索")));
         QVERIFY(!understanding.contains(QStringLiteral("canUseSearchModel")));
         QVERIFY(!understanding.contains(QStringLiteral("tryConsumeSearchModelCall")));
         QVERIFY(!understanding.contains(QStringLiteral("预算")));
 
-        const auto rerank = sourceSection(
-            source,
-            QStringLiteral("void MaterialCenterViewModel::startFrameRerank"),
-            QStringLiteral("void MaterialCenterViewModel::applyFrameRerank"));
-        QVERIFY2(!rerank.isEmpty(), "无法定位候选帧复核门禁");
-        verifyOrdered(rerank, {
-            QStringLiteral("m_settings && m_settings->localOnlySearch()"),
-            QStringLiteral("!m_settings->frameRerankEnabled()"),
-            QStringLiteral("!m_settings->allowSearchFrameUpload()"),
-            QStringLiteral("m_frameRerankCache.constFind(cacheKey)"),
-            QStringLiteral("!m_visionApiClient"),
-            QStringLiteral("client->rerankFrameCandidates")
-        });
-        QVERIFY(rerank.contains(QStringLiteral("候选帧缩略图发送未授权，保留本地排序")));
-        QVERIFY(!rerank.contains(QStringLiteral("canUseSearchModel")));
-        QVERIFY(!rerank.contains(QStringLiteral("tryConsumeSearchModelCall")));
-        QVERIFY(!rerank.contains(QStringLiteral("预算")));
+        QVERIFY(!source.contains(QStringLiteral("VisionApiClient")));
+        QVERIFY(!source.contains(QStringLiteral("startFrameRerank")));
+        QVERIFY(!source.contains(QStringLiteral("rerankFrameCandidates")));
+        QVERIFY(!source.contains(QStringLiteral("候选帧缩略图")));
+        QVERIFY(!visionHeader.contains(QStringLiteral("understandSearchQuery")));
+        QVERIFY(!visionHeader.contains(QStringLiteral("rerankFrameCandidates")));
+        QVERIFY(visionHeader.contains(QStringLiteral("analyzeFrame")));
     }
 
     void flowStyleQuickSearchHasGlobalHotkeyAndKeyboardContracts()
@@ -504,10 +529,18 @@ private slots:
         const auto controllerHeader = sourceFile(QStringLiteral("src/ui/window/QuickSearchController.h"));
         const auto controllerSource = sourceFile(QStringLiteral("src/ui/window/QuickSearchController.cpp"));
         const auto quickSearchQml = sourceFile(QStringLiteral("src/ui/qml/components/QuickSearchWindow.qml"));
+        const auto materialCenterHeader = sourceFile(QStringLiteral("src/ui/viewmodels/MaterialCenterViewModel.h"));
+        const auto materialCenterSource = sourceFile(QStringLiteral("src/ui/viewmodels/MaterialCenterViewModel.cpp"));
         const auto mainQml = sourceFile(QStringLiteral("src/ui/qml/Main.qml"));
+        const auto shellHeader = sourceFile(QStringLiteral("src/ui/viewmodels/ShellViewModel.h"));
+        const auto shellSource = sourceFile(QStringLiteral("src/ui/viewmodels/ShellViewModel.cpp"));
+        const auto appContext = sourceFile(QStringLiteral("src/app/AppContext.cpp"));
         QVERIFY2(!controllerHeader.isEmpty() && !controllerSource.isEmpty()
-                     && !quickSearchQml.isEmpty() && !mainQml.isEmpty(),
-                 "无法读取快捷搜索契约源码");
+                     && !quickSearchQml.isEmpty() && !materialCenterHeader.isEmpty()
+                     && !materialCenterSource.isEmpty() && !mainQml.isEmpty()
+                     && !shellHeader.isEmpty() && !shellSource.isEmpty()
+                     && !appContext.isEmpty(),
+                  "无法读取快捷搜索契约源码");
 
         const QStringList nativeContracts = {
             QStringLiteral("QAbstractNativeEventFilter"),
@@ -534,21 +567,132 @@ private slots:
             QStringLiteral("Keys.onUpPressed"),
             QStringLiteral("Ctrl+Enter 定位"),
             QStringLiteral("sequence: \"Escape\""),
-            QStringLiteral("openSelectedProject"),
-            QStringLiteral("openFolderProject"),
+            QStringLiteral("property bool pinned: false"),
+            QStringLiteral("objectName: \"quickSearchPinButton\""),
+            QStringLiteral("text: root.pinned ? \"已固定\" : \"固定显示\""),
+            QStringLiteral("materialCenterViewModel.prepareGlobalQuickSearch()"),
+            QStringLiteral("materialCenterViewModel.openQuickSearchResultAtIndex(videoKeyValue, index)"),
+            QStringLiteral("onDoubleClicked: resultDelegate.activate"),
+            QStringLiteral("openQuickSearchFolderResult"),
             QStringLiteral("required property string quickPreviewPath"),
             QStringLiteral("required property string quickDetail"),
             QStringLiteral("required property string quickMeta"),
             QStringLiteral("required property string quickReasons"),
             QStringLiteral("DragHandler"),
+            QStringLiteral("root.startSystemMove()"),
             QStringLiteral("restoredWindowPosition"),
             QStringLiteral("rememberWindowPosition"),
-            QStringLiteral("打开详情  →")
+            QStringLiteral("内置文本模型增强中"),
+            QStringLiteral("打开详情  →"),
+            QStringLiteral("text: \"搜索命中\""),
+            QStringLiteral("materialCenterViewModel.searchResultFilter"),
+            QStringLiteral("materialCenterViewModel.setSearchResultFilter(modelData.value)"),
+            QStringLiteral("{ label: \"帧画面\", value: 2 }"),
+            QStringLiteral("{ label: \"图片\", value: 3 }"),
+            QStringLiteral("{ label: \"文档\", value: 4 }"),
+            QStringLiteral("MiddleDragScrollHandler"),
+            QStringLiteral("materialCenterViewModel.openAssetFolder(resultDelegate.videoKeyValue)"),
+            QStringLiteral("materialCenterViewModel.copyAssetPath(resultDelegate.videoKeyValue)"),
+            QStringLiteral("materialCenterViewModel.copyFolderPath(folderDelegate.folderKeyValue)"),
+            QStringLiteral("双击 / Enter 打开")
         };
         for (const auto &contract : qmlContracts) {
             QVERIFY2(quickSearchQml.contains(contract),
                      qPrintable(QStringLiteral("快捷搜索 QML 缺少契约：%1").arg(contract)));
         }
+        QVERIFY(!quickSearchQml.contains(QStringLiteral("视觉语言模型增强中")));
+        QVERIFY(quickSearchQml.contains(QStringLiteral("!root.pinned")));
+        QVERIFY(quickSearchQml.contains(QStringLiteral("forceCloseQuickSearch || !pinned")));
+        QVERIFY(!quickSearchQml.contains(QStringLiteral("enterProjectFromLibrary()")));
+        QVERIFY(!quickSearchQml.contains(QStringLiteral("shellViewModel.currentWorkspace")));
+        QVERIFY(!quickSearchQml.contains(QStringLiteral("function enterMaterialCenter")));
+        QVERIFY(!quickSearchQml.contains(QStringLiteral("dragOrigin")));
+        QVERIFY(!quickSearchQml.contains(QStringLiteral("onTranslationChanged")));
+        QVERIFY(controllerHeader.contains(
+            QStringLiteral("Q_INVOKABLE bool restoreMainWindow(QObject *windowObject)")));
+        QVERIFY(controllerSource.contains(QStringLiteral("restoreNativeWindowToForeground")));
+        QVERIFY(controllerSource.contains(QStringLiteral("AttachThreadInput")));
+        QVERIFY(controllerSource.contains(QStringLiteral("BringWindowToTop")));
+        QVERIFY(controllerSource.contains(QStringLiteral("SetForegroundWindow")));
+        QVERIFY(controllerSource.contains(QStringLiteral("HWND_TOPMOST")));
+        QVERIFY(quickSearchQml.contains(
+            QStringLiteral("controller.restoreMainWindow(mainWindow)")));
+        QVERIFY(mainQml.contains(
+            QStringLiteral("quickSearchController.restoreMainWindow(root)")));
+        QVERIFY(quickSearchQml.contains(QStringLiteral("mainWindow.restoreToForeground()")));
+        const auto quickSearchWindowRestore = sourceSection(
+            quickSearchQml,
+            QStringLiteral("function showMainWindow(forceCloseQuickSearch)"),
+            QStringLiteral("function activateCurrent(locateOnly)"));
+        verifyOrdered(quickSearchWindowRestore, {
+            QStringLiteral("root.activateMainWindow()"),
+            QStringLiteral("hideSearch()"),
+            QStringLiteral("Qt.callLater(function()"),
+            QStringLiteral("root.activateMainWindow()")
+        });
+        const auto mainWindowRestore = sourceSection(
+            mainQml,
+            QStringLiteral("function restoreToForeground()"),
+            QStringLiteral("function minimizeToTray()"));
+        verifyOrdered(mainWindowRestore, {
+            QStringLiteral("root.showNormal()"),
+            QStringLiteral("root.raise()"),
+            QStringLiteral("root.requestActivate()")
+        });
+        QVERIFY(materialCenterHeader.contains(QStringLiteral("prepareGlobalQuickSearch")));
+        QVERIFY(materialCenterHeader.contains(QStringLiteral("openQuickSearchResult")));
+        QVERIFY(materialCenterHeader.contains(QStringLiteral("openQuickSearchFolderResult")));
+        QVERIFY(materialCenterHeader.contains(QStringLiteral("quickSearchRevealFrameNumber")));
+        QVERIFY(materialCenterHeader.contains(QStringLiteral("quickSearchNavigationRequested")));
+        QVERIFY(shellHeader.contains(QStringLiteral("enterMaterialCenterFromQuickSearch")));
+        QVERIFY(appContext.contains(QStringLiteral("&MaterialCenterViewModel::quickSearchNavigationRequested")));
+        QVERIFY(appContext.contains(QStringLiteral("&ShellViewModel::enterMaterialCenterFromQuickSearch")));
+        const auto globalQuickSearch = sourceSection(
+            materialCenterSource,
+            QStringLiteral("void MaterialCenterViewModel::prepareGlobalQuickSearch()"),
+            QStringLiteral("void MaterialCenterViewModel::executeSearch"));
+        QVERIFY(globalQuickSearch.contains(QStringLiteral("m_projectFilter.clear()")));
+        QVERIFY(globalQuickSearch.contains(QStringLiteral("m_sourceFilter.clear()")));
+        QVERIFY(globalQuickSearch.contains(QStringLiteral("m_analysisStatusFilter = -1")));
+        QVERIFY(!globalQuickSearch.contains(QStringLiteral("m_confirmationStatusFilter")));
+        const auto openQuickResult = sourceSection(
+            materialCenterSource,
+            QStringLiteral("bool MaterialCenterViewModel::openQuickSearchResult"),
+            QStringLiteral("void MaterialCenterViewModel::locateSelectedSource"));
+        verifyOrdered(openQuickResult, {
+            QStringLiteral("const auto targetAsset = assetForFileAction(normalizedKey)"),
+            QStringLiteral("selectVideo(normalizedKey)"),
+            QStringLiteral("openSelectedProject()"),
+            QStringLiteral("m_quickSearchRevealVideoKey = normalizedKey"),
+            QStringLiteral("m_projectFilter = targetProjectUuid"),
+            QStringLiteral("reload()"),
+            QStringLiteral("selectVideo(normalizedKey)"),
+            QStringLiteral("emit quickSearchNavigationRequested(quickSearchQuery)")
+        });
+        const auto openQuickFolder = sourceSection(
+            materialCenterSource,
+            QStringLiteral("bool MaterialCenterViewModel::openQuickSearchFolderResult"),
+            QStringLiteral("void MaterialCenterViewModel::locateSelectedSource"));
+        verifyOrdered(openQuickFolder, {
+            QStringLiteral("const auto quickSearchQuery = m_searchText"),
+            QStringLiteral("m_projectService->openProject(folder.projectDatabasePath"),
+            QStringLiteral("setSearchText(quickSearchQuery)"),
+            QStringLiteral("m_projectFilter = folder.projectUuid.trimmed()"),
+            QStringLiteral("reload()"),
+            QStringLiteral("emit quickSearchNavigationRequested(quickSearchQuery)")
+        });
+        const auto shellQuickNavigation = sourceSection(
+            shellSource,
+            QStringLiteral("void ShellViewModel::enterMaterialCenterFromQuickSearch"),
+            QStringLiteral("void ShellViewModel::setGlobalSearchText"));
+        verifyOrdered(shellQuickNavigation, {
+            QStringLiteral("m_projectEntered = true"),
+            QStringLiteral("m_globalSearchText = searchText"),
+            QStringLiteral("m_currentWorkspace = WorkspaceId::MaterialCenter"),
+            QStringLiteral("emit searchRequested(m_globalSearchText)")
+        });
+        QVERIFY(materialCenterSource.contains(QStringLiteral("sameProjectDatabasePath")));
+        QVERIFY(shellQuickNavigation.contains(QStringLiteral("m_projectService->hasOpenProject()")));
         const QStringList neutralDarkPaletteContracts = {
             QStringLiteral("readonly property color quickBg: \"#0E1014\""),
             QStringLiteral("readonly property color quickHeader: \"#171A20\""),
@@ -568,6 +712,187 @@ private slots:
         QVERIFY(controllerSource.contains(QStringLiteral("availableGeometry")));
         QVERIFY(mainQml.contains(QStringLiteral("sequence: \"Ctrl+K\"")));
         QVERIFY(mainQml.contains(QStringLiteral("QuickSearchWindow")));
+    }
+
+    void searchAssistantPreloadsAndUnloadsAfterConfigurableAppIdleTime()
+    {
+        const auto settingsHeader = sourceFile(
+            QStringLiteral("src/ui/viewmodels/SettingsViewModel.h"));
+        const auto settingsSource = sourceFile(
+            QStringLiteral("src/ui/viewmodels/SettingsViewModel.cpp"));
+        const auto settingsQml = sourceFile(
+            QStringLiteral("src/ui/qml/components/SettingsDialog.qml"));
+        const auto appSettings = sourceFile(
+            QStringLiteral("src/infrastructure/config/AppSettings.cpp"));
+        const auto appContext = sourceFile(QStringLiteral("src/app/AppContext.cpp"));
+        const auto appBootstrap = sourceFile(QStringLiteral("src/app/AppBootstrap.cpp"));
+        const auto lifecycle = sourceFile(
+            QStringLiteral("src/application/SearchAssistantLifecycleController.cpp"));
+        const auto idleMonitor = sourceFile(
+            QStringLiteral("src/application/ApplicationIdleMonitor.cpp"));
+        QVERIFY2(!settingsHeader.isEmpty() && !settingsSource.isEmpty()
+                     && !settingsQml.isEmpty() && !appSettings.isEmpty()
+                     && !appContext.isEmpty() && !appBootstrap.isEmpty()
+                     && !lifecycle.isEmpty() && !idleMonitor.isEmpty(),
+                 "无法读取模型自动预热与卸载契约源码");
+
+        QVERIFY(settingsHeader.contains(
+            QStringLiteral("Q_PROPERTY(int searchAssistantAutoUnloadMinutes")));
+        QVERIFY(appSettings.contains(
+            QStringLiteral("materialCenter/searchAssistantAutoUnloadMinutes")));
+        QVERIFY(appSettings.contains(QStringLiteral(", 60).toInt()")));
+        QVERIFY(settingsQml.contains(
+            QStringLiteral("searchAssistantAutoUnloadMinutesInput")));
+        QVERIFY(settingsQml.contains(
+            QStringLiteral("searchAssistantAutoUnloadPreset")));
+        QVERIFY(settingsQml.contains(QStringLiteral("1 小时（默认）")));
+        QVERIFY(settingsQml.contains(QStringLiteral("可直接输入 5–1440 分钟")));
+        QVERIFY(appBootstrap.contains(
+            QStringLiteral("m_context->startInteractiveServices()")));
+        QVERIFY(appBootstrap.contains(
+            QStringLiteral("--search-assistant-startup-probe")));
+        QVERIFY(appContext.contains(
+            QStringLiteral("m_searchAssistantLifecycleController->start()")));
+        QVERIFY(appContext.contains(QStringLiteral("quickSearchRequested")));
+        QVERIFY(lifecycle.contains(QStringLiteral("m_runtime->stop()")));
+        QVERIFY(lifecycle.contains(QStringLiteral("schedulePreload(0)")));
+        QVERIFY(idleMonitor.contains(QStringLiteral("QEvent::KeyPress")));
+        QVERIFY(idleMonitor.contains(QStringLiteral("QEvent::MouseMove")));
+        QVERIFY(idleMonitor.contains(QStringLiteral("QEvent::TouchBegin")));
+        QVERIFY(settingsSource.contains(QStringLiteral("软件启动后自动加载")));
+    }
+
+    void localSearchAssistantUsesLockedVulkanGpuRuntime()
+    {
+        const auto runtime = sourceFile(
+            QStringLiteral("src/infrastructure/search/LocalSearchAssistantRuntime.cpp"));
+        const auto settings = sourceFile(QStringLiteral("src/ui/viewmodels/SettingsViewModel.cpp"));
+        const auto lock = sourceFile(QStringLiteral("cmake/search-assistant-dependencies.lock.json"));
+        const auto prepare = sourceFile(
+            QStringLiteral("cmake/PrepareSearchAssistantDependencies.cmake"));
+        const auto cmake = sourceFile(QStringLiteral("CMakeLists.txt"));
+        QVERIFY2(!runtime.isEmpty() && !settings.isEmpty() && !lock.isEmpty()
+                     && !prepare.isEmpty() && !cmake.isEmpty(),
+                 "无法读取内置文本模型 GPU 契约源码");
+
+        QVERIFY(runtime.contains(QStringLiteral("--list-devices")));
+        QVERIFY(runtime.contains(QStringLiteral("--n-gpu-layers")));
+        QVERIFY(runtime.contains(QStringLiteral("QStringLiteral(\"99\")")));
+        QVERIFY(runtime.contains(QStringLiteral("--sleep-idle-seconds")));
+        QVERIFY(runtime.contains(QStringLiteral("QStringLiteral(\"-1\")")));
+        QVERIFY(!runtime.contains(QStringLiteral("QStringLiteral(\"120\")")));
+        QVERIFY(runtime.contains(QStringLiteral("不会回落到 CPU")));
+        QVERIFY(settings.contains(QStringLiteral("本地模型已就绪（GPU：%1）；")));
+        QVERIFY(!settings.contains(QStringLiteral("已就绪（CPU）")));
+        QVERIFY(lock.contains(QStringLiteral("llama-cpp-windows-x64-vulkan")));
+        QVERIFY(lock.contains(QStringLiteral("llama-b10012-bin-win-vulkan-x64.zip")));
+        QVERIFY(!lock.contains(QStringLiteral("win-cpu-x64")));
+        QVERIFY(prepare.contains(QStringLiteral("win-vulkan-x64")));
+        QVERIFY(cmake.contains(QStringLiteral("win-vulkan-x64")));
+    }
+
+    void assetContextMenusExposeFolderAndClipboardActions()
+    {
+        const auto quickSearch = sourceFile(
+            QStringLiteral("src/ui/qml/components/QuickSearchWindow.qml"));
+        const auto materialCenter = sourceFile(
+            QStringLiteral("src/ui/qml/workspaces/MaterialCenterWorkspace.qml"));
+        const auto library = sourceFile(
+            QStringLiteral("src/ui/qml/workspaces/LibraryWorkspace.qml"));
+        const auto materialHeader = sourceFile(
+            QStringLiteral("src/ui/viewmodels/MaterialCenterViewModel.h"));
+        const auto materialSource = sourceFile(
+            QStringLiteral("src/ui/viewmodels/MaterialCenterViewModel.cpp"));
+        const auto libraryHeader = sourceFile(
+            QStringLiteral("src/ui/viewmodels/LibraryWorkspaceViewModel.h"));
+        const auto minimalLibraryHeader = sourceFile(
+            QStringLiteral("src/ui/viewmodels/MinimalLibraryWorkspaceViewModel.h"));
+        const auto fileRevealService = sourceFile(
+            QStringLiteral("src/shared/FileRevealService.cpp"));
+        QVERIFY2(!quickSearch.isEmpty() && !materialCenter.isEmpty() && !library.isEmpty()
+                     && !materialHeader.isEmpty() && !materialSource.isEmpty()
+                      && !libraryHeader.isEmpty() && !minimalLibraryHeader.isEmpty()
+                      && !fileRevealService.isEmpty(),
+                 "无法读取素材右键文件操作契约源码");
+
+        for (const auto &qml : {quickSearch, materialCenter, library}) {
+            QVERIFY(qml.contains(QStringLiteral("text: \"打开所在目录\"")));
+            QVERIFY(qml.contains(QStringLiteral("text: \"复制文件路径\"")));
+            QVERIFY(qml.contains(QStringLiteral("Qt.RightButton")));
+        }
+        QVERIFY(quickSearch.contains(QStringLiteral("copyFolderPath(folderDelegate.folderKeyValue)")));
+        QVERIFY(quickSearch.contains(QStringLiteral("copyAssetPath(resultDelegate.videoKeyValue)")));
+        QVERIFY(materialCenter.contains(QStringLiteral("id: frameContextMenu")));
+        QVERIFY(materialCenter.contains(QStringLiteral("id: folderContextMenu")));
+        QVERIFY(materialCenter.contains(QStringLiteral("id: assetContextMenu")));
+        QVERIFY(library.count(QStringLiteral("viewModel.copyAssetPath(assetId)")) >= 2);
+        QVERIFY(materialHeader.contains(QStringLiteral("openAssetFolder(const QString &videoKey)")));
+        QVERIFY(materialHeader.contains(QStringLiteral("copyAssetPath(const QString &videoKey)")));
+        QVERIFY(materialHeader.contains(QStringLiteral("copyFolderPath(const QString &folderKey)")));
+        QVERIFY(materialSource.contains(QStringLiteral("QGuiApplication::clipboard()")));
+        QVERIFY(materialSource.contains(QStringLiteral("QDir::toNativeSeparators")));
+        QVERIFY(materialSource.contains(QStringLiteral("FileRevealService::revealFile")));
+        QVERIFY(fileRevealService.contains(QStringLiteral("/select,")));
+        QVERIFY(fileRevealService.contains(QStringLiteral("explorer.exe")));
+        QVERIFY(libraryHeader.contains(QStringLiteral("copyAssetPath(qint64 assetId)")));
+        QVERIFY(minimalLibraryHeader.contains(QStringLiteral("copyAssetPath(qint64 assetId)")));
+    }
+
+    void middleButtonAnchorScrollIsReusableAndGloballyCovered()
+    {
+        const auto handler = sourceFile(
+            QStringLiteral("src/ui/qml/components/MiddleDragScrollHandler.qml"));
+        const auto cmake = sourceFile(QStringLiteral("CMakeLists.txt"));
+        QVERIFY2(!handler.isEmpty() && !cmake.isEmpty(),
+                 "无法读取中键拖动组件或 QML 清单");
+
+        const QStringList contracts = {
+            QStringLiteral("acceptedButtons: Qt.MiddleButton"),
+            QStringLiteral("acceptedDevices: PointerDevice.Mouse"),
+            QStringLiteral("target: null"),
+            QStringLiteral("property Item anchorIndicator"),
+            QStringLiteral("visible: handler.active"),
+            QStringLiteral("property real deadZone: 10"),
+            QStringLiteral("function stepForDistance(distance)"),
+            QStringLiteral("property Timer autoScrollTimer"),
+            QStringLiteral("horizontalFlickable"),
+            QStringLiteral("verticalFlickable"),
+            QStringLiteral("cancelFlick()"),
+            QStringLiteral("activeTranslation.x"),
+            QStringLiteral("activeTranslation.y"),
+            QStringLiteral("returnToBounds()")
+        };
+        for (const auto &contract : contracts) {
+            QVERIFY2(handler.contains(contract),
+                     qPrintable(QStringLiteral("中键拖动组件缺少契约：%1").arg(contract)));
+        }
+        QVERIFY(cmake.contains(
+            QStringLiteral("src/ui/qml/components/MiddleDragScrollHandler.qml")));
+
+        const QStringList coveredQmlFiles = {
+            QStringLiteral("src/ui/qml/components/QuickSearchWindow.qml"),
+            QStringLiteral("src/ui/qml/components/SettingsDialog.qml"),
+            QStringLiteral("src/ui/qml/components/SourceRail.qml"),
+            QStringLiteral("src/ui/qml/components/InspectorPane.qml"),
+            QStringLiteral("src/ui/qml/components/JobProgressInspectorPane.qml"),
+            QStringLiteral("src/ui/qml/components/JobTimelineBar.qml"),
+            QStringLiteral("src/ui/qml/components/AssetPreviewOverlay.qml"),
+            QStringLiteral("src/ui/qml/components/ThemedComboBox.qml"),
+            QStringLiteral("src/ui/qml/workspaces/ProjectLibraryWorkspace.qml"),
+            QStringLiteral("src/ui/qml/workspaces/LibraryWorkspace.qml"),
+            QStringLiteral("src/ui/qml/workspaces/MaterialCenterWorkspace.qml"),
+            QStringLiteral("src/ui/qml/workspaces/ReportWorkspace.qml"),
+            QStringLiteral("src/ui/qml/workspaces/JobsWorkspace.qml"),
+            QStringLiteral("src/ui/qml/workspaces/FeedbackWorkspace.qml")
+        };
+        for (const auto &path : coveredQmlFiles) {
+            const auto qml = sourceFile(path);
+            QVERIFY2(qml.contains(QStringLiteral("MiddleDragScrollHandler")),
+                     qPrintable(QStringLiteral("滚动页面未接入中键锚点：%1").arg(path)));
+        }
+        const auto library = sourceFile(
+            QStringLiteral("src/ui/qml/workspaces/LibraryWorkspace.qml"));
+        QVERIFY(library.contains(QStringLiteral("verticalFlickable: tableList")));
     }
 };
 

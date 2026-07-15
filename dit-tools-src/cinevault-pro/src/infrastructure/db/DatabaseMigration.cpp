@@ -199,7 +199,8 @@ bool DatabaseMigration::configureSqlite(QSqlDatabase &db, QString *errorMessage)
 {
     return executeStatement(db, QStringLiteral("PRAGMA journal_mode=WAL;"), errorMessage)
         && executeStatement(db, QStringLiteral("PRAGMA synchronous=NORMAL;"), errorMessage)
-        && executeStatement(db, QStringLiteral("PRAGMA foreign_keys=ON;"), errorMessage);
+        && executeStatement(db, QStringLiteral("PRAGMA foreign_keys=ON;"), errorMessage)
+        && executeStatement(db, QStringLiteral("PRAGMA busy_timeout=5000;"), errorMessage);
 }
 
 QString DatabaseMigration::backupFilePath(const QString &databaseFilePath, int targetVersion)

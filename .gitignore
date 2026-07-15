@@ -15,3 +15,10 @@ dit-tools-src/cinevault-pro/CMakeUserPresets.json
 *.log
 Thumbs.db
 Desktop.ini
+tools-web/downloads/*.exe
+tools-web/server/.venv/
+tools-web/server/data/
+tools-web/server/.pytest_cache/
+tools-web/**/__pycache__/
+/DIT-tools-source-sanitized-*.zip
+/dit-tools-src/cinevault-pro/$out

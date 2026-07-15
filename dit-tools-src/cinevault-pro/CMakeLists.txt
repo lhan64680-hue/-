@@ -15,13 +15,120 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 option(CINEVAULT_BUILD_MINIMAL_GUI "Build the milestone A minimal GUI shell" ON)
 option(CINEVAULT_ENABLE_FFMPEG "Enable FFmpeg-backed media modules" OFF)
 option(CINEVAULT_ENABLE_LOCAL_SEARCH "Enable offline BGE and USearch semantic search" OFF)
+option(CINEVAULT_ENABLE_LOCAL_SEARCH_ASSISTANT "Bundle the offline text query assistant" OFF)
+option(CINEVAULT_ENABLE_EXIFTOOL "Bundle ExifTool for embedded media metadata" ON)
 set(QT_ROOT "" CACHE PATH "Qt 6 kit root directory")
 set(FFMPEG_DEV_ROOT "" CACHE PATH "FFmpeg development package root directory")
 set(CINEVAULT_LOCAL_SEARCH_CACHE_ROOT "" CACHE PATH "Prepared local-search dependency cache")
+set(CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT "" CACHE PATH "Prepared search-assistant dependency cache")
+set(CINEVAULT_EXIFTOOL_CACHE_ROOT "" CACHE PATH "Prepared ExifTool dependency cache")
 set(CINEVAULT_APP_VERSION "${PROJECT_VERSION}" CACHE STRING "Application version injected into the runtime")
 
 if(QT_ROOT AND EXISTS "${QT_ROOT}")
     list(APPEND CMAKE_PREFIX_PATH "${QT_ROOT}")
+endif()
+
+set(CINEVAULT_HAS_BUNDLED_EXIFTOOL OFF)
+if(CINEVAULT_ENABLE_EXIFTOOL AND NOT CINEVAULT_BUILD_MINIMAL_GUI AND WIN32)
+    if(NOT CINEVAULT_EXIFTOOL_CACHE_ROOT
+       AND DEFINED ENV{CINEVAULT_EXIFTOOL_CACHE}
+       AND NOT "$ENV{CINEVAULT_EXIFTOOL_CACHE}" STREQUAL "")
+        set(CINEVAULT_EXIFTOOL_CACHE_ROOT "$ENV{CINEVAULT_EXIFTOOL_CACHE}")
+    endif()
+    if(CINEVAULT_EXIFTOOL_CACHE_ROOT)
+        cmake_path(ABSOLUTE_PATH CINEVAULT_EXIFTOOL_CACHE_ROOT NORMALIZE
+                   OUTPUT_VARIABLE CINEVAULT_EXIFTOOL_CACHE_ROOT)
+        set(CINEVAULT_EXIFTOOL_LOCK
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/exiftool-dependencies.lock.json")
+        set(CINEVAULT_EXIFTOOL_READY
+            "${CINEVAULT_EXIFTOOL_CACHE_ROOT}/exiftool-dependency.ready")
+        if(NOT EXISTS "${CINEVAULT_EXIFTOOL_READY}")
+            message(FATAL_ERROR
+                "ExifTool cache is not prepared. Run cmake/PrepareExifToolDependency.cmake first.")
+        endif()
+        file(SHA256 "${CINEVAULT_EXIFTOOL_LOCK}" CINEVAULT_EXIFTOOL_LOCK_SHA256)
+        file(READ "${CINEVAULT_EXIFTOOL_READY}" CINEVAULT_EXIFTOOL_READY_CONTENTS)
+        string(FIND "${CINEVAULT_EXIFTOOL_READY_CONTENTS}"
+                    "lock_sha256=${CINEVAULT_EXIFTOOL_LOCK_SHA256}"
+                    CINEVAULT_EXIFTOOL_LOCK_MATCH)
+        if(CINEVAULT_EXIFTOOL_LOCK_MATCH EQUAL -1)
+            message(FATAL_ERROR "ExifTool cache does not match the dependency lock")
+        endif()
+        file(READ "${CINEVAULT_EXIFTOOL_LOCK}" CINEVAULT_EXIFTOOL_LOCK_JSON)
+        string(JSON CINEVAULT_EXIFTOOL_VERSION GET
+               "${CINEVAULT_EXIFTOOL_LOCK_JSON}" dependencies exifTool version)
+        set(CINEVAULT_EXIFTOOL_RUNTIME_ROOT
+            "${CINEVAULT_EXIFTOOL_CACHE_ROOT}/runtimes/exiftool-${CINEVAULT_EXIFTOOL_VERSION}-win-x64")
+        if(NOT EXISTS "${CINEVAULT_EXIFTOOL_RUNTIME_ROOT}/exiftool.exe"
+           OR NOT EXISTS "${CINEVAULT_EXIFTOOL_RUNTIME_ROOT}/exiftool_files/exiftool.pl")
+            message(FATAL_ERROR "Prepared ExifTool runtime is incomplete")
+        endif()
+        set(CINEVAULT_HAS_BUNDLED_EXIFTOOL ON)
+    else()
+        message(WARNING
+            "ExifTool cache is not configured; runtime will fall back to CINEVAULT_EXIFTOOL_PATH or PATH")
+    endif()
+endif()
+
+set(CINEVAULT_HAS_LOCAL_SEARCH_ASSISTANT OFF)
+if(CINEVAULT_ENABLE_LOCAL_SEARCH_ASSISTANT AND NOT CINEVAULT_BUILD_MINIMAL_GUI)
+    if(NOT WIN32)
+        message(FATAL_ERROR "The locked search-assistant runtime currently supports Windows x64 only")
+    endif()
+    if(NOT CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT
+       AND DEFINED ENV{CINEVAULT_SEARCH_ASSISTANT_CACHE}
+       AND NOT "$ENV{CINEVAULT_SEARCH_ASSISTANT_CACHE}" STREQUAL "")
+        set(CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT "$ENV{CINEVAULT_SEARCH_ASSISTANT_CACHE}")
+    endif()
+    if(NOT CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT)
+        message(FATAL_ERROR
+            "CINEVAULT_ENABLE_LOCAL_SEARCH_ASSISTANT requires a prepared cache. "
+            "Run cmake/PrepareSearchAssistantDependencies.cmake first.")
+    endif()
+    if(NOT IS_ABSOLUTE "${CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT}")
+        message(FATAL_ERROR "CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT must be absolute")
+    endif()
+    cmake_path(NORMAL_PATH CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT
+               OUTPUT_VARIABLE CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT)
+
+    set(CINEVAULT_SEARCH_ASSISTANT_LOCK
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/search-assistant-dependencies.lock.json")
+    set(CINEVAULT_SEARCH_ASSISTANT_READY
+        "${CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT}/search-assistant-dependencies.ready")
+    if(NOT EXISTS "${CINEVAULT_SEARCH_ASSISTANT_READY}")
+        message(FATAL_ERROR
+            "Search-assistant cache is not prepared: ${CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT}")
+    endif()
+    file(SHA256 "${CINEVAULT_SEARCH_ASSISTANT_LOCK}" CINEVAULT_SEARCH_ASSISTANT_LOCK_SHA256)
+    file(READ "${CINEVAULT_SEARCH_ASSISTANT_READY}" CINEVAULT_SEARCH_ASSISTANT_READY_CONTENTS)
+    string(FIND "${CINEVAULT_SEARCH_ASSISTANT_READY_CONTENTS}"
+                "lock_sha256=${CINEVAULT_SEARCH_ASSISTANT_LOCK_SHA256}"
+                CINEVAULT_SEARCH_ASSISTANT_LOCK_MATCH)
+    if(CINEVAULT_SEARCH_ASSISTANT_LOCK_MATCH EQUAL -1)
+        message(FATAL_ERROR
+            "Search-assistant cache does not match the dependency lock. "
+            "Run the preparation script again.")
+    endif()
+
+    file(READ "${CINEVAULT_SEARCH_ASSISTANT_LOCK}" CINEVAULT_SEARCH_ASSISTANT_LOCK_JSON)
+    string(JSON CINEVAULT_SEARCH_ASSISTANT_RUNTIME_VERSION GET
+           "${CINEVAULT_SEARCH_ASSISTANT_LOCK_JSON}" dependencies runtime version)
+    string(JSON CINEVAULT_SEARCH_ASSISTANT_MODEL_FILE GET
+           "${CINEVAULT_SEARCH_ASSISTANT_LOCK_JSON}" dependencies model file)
+    set(CINEVAULT_SEARCH_ASSISTANT_RUNTIME_ROOT
+        "${CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT}/runtimes/llama-${CINEVAULT_SEARCH_ASSISTANT_RUNTIME_VERSION}-win-vulkan-x64")
+    set(CINEVAULT_SEARCH_ASSISTANT_MODEL_ROOT
+        "${CINEVAULT_SEARCH_ASSISTANT_CACHE_ROOT}/models/qwen3-0.6b")
+    set(CINEVAULT_SEARCH_ASSISTANT_REQUIRED_FILES
+        "${CINEVAULT_SEARCH_ASSISTANT_RUNTIME_ROOT}/llama-server.exe"
+        "${CINEVAULT_SEARCH_ASSISTANT_MODEL_ROOT}/${CINEVAULT_SEARCH_ASSISTANT_MODEL_FILE}"
+    )
+    foreach(_required_file IN LISTS CINEVAULT_SEARCH_ASSISTANT_REQUIRED_FILES)
+        if(NOT EXISTS "${_required_file}")
+            message(FATAL_ERROR "Prepared search-assistant cache is incomplete: ${_required_file}")
+        endif()
+    endforeach()
+    set(CINEVAULT_HAS_LOCAL_SEARCH_ASSISTANT ON)
 endif()
 
 set(CINEVAULT_QT_COMPONENTS
@@ -223,6 +330,8 @@ set(APP_SOURCES
     src/app/main.cpp
     src/app/AppBootstrap.h
     src/app/AppBootstrap.cpp
+    src/app/SingleInstanceGuard.h
+    src/app/SingleInstanceGuard.cpp
     src/app/AppContext.h
     src/app/AppContext.cpp
     src/domain/Enums.h
@@ -237,6 +346,9 @@ set(APP_SOURCES
     src/shared/VisualAnalysisMetadata.cpp
     src/shared/Formatters.h
     src/shared/Formatters.cpp
+    src/shared/FileRevealService.h
+    src/shared/FileRevealService.cpp
+    src/shared/ScopedBackgroundThreadPriority.h
     src/ui/imaging/LocalImageProvider.h
     src/ui/imaging/LocalImageProvider.cpp
     src/ui/imaging/LocalImageUrlHelper.h
@@ -297,6 +409,10 @@ else()
     src/core/search/CaptureTimeResolver.cpp
     src/core/search/NaturalLanguageQueryParser.h
     src/core/search/NaturalLanguageQueryParser.cpp
+    src/core/search/SearchReliabilityEvaluator.h
+    src/core/search/SearchReliabilityEvaluator.cpp
+    src/core/search/SearchResultFusion.h
+    src/core/search/SearchResultFusion.cpp
     src/core/search/SearchQueryUnderstanding.h
     src/core/search/SearchQueryUnderstanding.cpp
     src/core/scan/FileTypeService.h
@@ -320,14 +436,28 @@ else()
     src/application/JobService.cpp
     src/application/MediaTaskService.h
     src/application/MediaTaskService.cpp
+    src/application/MetadataExtractionService.h
+    src/application/MetadataExtractionService.cpp
     src/application/MaterialCatalogSyncService.h
     src/application/MaterialCatalogSyncService.cpp
     src/application/MaterialCenterQueryService.h
     src/application/MaterialCenterQueryService.cpp
+    src/application/ApplicationIdleMonitor.h
+    src/application/ApplicationIdleMonitor.cpp
+    src/application/SearchAssistantLifecycleController.h
+    src/application/SearchAssistantLifecycleController.cpp
     src/application/VideoAnalysisService.h
     src/application/VideoAnalysisService.cpp
     src/application/ImportService.h
     src/application/ImportService.cpp
+    src/application/StorageVolumeService.h
+    src/application/StorageVolumeService.cpp
+    src/application/SourceChangeMonitor.h
+    src/application/SourceChangeMonitor.cpp
+    src/application/SystemIdleMonitor.h
+    src/application/SystemIdleMonitor.cpp
+    src/application/BackgroundMaintenanceCoordinator.h
+    src/application/BackgroundMaintenanceCoordinator.cpp
     src/application/LibraryQueryService.h
     src/application/LibraryQueryService.cpp
     src/application/FeedbackService.h
@@ -340,10 +470,16 @@ else()
     src/application/UpdaterSession.cpp
     src/infrastructure/ffmpeg/FFmpegAdapter.h
     src/infrastructure/ffmpeg/FFmpegAdapter.cpp
+    src/infrastructure/metadata/ExifToolAdapter.h
+    src/infrastructure/metadata/ExifToolAdapter.cpp
     src/infrastructure/network/VisionApiClient.h
     src/infrastructure/network/VisionApiClient.cpp
     src/infrastructure/network/VisionResponseParser.h
     src/infrastructure/network/VisionResponseParser.cpp
+    src/infrastructure/search/LocalSearchAssistantRuntime.h
+    src/infrastructure/search/LocalSearchAssistantRuntime.cpp
+    src/infrastructure/search/SearchAssistantClient.h
+    src/infrastructure/search/SearchAssistantClient.cpp
     src/ui/viewmodels/ProjectLibraryViewModel.h
     src/ui/viewmodels/ProjectLibraryViewModel.cpp
     src/ui/viewmodels/ShellViewModel.h
@@ -418,6 +554,7 @@ qt_add_qml_module(CineVault
         src/ui/qml/components/ThemedProgressBar.qml
         src/ui/qml/components/ThemedSlider.qml
         src/ui/qml/components/ThemedScrollBar.qml
+        src/ui/qml/components/MiddleDragScrollHandler.qml
         src/ui/qml/components/ThemedMenu.qml
         src/ui/qml/components/ThemedMenuItem.qml
         src/ui/qml/components/ThemedMenuSeparator.qml
@@ -449,6 +586,8 @@ target_compile_definitions(CineVault PRIVATE
     CINEVAULT_HAS_FFMPEG=$<IF:$<BOOL:${CINEVAULT_HAS_FFMPEG}>,1,0>
     CINEVAULT_HAS_BUNDLED_WEBP=$<IF:$<BOOL:${CINEVAULT_HAS_BUNDLED_WEBP}>,1,0>
     CINEVAULT_HAS_LOCAL_SEARCH=$<IF:$<BOOL:${CINEVAULT_HAS_LOCAL_SEARCH}>,1,0>
+    CINEVAULT_HAS_LOCAL_SEARCH_ASSISTANT=$<IF:$<BOOL:${CINEVAULT_HAS_LOCAL_SEARCH_ASSISTANT}>,1,0>
+    CINEVAULT_HAS_BUNDLED_EXIFTOOL=$<IF:$<BOOL:${CINEVAULT_HAS_BUNDLED_EXIFTOOL}>,1,0>
     CINEVAULT_APP_VERSION="${CINEVAULT_APP_VERSION}"
 )
 
@@ -467,6 +606,42 @@ target_link_libraries(CineVault PRIVATE
 
 if(CINEVAULT_HAS_BUNDLED_WEBP)
     target_link_libraries(CineVault PRIVATE webpdecoder)
+endif()
+
+if(CINEVAULT_HAS_BUNDLED_EXIFTOOL)
+    add_custom_command(TARGET CineVault POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:CineVault>/exiftool"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CINEVAULT_EXIFTOOL_RUNTIME_ROOT}"
+                "$<TARGET_FILE_DIR:CineVault>/exiftool"
+        VERBATIM
+    )
+endif()
+
+if(CINEVAULT_HAS_LOCAL_SEARCH_ASSISTANT)
+    set(CINEVAULT_INSTALLED_ASSISTANT_RUNTIME_ROOT
+        "$<TARGET_FILE_DIR:CineVault>/search-assistant")
+    set(CINEVAULT_INSTALLED_ASSISTANT_MODEL_ROOT
+        "$<TARGET_FILE_DIR:CineVault>/data/models/qwen3-0.6b")
+    add_custom_command(TARGET CineVault POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "${CINEVAULT_INSTALLED_ASSISTANT_RUNTIME_ROOT}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CINEVAULT_SEARCH_ASSISTANT_RUNTIME_ROOT}"
+                "${CINEVAULT_INSTALLED_ASSISTANT_RUNTIME_ROOT}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "${CINEVAULT_INSTALLED_ASSISTANT_MODEL_ROOT}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CINEVAULT_SEARCH_ASSISTANT_MODEL_ROOT}/${CINEVAULT_SEARCH_ASSISTANT_MODEL_FILE}"
+                "${CINEVAULT_INSTALLED_ASSISTANT_MODEL_ROOT}/${CINEVAULT_SEARCH_ASSISTANT_MODEL_FILE}"
+        VERBATIM
+    )
+endif()
+
+if(CINEVAULT_HAS_BUNDLED_EXIFTOOL)
+    install(DIRECTORY "${CINEVAULT_EXIFTOOL_RUNTIME_ROOT}/"
+            DESTINATION "exiftool")
 endif()
 
 if(NOT CINEVAULT_BUILD_MINIMAL_GUI)
@@ -507,6 +682,14 @@ if(CINEVAULT_HAS_LOCAL_SEARCH)
     endforeach()
 endif()
 
+if(CINEVAULT_HAS_LOCAL_SEARCH_ASSISTANT)
+    install(DIRECTORY "${CINEVAULT_SEARCH_ASSISTANT_RUNTIME_ROOT}/"
+            DESTINATION "search-assistant")
+    install(FILES
+            "${CINEVAULT_SEARCH_ASSISTANT_MODEL_ROOT}/${CINEVAULT_SEARCH_ASSISTANT_MODEL_FILE}"
+            DESTINATION "data/models/qwen3-0.6b")
+endif()
+
 if(CINEVAULT_HAS_FFMPEG)
     target_link_libraries(CineVault PRIVATE
         FFmpeg::avformat
@@ -522,6 +705,72 @@ if(BUILD_TESTING)
     target_include_directories(CineVaultSmokeTest PRIVATE src)
     target_link_libraries(CineVaultSmokeTest PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME CineVaultSmokeTest COMMAND CineVaultSmokeTest)
+
+    qt_add_executable(SingleInstanceGuardTest
+        tests/unit/SingleInstanceGuardTest.cpp
+        src/app/SingleInstanceGuard.cpp
+    )
+    target_include_directories(SingleInstanceGuardTest PRIVATE src)
+    target_link_libraries(SingleInstanceGuardTest PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME SingleInstanceGuardTest COMMAND SingleInstanceGuardTest)
+
+    qt_add_executable(ApplicationIdleMonitorTest
+        tests/unit/ApplicationIdleMonitorTest.cpp
+        src/application/ApplicationIdleMonitor.cpp
+    )
+    target_include_directories(ApplicationIdleMonitorTest PRIVATE src)
+    target_link_libraries(ApplicationIdleMonitorTest PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+    add_test(NAME ApplicationIdleMonitorTest COMMAND ApplicationIdleMonitorTest)
+
+    qt_add_executable(BackgroundMonitoringTest
+        tests/unit/BackgroundMonitoringTest.cpp
+        src/application/SourceChangeMonitor.cpp
+        src/application/SystemIdleMonitor.cpp
+    )
+    target_include_directories(BackgroundMonitoringTest PRIVATE src)
+    target_link_libraries(BackgroundMonitoringTest PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME BackgroundMonitoringTest COMMAND BackgroundMonitoringTest)
+
+    if(CINEVAULT_HAS_BUNDLED_EXIFTOOL)
+        qt_add_executable(ExifToolAdapterTest
+            tests/unit/ExifToolAdapterTest.cpp
+            src/infrastructure/metadata/ExifToolAdapter.cpp
+            src/shared/FolderPathMetadata.cpp
+        )
+        target_include_directories(ExifToolAdapterTest PRIVATE src)
+        target_link_libraries(ExifToolAdapterTest PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+        add_custom_command(TARGET ExifToolAdapterTest POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "$<TARGET_FILE_DIR:ExifToolAdapterTest>/exiftool"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CINEVAULT_EXIFTOOL_RUNTIME_ROOT}"
+                    "$<TARGET_FILE_DIR:ExifToolAdapterTest>/exiftool"
+            VERBATIM
+        )
+        add_test(NAME ExifToolAdapterTest COMMAND ExifToolAdapterTest)
+
+        qt_add_executable(MetadataExtractionServiceTest
+            tests/unit/MetadataExtractionServiceTest.cpp
+            src/application/MetadataExtractionService.cpp
+            src/core/jobs/JobEngine.cpp
+            src/infrastructure/db/DatabaseManager.cpp
+            src/infrastructure/db/DatabaseMigration.cpp
+            src/infrastructure/metadata/ExifToolAdapter.cpp
+            src/shared/FolderPathMetadata.cpp
+        )
+        target_include_directories(MetadataExtractionServiceTest PRIVATE src)
+        target_link_libraries(MetadataExtractionServiceTest PRIVATE
+            Qt6::Concurrent Qt6::Core Qt6::Gui Qt6::Sql Qt6::Test)
+        add_custom_command(TARGET MetadataExtractionServiceTest POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "$<TARGET_FILE_DIR:MetadataExtractionServiceTest>/exiftool"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CINEVAULT_EXIFTOOL_RUNTIME_ROOT}"
+                    "$<TARGET_FILE_DIR:MetadataExtractionServiceTest>/exiftool"
+            VERBATIM
+        )
+        add_test(NAME MetadataExtractionServiceTest COMMAND MetadataExtractionServiceTest)
+    endif()
 
     qt_add_executable(SearchConfigurationTest tests/unit/SearchConfigurationTest.cpp)
     target_include_directories(SearchConfigurationTest PRIVATE src)
@@ -568,6 +817,43 @@ if(BUILD_TESTING)
     target_include_directories(NaturalLanguageQueryParserTest PRIVATE src)
     target_link_libraries(NaturalLanguageQueryParserTest PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME NaturalLanguageQueryParserTest COMMAND NaturalLanguageQueryParserTest)
+
+    qt_add_executable(SearchReliabilityEvaluatorTest
+        tests/unit/SearchReliabilityEvaluatorTest.cpp
+        src/core/search/NaturalLanguageQueryParser.cpp
+        src/core/search/SearchReliabilityEvaluator.cpp
+    )
+    target_include_directories(SearchReliabilityEvaluatorTest PRIVATE src)
+    target_link_libraries(SearchReliabilityEvaluatorTest PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME SearchReliabilityEvaluatorTest COMMAND SearchReliabilityEvaluatorTest)
+
+    qt_add_executable(SearchResultFusionTest
+        tests/unit/SearchResultFusionTest.cpp
+        src/core/search/SearchReliabilityEvaluator.cpp
+        src/core/search/SearchResultFusion.cpp
+    )
+    target_include_directories(SearchResultFusionTest PRIVATE src)
+    target_link_libraries(SearchResultFusionTest PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME SearchResultFusionTest COMMAND SearchResultFusionTest)
+
+    if(CINEVAULT_HAS_LOCAL_SEARCH_ASSISTANT)
+        qt_add_executable(SearchAssistantIntegrationTest
+            tests/unit/SearchAssistantIntegrationTest.cpp
+            src/infrastructure/search/LocalSearchAssistantRuntime.cpp
+            src/infrastructure/search/SearchAssistantClient.cpp
+            src/infrastructure/network/VisionResponseParser.cpp
+            src/core/search/NaturalLanguageQueryParser.cpp
+            src/core/search/SearchQueryUnderstanding.cpp
+        )
+        target_include_directories(SearchAssistantIntegrationTest PRIVATE src)
+        target_link_libraries(SearchAssistantIntegrationTest PRIVATE
+            Qt6::Core
+            Qt6::Network
+            Qt6::Test
+        )
+        add_dependencies(SearchAssistantIntegrationTest CineVault)
+        add_test(NAME SearchAssistantIntegrationTest COMMAND SearchAssistantIntegrationTest)
+    endif()
 
     qt_add_executable(SearchQueryUnderstandingTest
         tests/unit/SearchQueryUnderstandingTest.cpp
@@ -709,7 +995,10 @@ if(BUILD_TESTING)
         if(QT_ROOT AND EXISTS "${CINEVAULT_QTCORE_PRIVATE_INCLUDE_DIR}/QtCore/private/qzipreader_p.h")
             target_include_directories(DocumentPreviewServiceTest PRIVATE "${CINEVAULT_QTCORE_PRIVATE_INCLUDE_DIR}")
         endif()
-        target_link_libraries(DocumentPreviewServiceTest PRIVATE Qt6::Core Qt6::Test)
+        if(TARGET Qt6::CorePrivate)
+            target_link_libraries(DocumentPreviewServiceTest PRIVATE Qt6::CorePrivate)
+        endif()
+        target_link_libraries(DocumentPreviewServiceTest PRIVATE Qt6::Core Qt6::Gui Qt6::Pdf Qt6::Test)
         add_test(NAME DocumentPreviewServiceTest COMMAND DocumentPreviewServiceTest)
 
         qt_add_executable(MaterialCenterQueryServiceTest
@@ -717,6 +1006,7 @@ if(BUILD_TESTING)
             src/application/MaterialCenterQueryService.cpp
             src/core/search/SearchEngine.cpp
             src/core/search/NaturalLanguageQueryParser.cpp
+            src/core/search/SearchReliabilityEvaluator.cpp
             src/core/search/SearchQueryUnderstanding.cpp
             src/infrastructure/db/GlobalDatabaseManager.cpp
             src/infrastructure/db/DatabaseMigration.cpp
@@ -884,11 +1174,16 @@ if(BUILD_TESTING)
     if(WIN32 AND CINEVAULT_TEST_QT_BIN_DIR)
         set(CINEVAULT_PATH_AWARE_TESTS
             CineVaultSmokeTest
+            SingleInstanceGuardTest
+            ApplicationIdleMonitorTest
+            BackgroundMonitoringTest
             SearchConfigurationTest
             AppSettingsSearchTest
             QuickSearchControllerTest
             VisualAnalysisMetadataTest
             NaturalLanguageQueryParserTest
+            SearchReliabilityEvaluatorTest
+            SearchResultFusionTest
             SearchQueryUnderstandingTest
             CaptureTimeResolverTest
             VisionApiClientJsonTest
@@ -899,6 +1194,15 @@ if(BUILD_TESTING)
             FolderPathMetadataTest
             FolderDatabaseMigrationTest
         )
+        if(TARGET ExifToolAdapterTest)
+            list(APPEND CINEVAULT_PATH_AWARE_TESTS ExifToolAdapterTest)
+        endif()
+        if(TARGET MetadataExtractionServiceTest)
+            list(APPEND CINEVAULT_PATH_AWARE_TESTS MetadataExtractionServiceTest)
+        endif()
+        if(TARGET SearchAssistantIntegrationTest)
+            list(APPEND CINEVAULT_PATH_AWARE_TESTS SearchAssistantIntegrationTest)
+        endif()
         if(TARGET SemanticSearchIndexServiceTest)
             list(APPEND CINEVAULT_PATH_AWARE_TESTS SemanticSearchIndexServiceTest)
         endif()

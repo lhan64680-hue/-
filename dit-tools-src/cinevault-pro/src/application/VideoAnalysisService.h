@@ -42,11 +42,10 @@ public:
     QString batchCurrentLabel() const;
     QString batchCurrentDetail() const;
     QString batchStatusText() const;
+    bool hasPendingAnalysisWork() const;
 
 public slots:
     void analyzeVideo(const QString &videoKey);
-    bool confirmVideo(const QString &videoKey);
-    int confirmVideos(const QStringList &videoKeys);
 
 signals:
     void catalogChanged();

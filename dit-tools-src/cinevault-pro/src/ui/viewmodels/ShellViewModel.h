@@ -9,6 +9,7 @@
 class ImportService;
 class FeedbackService;
 class ProjectService;
+class StorageVolumeService;
 
 class ShellViewModel : public QObject {
     Q_OBJECT
@@ -26,9 +27,14 @@ class ShellViewModel : public QObject {
     Q_PROPERTY(int reportWorkspaceId READ reportWorkspaceId CONSTANT)
     Q_PROPERTY(int jobsWorkspaceId READ jobsWorkspaceId CONSTANT)
     Q_PROPERTY(int feedbackWorkspaceId READ feedbackWorkspaceId CONSTANT)
+    Q_PROPERTY(QVariantList storageVolumes READ storageVolumes NOTIFY storageVolumesChanged)
 
 public:
-    explicit ShellViewModel(ProjectService *projectService, ImportService *importService, FeedbackService *feedbackService, QObject *parent = nullptr);
+    explicit ShellViewModel(ProjectService *projectService,
+                            ImportService *importService,
+                            FeedbackService *feedbackService,
+                            StorageVolumeService *storageVolumeService,
+                            QObject *parent = nullptr);
 
     QString projectName() const;
     QString projectPath() const;
@@ -44,9 +50,11 @@ public:
     int reportWorkspaceId() const;
     int jobsWorkspaceId() const;
     int feedbackWorkspaceId() const;
+    QVariantList storageVolumes() const;
 
     void resetProjectUiState();
     Q_INVOKABLE void enterProjectFromLibrary();
+    Q_INVOKABLE void enterMaterialCenterFromQuickSearch(const QString &searchText);
     void setGlobalSearchText(const QString &text);
     void setCurrentWorkspace(int workspace);
 
@@ -56,6 +64,8 @@ public:
     Q_INVOKABLE void addSourceDirectory();
     Q_INVOKABLE bool importSourceDirectory(const QUrl &directoryUrl);
     Q_INVOKABLE bool importSourcePath(const QString &directoryPath);
+    Q_INVOKABLE bool importStorageVolume(const QString &rootPath);
+    Q_INVOKABLE void refreshStorageVolumes();
     Q_INVOKABLE void cancelAddSourceDirectory();
     Q_INVOKABLE void openSettings();
 
@@ -67,11 +77,13 @@ signals:
     void sourceImported();
     void addSourceDirectoryRequested();
     void openSettingsRequested();
+    void storageVolumesChanged();
 
 private:
     ProjectService *m_projectService = nullptr;
     ImportService *m_importService = nullptr;
     FeedbackService *m_feedbackService = nullptr;
+    StorageVolumeService *m_storageVolumeService = nullptr;
     QString m_globalSearchText;
     WorkspaceId m_currentWorkspace = WorkspaceId::ProjectLibrary;
     QString m_lastMessage;

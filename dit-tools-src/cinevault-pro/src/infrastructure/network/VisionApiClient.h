@@ -1,33 +1,11 @@
 #pragma once
 
 #include "domain/Entities.h"
-#include "domain/SearchTypes.h"
 
-#include <QDate>
 #include <optional>
 
 class VisionApiClient {
 public:
-    std::optional<ModelSearchUnderstanding> understandSearchQuery(
-        const QString &queryText,
-        const QDate &referenceDate,
-        const QString &baseUrl,
-        const QString &apiKey,
-        const QString &model,
-        int timeoutSec,
-        QString *errorMessage,
-        int *httpStatusCode = nullptr) const;
-
-    std::optional<QVector<ModelFrameRerankScore>> rerankFrameCandidates(
-        const QString &queryText,
-        const QVector<FrameSearchHit> &candidates,
-        const QString &baseUrl,
-        const QString &apiKey,
-        const QString &model,
-        int timeoutSec,
-        QString *errorMessage,
-        int *httpStatusCode = nullptr) const;
-
     bool testConnection(const QString &baseUrl,
                         const QString &apiKey,
                         const QString &model,

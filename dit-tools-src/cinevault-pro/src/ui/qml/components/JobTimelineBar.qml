@@ -168,6 +168,10 @@ Rectangle {
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.horizontal: ThemedScrollBar { policy: ScrollBar.AsNeeded }
 
+            MiddleDragScrollHandler {
+                flickable: timelineFlick
+            }
+
             Row {
                 id: timelineRow
                 height: parent.height

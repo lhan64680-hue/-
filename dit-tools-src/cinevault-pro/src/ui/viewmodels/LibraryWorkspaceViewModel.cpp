@@ -1,10 +1,15 @@
 #include "ui/viewmodels/LibraryWorkspaceViewModel.h"
 
+#include "shared/FileRevealService.h"
+
 #include "application/LibraryQueryService.h"
 #include "ui/models/AssetListModel.h"
 
+#include <QClipboard>
 #include <QDesktopServices>
+#include <QDir>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QUrl>
 
 namespace {
@@ -302,12 +307,19 @@ bool LibraryWorkspaceViewModel::openAssetFolder(qint64 assetId)
         return false;
     }
 
-    const QFileInfo info(asset.absolutePath);
-    const auto folder = info.absolutePath();
-    if (folder.trimmed().isEmpty()) {
+    return FileRevealService::revealFile(asset.absolutePath);
+}
+
+bool LibraryWorkspaceViewModel::copyAssetPath(qint64 assetId)
+{
+    const auto asset = assetById(assetId);
+    auto *clipboard = QGuiApplication::clipboard();
+    if (asset.id <= 0 || asset.absolutePath.trimmed().isEmpty() || !clipboard) {
         return false;
     }
-    return QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+
+    clipboard->setText(QDir::toNativeSeparators(QFileInfo(asset.absolutePath).absoluteFilePath()));
+    return true;
 }
 
 AssetFile LibraryWorkspaceViewModel::assetById(qint64 assetId) const

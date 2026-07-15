@@ -7,6 +7,8 @@ class QuickSearchController;
 class UpdateService;
 class VideoAnalysisService;
 class VisionApiClient;
+class LocalSearchAssistantRuntime;
+class SearchAssistantLifecycleController;
 
 class SettingsViewModel : public QObject {
     Q_OBJECT
@@ -14,9 +16,8 @@ class SettingsViewModel : public QObject {
     Q_PROPERTY(QString visionApiKey READ visionApiKey WRITE setVisionApiKey NOTIFY settingsChanged)
     Q_PROPERTY(QString visionModel READ visionModel WRITE setVisionModel NOTIFY settingsChanged)
     Q_PROPERTY(bool searchAssistantEnabled READ searchAssistantEnabled WRITE setSearchAssistantEnabled NOTIFY settingsChanged)
-    Q_PROPERTY(bool frameRerankEnabled READ frameRerankEnabled WRITE setFrameRerankEnabled NOTIFY settingsChanged)
-    Q_PROPERTY(bool localOnlySearch READ localOnlySearch WRITE setLocalOnlySearch NOTIFY settingsChanged)
-    Q_PROPERTY(bool allowSearchFrameUpload READ allowSearchFrameUpload WRITE setAllowSearchFrameUpload NOTIFY settingsChanged)
+    Q_PROPERTY(int searchAssistantAutoUnloadMinutes READ searchAssistantAutoUnloadMinutes WRITE setSearchAssistantAutoUnloadMinutes NOTIFY settingsChanged)
+    Q_PROPERTY(QString localSearchAssistantStatusText READ localSearchAssistantStatusText NOTIFY settingsChanged)
     Q_PROPERTY(bool quickSearchEnabled READ quickSearchEnabled NOTIFY settingsChanged)
     Q_PROPERTY(QString quickSearchShortcut READ quickSearchShortcut NOTIFY settingsChanged)
     Q_PROPERTY(bool startAtLogin READ startAtLogin NOTIFY settingsChanged)
@@ -43,6 +44,8 @@ public:
                                VideoAnalysisService *videoAnalysisService,
                                UpdateService *updateService,
                                QuickSearchController *quickSearchController,
+                               LocalSearchAssistantRuntime *localSearchAssistantRuntime,
+                               SearchAssistantLifecycleController *searchAssistantLifecycleController,
                                QObject *parent = nullptr);
 
     QString visionBaseUrl() const;
@@ -53,12 +56,9 @@ public:
     void setVisionModel(const QString &value);
     bool searchAssistantEnabled() const;
     void setSearchAssistantEnabled(bool enabled);
-    bool frameRerankEnabled() const;
-    void setFrameRerankEnabled(bool enabled);
-    bool localOnlySearch() const;
-    void setLocalOnlySearch(bool enabled);
-    bool allowSearchFrameUpload() const;
-    void setAllowSearchFrameUpload(bool enabled);
+    int searchAssistantAutoUnloadMinutes() const;
+    void setSearchAssistantAutoUnloadMinutes(int minutes);
+    QString localSearchAssistantStatusText() const;
     bool quickSearchEnabled() const;
     QString quickSearchShortcut() const;
     bool startAtLogin() const;
@@ -104,9 +104,7 @@ public:
                                   const QString &visionApiKey,
                                   const QString &visionModel,
                                   bool searchAssistantEnabled,
-                                  bool frameRerankEnabled,
-                                  bool localOnlySearch,
-                                  bool allowSearchFrameUpload,
+                                  int searchAssistantAutoUnloadMinutes,
                                   bool quickSearchEnabled,
                                   const QString &quickSearchShortcut,
                                   bool startAtLogin,
@@ -132,6 +130,8 @@ private:
     VideoAnalysisService *m_videoAnalysisService = nullptr;
     UpdateService *m_updateService = nullptr;
     QuickSearchController *m_quickSearchController = nullptr;
+    LocalSearchAssistantRuntime *m_localSearchAssistantRuntime = nullptr;
+    SearchAssistantLifecycleController *m_searchAssistantLifecycleController = nullptr;
     QString m_frameCacheSizeLabel;
     QString m_lastMessage;
 };

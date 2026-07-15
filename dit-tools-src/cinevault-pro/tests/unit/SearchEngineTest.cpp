@@ -116,6 +116,10 @@ private:
                 "capture_date = '2026-07-13', capture_time_source = 'quicktime_creation_date', "
                 "capture_time_confidence = 1.0 WHERE video_key = 'asset-semantic'"),
             QStringLiteral(
+                "UPDATE global_video_asset SET embedded_metadata_text = "
+                "'EXIF:Make Sony EXIF:Model AlphaA7M4 EXIF:LensModel FE24-70GM2' "
+                "WHERE video_key = 'asset-night-image'"),
+            QStringLiteral(
                 "INSERT INTO video_analysis_result(video_key, search_text) VALUES "
                 "('asset-night-video', '上海夜景航拍 城市灯光'), "
                 "('asset-night-image', '上海夜景航拍')"),
@@ -223,6 +227,19 @@ private slots:
         QVERIFY(partial);
         QVERIFY(complete->lexicalScore > partial->lexicalScore);
         QVERIFY(complete->reasons.contains(QStringLiteral("查询关键词完整覆盖")));
+    }
+
+    void embeddedExifMetadataIsLexicallySearchable()
+    {
+        Fixture fixture;
+        QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
+        SearchEngine engine(&fixture.manager);
+
+        const auto result = engine.searchMaterials(QStringLiteral("AlphaA7M4"));
+
+        QVERIFY(findHit(result,
+                        SearchDocumentType::Asset,
+                        QStringLiteral("asset-night-image")));
     }
 
     void captureDateTakesPriorityOverFileModifiedDate()

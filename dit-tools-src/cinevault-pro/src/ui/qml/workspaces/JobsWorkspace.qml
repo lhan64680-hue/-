@@ -252,6 +252,10 @@ Rectangle {
                         spacing: 10
                         model: viewModel ? viewModel.model : null
 
+                        MiddleDragScrollHandler {
+                            flickable: jobList
+                        }
+
                         ScrollBar.vertical: ThemedScrollBar {
                             policy: ScrollBar.AsNeeded
                         }

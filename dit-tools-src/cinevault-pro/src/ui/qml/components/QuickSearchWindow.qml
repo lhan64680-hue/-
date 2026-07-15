@@ -12,8 +12,8 @@ Window {
     property var materialCenterViewModel
     property var shellViewModel
     property var mainWindow
+    property bool pinned: false
     property int selectedFlatIndex: 0
-    property point dragOrigin: Qt.point(0, 0)
     readonly property bool hasQuery: searchField.text.trim().length > 0
     readonly property int folderResultCount: hasQuery && materialCenterViewModel
         ? materialCenterViewModel.folderCount : 0
@@ -51,6 +51,9 @@ Window {
     function openSearch() {
         selectedFlatIndex = 0
         searchField.text = ""
+        if (materialCenterViewModel) {
+            materialCenterViewModel.prepareGlobalQuickSearch()
+        }
         if (controller) {
             var restoredPosition = controller.restoredWindowPosition(width, height)
             x = restoredPosition.x
@@ -107,25 +110,37 @@ Window {
         clampSelection()
     }
 
-    function showMainWindow() {
-        hideSearch()
+    function activateMainWindow() {
         if (!mainWindow) {
             return
         }
-        mainWindow.showNormal()
-        mainWindow.raise()
-        mainWindow.requestActivate()
-    }
-
-    function enterMaterialCenter() {
-        if (!shellViewModel) {
-            showMainWindow()
+        if (controller
+                && typeof controller.restoreMainWindow === "function"
+                && controller.restoreMainWindow(mainWindow)) {
             return
         }
-        shellViewModel.enterProjectFromLibrary()
-        shellViewModel.globalSearchText = searchField.text
-        shellViewModel.currentWorkspace = shellViewModel.materialCenterWorkspaceId
-        showMainWindow()
+        if (typeof mainWindow.restoreToForeground === "function") {
+            mainWindow.restoreToForeground()
+        } else {
+            mainWindow.showNormal()
+            mainWindow.raise()
+            mainWindow.requestActivate()
+        }
+    }
+
+    function showMainWindow(forceCloseQuickSearch) {
+        var shouldCloseQuickSearch = forceCloseQuickSearch || !pinned
+
+        // 快捷搜索仍持有前台权限时先恢复主窗口，避免隐藏到托盘后激活请求被 Windows 拒绝。
+        root.activateMainWindow()
+        if (shouldCloseQuickSearch) {
+            hideSearch()
+        }
+
+        // 快捷搜索隐藏完成后再次确认主窗口为最终前台窗口。
+        Qt.callLater(function() {
+            root.activateMainWindow()
+        })
     }
 
     function activateCurrent(locateOnly) {
@@ -146,12 +161,18 @@ Window {
     }
 
     onTotalResultCountChanged: clampSelection()
-    onActiveChanged: if (visible && !active) focusLossTimer.restart()
+    onActiveChanged: if (visible && !active && !pinned) focusLossTimer.restart()
+    onPinnedChanged: {
+        focusLossTimer.stop()
+        if (!pinned && visible && !active) {
+            focusLossTimer.restart()
+        }
+    }
 
     Timer {
         id: focusLossTimer
         interval: 350
-        onTriggered: if (root.visible && !root.active) root.hideSearch()
+        onTriggered: if (root.visible && !root.active && !root.pinned) root.hideSearch()
     }
 
     Timer {
@@ -211,17 +232,10 @@ Window {
                 cursorShape: Qt.SizeAllCursor
                 onActiveChanged: {
                     if (active) {
-                        root.dragOrigin = Qt.point(root.x, root.y)
+                        root.startSystemMove()
                     } else {
-                        root.rememberPosition()
+                        Qt.callLater(root.rememberPosition)
                     }
-                }
-                onTranslationChanged: {
-                    if (!active) {
-                        return
-                    }
-                    root.x = root.dragOrigin.x + translation.x
-                    root.y = root.dragOrigin.y + translation.y
                 }
             }
         }
@@ -318,6 +332,50 @@ Window {
                         }
                     }
 
+                    Button {
+                        id: pinButton
+                        objectName: "quickSearchPinButton"
+                        Layout.preferredWidth: 106
+                        Layout.preferredHeight: 38
+                        padding: 0
+                        hoverEnabled: true
+                        ToolTip.visible: hovered
+                        ToolTip.text: root.pinned
+                            ? "取消固定后，快捷搜索会在失去焦点时自动收起"
+                            : "固定后切换到主窗口，快捷搜索仍会保持显示"
+
+                        background: Rectangle {
+                            radius: 10
+                            color: root.pinned
+                                ? root.quickSelected
+                                : (pinButton.hovered ? root.quickSurfaceHover : root.quickSurface)
+                            border.width: 1
+                            border.color: root.pinned ? root.quickSelectedLine : root.quickLine
+                        }
+
+                        contentItem: RowLayout {
+                            spacing: 6
+                            Text {
+                                text: "📌"
+                                color: root.quickAccent
+                                font.pixelSize: 14
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: root.pinned ? "已固定" : "固定显示"
+                                color: root.pinned ? root.quickText : root.quickMuted
+                                font.pixelSize: 12
+                                font.weight: root.pinned ? Font.DemiBold : Font.Normal
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                        }
+
+                        onClicked: {
+                            root.pinned = !root.pinned
+                            searchField.forceActiveFocus()
+                        }
+                    }
+
                     Rectangle {
                         Layout.preferredWidth: shortcutText.implicitWidth + 20
                         Layout.preferredHeight: 30
@@ -350,6 +408,75 @@ Window {
                     anchors.topMargin: 10
                     anchors.bottomMargin: 8
                     spacing: 6
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 8
+                        Layout.rightMargin: 8
+                        spacing: 7
+
+                        Text {
+                            text: "搜索命中"
+                            color: root.quickText
+                            font.pixelSize: 13
+                            font.weight: Font.DemiBold
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Repeater {
+                            model: [
+                                { label: "智能", value: 0 },
+                                { label: "视频", value: 1 },
+                                { label: "帧画面", value: 2 },
+                                { label: "图片", value: 3 },
+                                { label: "文档", value: 4 }
+                            ]
+
+                            delegate: Button {
+                                required property var modelData
+                                readonly property bool selected: root.materialCenterViewModel
+                                    && root.materialCenterViewModel.searchResultFilter === modelData.value
+
+                                objectName: "quickSearchResultFilter" + modelData.value
+                                Layout.preferredWidth: modelData.value === 2 ? 72 : 62
+                                Layout.preferredHeight: 30
+                                padding: 0
+
+                                background: Rectangle {
+                                    radius: 9
+                                    color: parent.selected
+                                        ? root.quickSelected
+                                        : (parent.hovered ? root.quickSurfaceHover : root.quickSurface)
+                                    border.width: 1
+                                    border.color: parent.selected ? root.quickSelectedLine : root.quickLine
+                                }
+
+                                contentItem: Text {
+                                    text: modelData.label
+                                    color: parent.selected ? root.quickText : root.quickMuted
+                                    font.pixelSize: 12
+                                    font.weight: parent.selected ? Font.DemiBold : Font.Normal
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+
+                                onClicked: {
+                                    root.selectedFlatIndex = 0
+                                    if (root.materialCenterViewModel) {
+                                        root.materialCenterViewModel.setSearchResultFilter(modelData.value)
+                                    }
+                                    searchField.forceActiveFocus()
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 1
+                        color: root.quickLine
+                    }
 
                     Text {
                         visible: !root.hasQuery
@@ -392,6 +519,10 @@ Window {
                         model: root.materialCenterViewModel ? root.materialCenterViewModel.folderModel : null
                         currentIndex: root.folderResultCount > 0 ? 0 : -1
 
+                        MiddleDragScrollHandler {
+                            flickable: folderList
+                        }
+
                         delegate: Rectangle {
                             id: folderDelegate
                             required property int index
@@ -418,8 +549,9 @@ Window {
                                     root.materialCenterViewModel.locateFolder(folderKeyValue)
                                     root.hideSearch()
                                 } else {
-                                    root.materialCenterViewModel.openFolderProject(folderKeyValue)
-                                    root.enterMaterialCenter()
+                                    if (root.materialCenterViewModel.openQuickSearchFolderResult(folderKeyValue)) {
+                                        root.showMainWindow(true)
+                                    }
                                 }
                             }
 
@@ -460,11 +592,36 @@ Window {
                                 }
                             }
 
+                            ThemedMenu {
+                                id: folderContextMenu
+
+                                ThemedMenuItem {
+                                    text: "打开所在目录"
+                                    onTriggered: if (root.materialCenterViewModel) {
+                                        root.materialCenterViewModel.locateFolder(folderDelegate.folderKeyValue)
+                                    }
+                                }
+                                ThemedMenuItem {
+                                    text: "复制文件路径"
+                                    onTriggered: if (root.materialCenterViewModel) {
+                                        root.materialCenterViewModel.copyFolderPath(folderDelegate.folderKeyValue)
+                                    }
+                                }
+                            }
+
                             MouseArea {
+                                id: folderMouseArea
                                 anchors.fill: parent
                                 hoverEnabled: true
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 onEntered: root.selectedFlatIndex = index
-                                onClicked: folderDelegate.activate(mouse.modifiers & Qt.ControlModifier)
+                                onClicked: function(mouse) {
+                                    root.selectedFlatIndex = index
+                                    if (mouse.button === Qt.RightButton) {
+                                        folderContextMenu.popup(folderMouseArea, mouse.x, mouse.y)
+                                    }
+                                }
+                                onDoubleClicked: folderDelegate.activate(mouse.modifiers & Qt.ControlModifier)
                             }
                         }
                     }
@@ -504,6 +661,10 @@ Window {
                                 ? root.materialCenterViewModel.frameModel
                                 : root.materialCenterViewModel.assetModel)
 
+                        MiddleDragScrollHandler {
+                            flickable: resultList
+                        }
+
                         delegate: Rectangle {
                             id: resultDelegate
                             required property int index
@@ -534,15 +695,15 @@ Window {
 
                             function activate(locateOnly) {
                                 if (!root.materialCenterViewModel || videoKeyValue.length === 0) return
-                                root.materialCenterViewModel.selectVideo(videoKeyValue)
                                 if (locateOnly) {
+                                    root.materialCenterViewModel.selectVideo(videoKeyValue)
                                     root.materialCenterViewModel.locateSelectedSource()
                                     root.hideSearch()
                                 } else {
-                                    if (root.materialCenterViewModel.openSelectedProject()) {
-                                        root.enterMaterialCenter()
+                                    if (root.materialCenterViewModel.openQuickSearchResultAtIndex(videoKeyValue, index)) {
+                                        root.showMainWindow(true)
                                     } else {
-                                        root.showMainWindow()
+                                        root.showMainWindow(true)
                                     }
                                 }
                             }
@@ -665,11 +826,39 @@ Window {
                                 }
                             }
 
+                            ThemedMenu {
+                                id: resultContextMenu
+
+                                ThemedMenuItem {
+                                    text: "打开所在目录"
+                                    onTriggered: if (root.materialCenterViewModel) {
+                                        root.materialCenterViewModel.openAssetFolder(resultDelegate.videoKeyValue)
+                                    }
+                                }
+                                ThemedMenuItem {
+                                    text: "复制文件路径"
+                                    onTriggered: if (root.materialCenterViewModel) {
+                                        root.materialCenterViewModel.copyAssetPath(resultDelegate.videoKeyValue)
+                                    }
+                                }
+                            }
+
                             MouseArea {
+                                id: resultMouseArea
                                 anchors.fill: parent
                                 hoverEnabled: true
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 onEntered: root.selectedFlatIndex = resultDelegate.flatIndex
-                                onClicked: resultDelegate.activate(mouse.modifiers & Qt.ControlModifier)
+                                onClicked: function(mouse) {
+                                    root.selectedFlatIndex = resultDelegate.flatIndex
+                                    if (root.materialCenterViewModel) {
+                                        root.materialCenterViewModel.selectVideo(resultDelegate.videoKeyValue)
+                                    }
+                                    if (mouse.button === Qt.RightButton) {
+                                        resultContextMenu.popup(resultMouseArea, mouse.x, mouse.y)
+                                    }
+                                }
+                                onDoubleClicked: resultDelegate.activate(mouse.modifiers & Qt.ControlModifier)
                             }
                         }
                     }
@@ -718,13 +907,13 @@ Window {
                             spacing: 16
 
                             Text { text: "↑↓ / Tab 选择"; color: root.quickWeak; font.pixelSize: 11 }
-                            Text { text: "Enter 打开"; color: root.quickWeak; font.pixelSize: 11 }
+                            Text { text: "双击 / Enter 打开"; color: root.quickWeak; font.pixelSize: 11 }
                             Text { text: "Ctrl+Enter 定位"; color: root.quickWeak; font.pixelSize: 11 }
                             Text { text: "Esc 收起"; color: root.quickWeak; font.pixelSize: 11 }
                             Item { Layout.fillWidth: true }
                             Text {
                                 visible: root.materialCenterViewModel && root.materialCenterViewModel.searchAssistantBusy
-                                text: "视觉语言模型增强中…"
+                                text: "内置文本模型增强中…"
                                 color: root.quickAccent
                                 font.pixelSize: 11
                             }

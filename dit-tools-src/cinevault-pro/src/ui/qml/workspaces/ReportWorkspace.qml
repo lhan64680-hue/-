@@ -99,6 +99,8 @@ Rectangle {
             border.color: Theme.line
 
             Flickable {
+                id: reportFormFlick
+
                 anchors.fill: parent
                 anchors.margins: 16
                 contentWidth: width
@@ -106,6 +108,10 @@ Rectangle {
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ThemedScrollBar { policy: ScrollBar.AsNeeded }
+
+                MiddleDragScrollHandler {
+                    flickable: reportFormFlick
+                }
 
                 ColumnLayout {
                     id: formColumn
@@ -388,6 +394,10 @@ Rectangle {
                         contentHeight: Math.max(height, previewImage.height + 24)
                         ScrollBar.horizontal: ThemedScrollBar { policy: ScrollBar.AsNeeded }
                         ScrollBar.vertical: ThemedScrollBar { policy: ScrollBar.AsNeeded }
+
+                        MiddleDragScrollHandler {
+                            flickable: previewFlick
+                        }
 
                         Image {
                             id: previewImage

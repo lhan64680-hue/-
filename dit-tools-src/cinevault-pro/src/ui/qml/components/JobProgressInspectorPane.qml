@@ -233,6 +233,11 @@ Rectangle {
             Layout.fillHeight: true
             clip: true
 
+            MiddleDragScrollHandler {
+                parent: detailScroll.contentItem
+                flickable: detailScroll.contentItem
+            }
+
             ScrollBar.vertical: ThemedScrollBar {
                 policy: ScrollBar.AsNeeded
             }

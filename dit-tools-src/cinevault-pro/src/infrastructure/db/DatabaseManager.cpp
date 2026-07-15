@@ -152,12 +152,29 @@ QSqlDatabase DatabaseManager::database() const
 
 QSqlDatabase DatabaseManager::openThreadConnection(const QString &connectionName, QString *errorMessage) const
 {
+    return openThreadConnectionForPath(m_databaseFilePath, connectionName, errorMessage);
+}
+
+QSqlDatabase DatabaseManager::openThreadConnectionForPath(const QString &databaseFilePath,
+                                                           const QString &connectionName,
+                                                           QString *errorMessage) const
+{
+    if (databaseFilePath.trimmed().isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("项目数据库路径为空");
+        }
+        return {};
+    }
     auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
-    db.setDatabaseName(m_databaseFilePath);
+    db.setDatabaseName(databaseFilePath);
     if (!db.open()) {
         if (errorMessage) {
             *errorMessage = db.lastError().text();
         }
+        return db;
+    }
+    if (!DatabaseMigration::configureSqlite(db, errorMessage)) {
+        db.close();
     }
     return db;
 }
@@ -177,8 +194,8 @@ void DatabaseManager::closeThreadConnection(const QString &connectionName) const
 bool DatabaseManager::initializeSchema(QSqlDatabase &db, bool databaseExistedBeforeOpen, QString *errorMessage)
 {
     auto version = currentSchemaVersion(db);
-    if (version < 3
-        && !DatabaseMigration::createUpgradeBackup(db, 3, databaseExistedBeforeOpen, errorMessage)) {
+    if (version < CurrentSchemaVersion
+        && !DatabaseMigration::createUpgradeBackup(db, CurrentSchemaVersion, databaseExistedBeforeOpen, errorMessage)) {
         return false;
     }
     if (!DatabaseMigration::configureSqlite(db, errorMessage)) {
@@ -224,6 +241,24 @@ bool DatabaseManager::initializeSchema(QSqlDatabase &db, bool databaseExistedBef
         }
         version = 3;
     } else if (!ensureFolderSchemaCompatibility(db, errorMessage)) {
+        return rollback();
+    }
+
+    if (version < 4) {
+        if (!migrateToVersion4(db, errorMessage)) {
+            return rollback();
+        }
+        version = 4;
+    } else if (!ensureAtomicScanSchemaCompatibility(db, errorMessage)) {
+        return rollback();
+    }
+
+    if (version < 5) {
+        if (!migrateToVersion5(db, errorMessage)) {
+            return rollback();
+        }
+        version = 5;
+    } else if (!ensureEmbeddedMetadataSchemaCompatibility(db, errorMessage)) {
         return rollback();
     }
 
@@ -287,6 +322,7 @@ bool DatabaseManager::createBaseSchema(QSqlDatabase &db, QString *errorMessage) 
                        "absolute_path TEXT NOT NULL,"
                        "relative_path TEXT NOT NULL,"
                        "parent_path TEXT NOT NULL,"
+                       "path_key TEXT NOT NULL DEFAULT '',"
                        "asset_type INTEGER NOT NULL,"
                        "size_bytes INTEGER NOT NULL DEFAULT 0,"
                        "modified_at TEXT NOT NULL,"
@@ -373,8 +409,9 @@ bool DatabaseManager::ensureBaseSchemaCompatibility(QSqlDatabase &db, QString *e
                              {QStringLiteral("extension"), QStringLiteral("extension TEXT")},
                              {QStringLiteral("absolute_path"), QStringLiteral("absolute_path TEXT NOT NULL DEFAULT ''")},
                              {QStringLiteral("relative_path"), QStringLiteral("relative_path TEXT NOT NULL DEFAULT ''")},
-                             {QStringLiteral("parent_path"), QStringLiteral("parent_path TEXT NOT NULL DEFAULT ''")},
-                             {QStringLiteral("asset_type"), QStringLiteral("asset_type INTEGER NOT NULL DEFAULT 0")},
+                              {QStringLiteral("parent_path"), QStringLiteral("parent_path TEXT NOT NULL DEFAULT ''")},
+                              {QStringLiteral("path_key"), QStringLiteral("path_key TEXT NOT NULL DEFAULT ''")},
+                              {QStringLiteral("asset_type"), QStringLiteral("asset_type INTEGER NOT NULL DEFAULT 0")},
                              {QStringLiteral("size_bytes"), QStringLiteral("size_bytes INTEGER NOT NULL DEFAULT 0")},
                              {QStringLiteral("modified_at"), QStringLiteral("modified_at TEXT NOT NULL DEFAULT ''")},
                              {QStringLiteral("is_readable"), QStringLiteral("is_readable INTEGER NOT NULL DEFAULT 0")},
@@ -724,6 +761,124 @@ bool DatabaseManager::backfillFolderHierarchy(QSqlDatabase &db, QString *errorMe
         update.finish();
     }
     return true;
+}
+
+bool DatabaseManager::migrateToVersion4(QSqlDatabase &db, QString *errorMessage) const
+{
+    if (!ensureAtomicScanSchemaCompatibility(db, errorMessage)) {
+        return false;
+    }
+    return setSchemaVersion(db, 4, errorMessage);
+}
+
+bool DatabaseManager::ensureAtomicScanSchemaCompatibility(QSqlDatabase &db, QString *errorMessage) const
+{
+    if (!ensureColumn(db,
+                      QStringLiteral("asset_file"),
+                      QStringLiteral("path_key"),
+                      QStringLiteral("path_key TEXT NOT NULL DEFAULT ''"),
+                      errorMessage)) {
+        return false;
+    }
+    if (!backfillAssetPathKeys(db, errorMessage)) {
+        return false;
+    }
+
+    const QStringList statements = {
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_asset_file_source_path_key ON asset_file(source_root_id, path_key);"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_folder_node_source_path_key ON folder_node(source_root_id, path_key);")
+    };
+    return executeBatch(db, statements, errorMessage);
+}
+
+bool DatabaseManager::backfillAssetPathKeys(QSqlDatabase &db, QString *errorMessage) const
+{
+    QSqlQuery read(db);
+    if (!read.exec(QStringLiteral(
+            "SELECT id, absolute_path FROM asset_file WHERE COALESCE(path_key, '') = ''"))) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("读取待回填素材路径键失败：%1").arg(read.lastError().text());
+        }
+        return false;
+    }
+
+    QVector<QPair<qint64, QString>> rows;
+    while (read.next()) {
+        rows.append({read.value(0).toLongLong(), read.value(1).toString()});
+    }
+    read.finish();
+
+    QSqlQuery update(db);
+    update.prepare(QStringLiteral("UPDATE asset_file SET path_key = ? WHERE id = ?"));
+    for (const auto &row : rows) {
+        update.addBindValue(FolderPathMetadata::normalizedPathKey(row.second));
+        update.addBindValue(row.first);
+        if (!update.exec()) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("回填素材路径键失败：%1").arg(update.lastError().text());
+            }
+            return false;
+        }
+        update.finish();
+    }
+    return true;
+}
+
+bool DatabaseManager::migrateToVersion5(QSqlDatabase &db, QString *errorMessage) const
+{
+    if (!ensureEmbeddedMetadataSchemaCompatibility(db, errorMessage)) {
+        return false;
+    }
+    return setSchemaVersion(db, 5, errorMessage);
+}
+
+bool DatabaseManager::ensureEmbeddedMetadataSchemaCompatibility(QSqlDatabase &db,
+                                                                 QString *errorMessage) const
+{
+    const QStringList statements = {
+        QStringLiteral("CREATE TABLE IF NOT EXISTS embedded_metadata ("
+                       "asset_id INTEGER PRIMARY KEY,"
+                       "status INTEGER NOT NULL DEFAULT 0,"
+                       "tool_version TEXT NOT NULL DEFAULT '',"
+                       "fingerprint_size INTEGER NOT NULL DEFAULT 0,"
+                       "fingerprint_modified TEXT NOT NULL DEFAULT '',"
+                       "capture_time TEXT NOT NULL DEFAULT '',"
+                       "create_time TEXT NOT NULL DEFAULT '',"
+                       "camera_make TEXT NOT NULL DEFAULT '',"
+                       "camera_model TEXT NOT NULL DEFAULT '',"
+                       "lens_model TEXT NOT NULL DEFAULT '',"
+                       "camera_serial_hash TEXT NOT NULL DEFAULT '',"
+                       "gps_latitude REAL,"
+                       "gps_longitude REAL,"
+                       "gps_altitude REAL,"
+                       "orientation INTEGER NOT NULL DEFAULT 0,"
+                       "width INTEGER NOT NULL DEFAULT 0,"
+                       "height INTEGER NOT NULL DEFAULT 0,"
+                       "duration_ms INTEGER NOT NULL DEFAULT 0,"
+                       "frame_rate REAL NOT NULL DEFAULT 0,"
+                       "video_codec TEXT NOT NULL DEFAULT '',"
+                       "color_space TEXT NOT NULL DEFAULT '',"
+                       "sample_rate INTEGER NOT NULL DEFAULT 0,"
+                       "channels INTEGER NOT NULL DEFAULT 0,"
+                       "bit_rate INTEGER NOT NULL DEFAULT 0,"
+                       "timecode TEXT NOT NULL DEFAULT '',"
+                       "title TEXT NOT NULL DEFAULT '',"
+                       "description TEXT NOT NULL DEFAULT '',"
+                       "artist TEXT NOT NULL DEFAULT '',"
+                       "album TEXT NOT NULL DEFAULT '',"
+                       "genre TEXT NOT NULL DEFAULT '',"
+                       "keywords TEXT NOT NULL DEFAULT '',"
+                       "search_text TEXT NOT NULL DEFAULT '',"
+                       "raw_json TEXT NOT NULL DEFAULT '',"
+                       "error_message TEXT NOT NULL DEFAULT '',"
+                       "updated_at TEXT NOT NULL DEFAULT '',"
+                       "FOREIGN KEY(asset_id) REFERENCES asset_file(id) ON DELETE CASCADE"
+                       ");"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_embedded_metadata_status ON embedded_metadata(status);"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_embedded_metadata_capture ON embedded_metadata(capture_time);"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_embedded_metadata_camera ON embedded_metadata(camera_make, camera_model);")
+    };
+    return executeBatch(db, statements, errorMessage);
 }
 
 int DatabaseManager::currentSchemaVersion(QSqlDatabase &db) const

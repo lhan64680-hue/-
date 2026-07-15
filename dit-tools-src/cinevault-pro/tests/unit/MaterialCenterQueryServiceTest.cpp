@@ -16,6 +16,8 @@
 #include <QSqlError>
 #include <QSqlQuery>
 
+#include <algorithm>
+
 namespace {
 bool execSql(QSqlDatabase db, const QString &sql, QString *errorMessage = nullptr)
 {
@@ -58,6 +60,16 @@ QStringList keysFor(const QVector<FolderSearchHit> &folders)
     QStringList keys;
     for (const auto &folder : folders) {
         keys.append(folder.folderKey);
+    }
+    keys.sort();
+    return keys;
+}
+
+QStringList keysFor(const QVector<FrameSearchHit> &frames)
+{
+    QStringList keys;
+    for (const auto &frame : frames) {
+        keys.append(frame.frameKey);
     }
     keys.sort();
     return keys;
@@ -228,7 +240,8 @@ private:
                          "VALUES ('video-1', 61, 2000, 'G:/projects/alpha/cache/frame-61.jpg', "
                          "'模特穿着深蓝色牛仔裤坐在窗边', '[\"蓝色\",\"牛仔\",\"室内\"]', "
                          "'[\"牛仔裤\",\"藤编椅\",\"窗户\"]', '坐在藤编椅上', '室内窗边', "
-                         "'[{\"label\":\"长裤\",\"colors\":[\"蓝色\"],\"materials\":[\"牛仔\"],\"attributes\":[]}]', "
+                         "'[{\"label\":\"男人\",\"colors\":[],\"materials\":[],\"attributes\":[]},"
+                         "{\"label\":\"长裤\",\"colors\":[\"蓝色\"],\"materials\":[\"牛仔\"],\"attributes\":[]}]', "
                          "2, 1, 1)"),
                      &errorMessage)) {
             return false;
@@ -619,7 +632,10 @@ private slots:
         assetUnderstanding.confidence = 0.95;
         assetUnderstanding.strictEntities = {redShorts, blueJeans};
         const auto assetResult = service.searchMaterials(
-            QStringLiteral("interview"), {}, QDate::currentDate(), &assetUnderstanding);
+            QStringLiteral("interview 红色牛仔短裤 蓝色牛仔裤"),
+            {},
+            QDate::currentDate(),
+            &assetUnderstanding);
         QVERIFY(!keysFor(assetResult.assets).contains(QStringLiteral("video-1")));
 
         ModelSearchUnderstanding folderUnderstanding = assetUnderstanding;
@@ -627,7 +643,10 @@ private slots:
         folderUnderstanding.resultTargetSpecified = true;
         folderUnderstanding.folderByAssetCriteria = true;
         const auto folderResult = service.searchMaterials(
-            QStringLiteral("camera"), {}, QDate::currentDate(), &folderUnderstanding);
+            QStringLiteral("camera 红色牛仔短裤 蓝色牛仔裤"),
+            {},
+            QDate::currentDate(),
+            &folderUnderstanding);
         QVERIFY(!keysFor(folderResult.folders).contains(QStringLiteral("folder-camera")));
     }
 
@@ -668,6 +687,102 @@ private slots:
         QVERIFY(frame.tags.contains(QStringLiteral("牛仔")));
         QVERIFY(frame.objects.contains(QStringLiteral("牛仔裤")));
         QVERIFY(frame.reasons.contains(QStringLiteral("同一帧、同一视觉对象属性已验证")));
+    }
+
+    void searchMaterials_requiresManAndJeansInTheSamePicture()
+    {
+        GlobalDbFixture fixture;
+        QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
+        SearchEngine searchEngine(&fixture.manager);
+        MaterialCenterQueryService service(&fixture.manager, &searchEngine);
+
+        QVERIFY(execSql(
+            fixture.manager.database(),
+            QStringLiteral(
+                "INSERT INTO video_frame_analysis "
+                "(video_key, frame_number, timestamp_ms, caption, tags_json, objects_json, "
+                "entities_json, structured_profile_version, facts_complete, analysis_state) "
+                "VALUES ('image-1', 2, 2000, '一名男子穿着牛仔裤站在户外', "
+                "'[\"男子\",\"牛仔裤\"]', '[\"人物\",\"长裤\"]', '[]', 2, 0, 1)")));
+
+        ModelSearchUnderstanding understanding;
+        understanding.confidence = 0.95;
+        understanding.resultTarget = SearchResultTarget::Frames;
+        understanding.resultTargetSpecified = true;
+        StrictEntityConstraint man;
+        man.label = QStringLiteral("男性");
+        man.attributes = {QStringLiteral("胡须")};
+        StrictEntityConstraint jeans;
+        jeans.label = QStringLiteral("牛仔裤");
+        understanding.strictEntities = {man, jeans};
+
+        const auto result = service.searchMaterials(
+            QStringLiteral("有男人穿着牛仔裤的画面"),
+            {},
+            QDate(2026, 7, 15),
+            &understanding);
+
+        QCOMPARE(result.parsedQuery.resultTarget, SearchResultTarget::Frames);
+        const QStringList expectedFrameKeys{
+            QStringLiteral("frame:image-1:2"),
+            QStringLiteral("frame:video-1:61")
+        };
+        QCOMPARE(keysFor(result.frames), expectedFrameKeys);
+        const auto manConstraint = std::find_if(
+            result.parsedQuery.strictEntities.cbegin(),
+            result.parsedQuery.strictEntities.cend(), [](const auto &entity) {
+                return entity.label == QStringLiteral("男人")
+                    || entity.label == QStringLiteral("男性");
+            });
+        QVERIFY(manConstraint != result.parsedQuery.strictEntities.cend());
+        QVERIFY(manConstraint->attributes.isEmpty());
+        QVERIFY(std::any_of(result.frames.cbegin(), result.frames.cend(), [](const auto &frame) {
+            return frame.reasons.contains(QStringLiteral("同一帧、同一视觉对象属性已验证"));
+        }));
+        QVERIFY(std::any_of(result.frames.cbegin(), result.frames.cend(), [](const auto &frame) {
+            return frame.reasons.contains(
+                QStringLiteral("同一帧文本证据命中（结构化事实不完整）"));
+        }));
+    }
+
+    void searchMaterials_quickFiltersOverrideTheNaturalLanguageResultType()
+    {
+        GlobalDbFixture fixture;
+        QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
+        SearchEngine searchEngine(&fixture.manager);
+        MaterialCenterQueryService service(&fixture.manager, &searchEngine);
+
+        MaterialSearchScope scope;
+        scope.resultQuickFilter = SearchResultQuickFilter::Video;
+        const auto videos = service.searchMaterials(
+            QStringLiteral("蓝色牛仔裤的画面"), scope, QDate(2026, 7, 15));
+        QCOMPARE(videos.parsedQuery.resultTarget, SearchResultTarget::Assets);
+        QCOMPARE(keysFor(videos.assets), QStringList{QStringLiteral("video-1")});
+        QVERIFY(videos.parsedQuery.interpretationLabels.contains(
+            QStringLiteral("快捷筛选：视频")));
+
+        scope.resultQuickFilter = SearchResultQuickFilter::Frames;
+        const auto frames = service.searchMaterials(
+            QStringLiteral("蓝色牛仔裤视频"), scope, QDate(2026, 7, 15));
+        QCOMPARE(frames.parsedQuery.resultTarget, SearchResultTarget::Frames);
+        QCOMPARE(frames.frames.size(), 1);
+        QCOMPARE(frames.frames.first().frameKey, QStringLiteral("frame:video-1:61"));
+
+        scope.resultQuickFilter = SearchResultQuickFilter::Image;
+        const auto images = service.searchMaterials(
+            QStringLiteral("品牌标签的视频"), scope, QDate(2026, 7, 15));
+        QCOMPARE(images.parsedQuery.resultTarget, SearchResultTarget::Assets);
+        QCOMPARE(keysFor(images.assets), QStringList{QStringLiteral("image-1")});
+        QVERIFY(images.parsedQuery.interpretationLabels.contains(
+            QStringLiteral("快捷筛选：图片")));
+
+        scope.resultQuickFilter = SearchResultQuickFilter::Document;
+        const auto documents = service.searchMaterials(
+            QStringLiteral("授权的画面"), scope, QDate(2026, 7, 15));
+        QCOMPARE(documents.parsedQuery.resultTarget, SearchResultTarget::Assets);
+        QCOMPARE(keysFor(documents.assets), QStringList{QStringLiteral("doc-1")});
+        QVERIFY(documents.parsedQuery.interpretationLabels.contains(
+            QStringLiteral("快捷筛选：文档")));
     }
 
     void searchMaterials_usesSameFrameTextFallbackForLegacyFrameFacts()

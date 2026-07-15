@@ -5,6 +5,7 @@
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QWindow>
 #include <QtTest>
 
 #ifdef Q_OS_WIN
@@ -47,7 +48,7 @@ private slots:
         QVERIFY(QuickSearchController::normalizedShortcut(QStringLiteral("Space")).isEmpty());
     }
 
-    void registersDefaultHotkeyAndDispatchesActivation()
+    void registersIsolatedHotkeyAndDispatchesActivation()
     {
 #ifndef Q_OS_WIN
         QSKIP("Windows global hotkey integration test");
@@ -58,10 +59,10 @@ private slots:
 
         QString errorMessage;
         QVERIFY2(controller.applyShortcutConfiguration(true,
-                                                       QStringLiteral("Alt+Space"),
+                                                       QStringLiteral("Ctrl+Shift+F12"),
                                                        &errorMessage),
                  qPrintable(errorMessage));
-        QCOMPARE(controller.shortcut(), QStringLiteral("Alt+Space"));
+        QCOMPARE(controller.shortcut(), QStringLiteral("Ctrl+Shift+F12"));
         QVERIFY(controller.shortcutStatusText().contains(QStringLiteral("已启用")));
 
         QSignalSpy activationSpy(&controller, &QuickSearchController::quickSearchRequested);
@@ -86,6 +87,31 @@ private slots:
                                                             screens,
                                                             QPoint(100, 100)),
                  QPoint(2100, 100));
+    }
+
+    void restoresHiddenMainWindowThroughNativeController()
+    {
+        AppSettings settings;
+        settings.setQuickSearchEnabled(false);
+        QuickSearchController controller(&settings);
+        QObject invalidWindow;
+        QVERIFY(!controller.restoreMainWindow(nullptr));
+        QVERIFY(!controller.restoreMainWindow(&invalidWindow));
+
+        QWindow mainWindow;
+        mainWindow.resize(1, 1);
+        mainWindow.setPosition(-32000, -32000);
+        mainWindow.hide();
+        QVERIFY(!mainWindow.isVisible());
+
+        QVERIFY(controller.restoreMainWindow(&mainWindow));
+        QTRY_VERIFY(mainWindow.isVisible());
+        QVERIFY(!(mainWindow.windowState() & Qt::WindowMinimized));
+#ifdef Q_OS_WIN
+        const auto windowHandle = reinterpret_cast<HWND>(mainWindow.winId());
+        QVERIFY(IsWindowVisible(windowHandle));
+#endif
+        mainWindow.hide();
     }
 
 private:

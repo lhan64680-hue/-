@@ -20,5 +20,4 @@ public:
     static QString probeStatusLabel(ProbeStatus status);
     static QString analysisModeLabel(AnalysisMode mode);
     static QString videoAnalysisStatusLabel(VideoAnalysisStatus status, ConfirmationStatus confirmationStatus);
-    static QString confirmationStatusLabel(ConfirmationStatus status);
 };

@@ -28,6 +28,7 @@ void removeGlobalDatabaseFiles()
     QFile::remove(DatabaseMigration::backupFilePath(path, 8));
     QFile::remove(DatabaseMigration::backupFilePath(path, 9));
     QFile::remove(DatabaseMigration::backupFilePath(path, 11));
+    QFile::remove(DatabaseMigration::backupFilePath(path, GlobalDatabaseManager::CurrentSchemaVersion));
     QFile::remove(DatabaseMigration::legacyMigrationMarkerPath(path));
     QFile::remove(path + QStringLiteral(".legacy-migration-tmp"));
 }
@@ -302,9 +303,10 @@ private slots:
 
         DatabaseManager manager;
         QVERIFY2(manager.openProjectDatabase(databasePath, &errorMessage), qPrintable(errorMessage));
-        QCOMPARE(manager.schemaVersion(), 3);
+        QCOMPARE(manager.schemaVersion(), DatabaseManager::CurrentSchemaVersion);
 
-        const auto backupPath = DatabaseMigration::backupFilePath(databasePath, 3);
+        const auto backupPath = DatabaseMigration::backupFilePath(databasePath,
+                                                                  DatabaseManager::CurrentSchemaVersion);
         QVERIFY(QFileInfo(backupPath).isFile());
         QVERIFY(QFileInfo(backupPath).size() > 0);
         QCOMPARE(schemaVersionFromFile(backupPath, &errorMessage), 2);
@@ -356,7 +358,11 @@ private slots:
         QVERIFY(!manager.openProjectDatabase(databasePath, &errorMessage));
         QVERIFY(!errorMessage.isEmpty());
         QCOMPARE(schemaVersionFromFile(databasePath, &errorMessage), 2);
-        QCOMPARE(schemaVersionFromFile(DatabaseMigration::backupFilePath(databasePath, 3), &errorMessage), 2);
+        QCOMPARE(schemaVersionFromFile(DatabaseMigration::backupFilePath(
+                     databasePath,
+                     DatabaseManager::CurrentSchemaVersion),
+                 &errorMessage),
+                 2);
     }
 
     void globalV7ToV10_createsBackupAndFolderSchema()
@@ -385,7 +391,7 @@ private slots:
             QVERIFY2(version.exec(QStringLiteral("SELECT version FROM schema_version")),
                      qPrintable(version.lastError().text()));
             QVERIFY(version.next());
-            QCOMPARE(version.value(0).toInt(), 11);
+            QCOMPARE(version.value(0).toInt(), GlobalDatabaseManager::CurrentSchemaVersion);
 
             QSqlQuery columns(db);
             QVERIFY2(columns.exec(QStringLiteral("PRAGMA table_info(global_folder_node)")),
@@ -411,8 +417,11 @@ private slots:
             QVERIFY(assetColumnNames.contains(QStringLiteral("capture_date")));
             QVERIFY(assetColumnNames.contains(QStringLiteral("capture_time_source")));
             QVERIFY(assetColumnNames.contains(QStringLiteral("capture_time_confidence")));
+            QVERIFY(assetColumnNames.contains(QStringLiteral("embedded_metadata_text")));
 
-            const auto backupPath = DatabaseMigration::backupFilePath(globalDatabasePath(), 11);
+            const auto backupPath = DatabaseMigration::backupFilePath(
+                globalDatabasePath(),
+                GlobalDatabaseManager::CurrentSchemaVersion);
             QVERIFY(QFileInfo(backupPath).isFile());
             QCOMPARE(schemaVersionFromFile(backupPath, &errorMessage), 7);
             manager.closeDatabase();
@@ -463,7 +472,7 @@ private slots:
             QVERIFY2(version.exec(QStringLiteral("SELECT version FROM schema_version")),
                      qPrintable(version.lastError().text()));
             QVERIFY(version.next());
-            QCOMPARE(version.value(0).toInt(), 11);
+            QCOMPARE(version.value(0).toInt(), GlobalDatabaseManager::CurrentSchemaVersion);
 
             QSqlQuery legacy(db);
             QVERIFY2(legacy.exec(QStringLiteral(
@@ -484,7 +493,9 @@ private slots:
                      qPrintable(planTable.lastError().text()));
             QVERIFY(planTable.next());
 
-            const auto backupPath = DatabaseMigration::backupFilePath(globalDatabasePath(), 11);
+            const auto backupPath = DatabaseMigration::backupFilePath(
+                globalDatabasePath(),
+                GlobalDatabaseManager::CurrentSchemaVersion);
             QVERIFY(QFileInfo(backupPath).isFile());
             QCOMPARE(schemaVersionFromFile(backupPath, &errorMessage), 8);
             manager.closeDatabase();
@@ -520,7 +531,7 @@ private slots:
             QVERIFY2(version.exec(QStringLiteral("SELECT version FROM schema_version")),
                      qPrintable(version.lastError().text()));
             QVERIFY(version.next());
-            QCOMPARE(version.value(0).toInt(), 11);
+            QCOMPARE(version.value(0).toInt(), GlobalDatabaseManager::CurrentSchemaVersion);
 
             QSqlQuery documentColumns(db);
             QVERIFY2(documentColumns.exec(QStringLiteral("PRAGMA table_info(search_document)")),
@@ -572,7 +583,9 @@ private slots:
             }
             QCOMPARE(indexNames.size(), 3);
 
-            const auto backupPath = DatabaseMigration::backupFilePath(globalDatabasePath(), 11);
+            const auto backupPath = DatabaseMigration::backupFilePath(
+                globalDatabasePath(),
+                GlobalDatabaseManager::CurrentSchemaVersion);
             QVERIFY(QFileInfo(backupPath).isFile());
             QVERIFY(QFileInfo(backupPath).size() > 0);
             QCOMPARE(schemaVersionFromFile(backupPath, &errorMessage), 9);
@@ -675,7 +688,9 @@ private slots:
         }
 
         QCOMPARE(schemaVersionFromFile(globalDatabasePath(), &errorMessage), 9);
-        QCOMPARE(schemaVersionFromFile(DatabaseMigration::backupFilePath(globalDatabasePath(), 11),
+        QCOMPARE(schemaVersionFromFile(DatabaseMigration::backupFilePath(
+                                           globalDatabasePath(),
+                                           GlobalDatabaseManager::CurrentSchemaVersion),
                                        &errorMessage),
                  9);
 
@@ -732,7 +747,11 @@ private slots:
         }
 
         QCOMPARE(schemaVersionFromFile(globalDatabasePath(), &errorMessage), 8);
-        QCOMPARE(schemaVersionFromFile(DatabaseMigration::backupFilePath(globalDatabasePath(), 11), &errorMessage), 8);
+        QCOMPARE(schemaVersionFromFile(DatabaseMigration::backupFilePath(
+                                           globalDatabasePath(),
+                                           GlobalDatabaseManager::CurrentSchemaVersion),
+                                       &errorMessage),
+                 8);
 
         const auto connectionName = QStringLiteral("verify_visual_rollback");
         auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);

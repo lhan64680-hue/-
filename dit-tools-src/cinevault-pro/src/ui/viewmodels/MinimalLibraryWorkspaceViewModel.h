@@ -69,6 +69,7 @@ public:
     Q_INVOKABLE bool toggleAssetFavorite(qint64 assetId);
     Q_INVOKABLE bool removeAsset(qint64 assetId);
     Q_INVOKABLE bool openAssetFolder(qint64 assetId);
+    Q_INVOKABLE bool copyAssetPath(qint64 assetId);
 
 signals:
     void viewModeChanged();

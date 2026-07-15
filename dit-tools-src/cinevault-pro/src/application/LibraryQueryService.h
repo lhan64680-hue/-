@@ -29,6 +29,7 @@ public:
 
 signals:
     void dataChanged();
+    void sourceRootsChanged();
 
 private:
     DatabaseManager *m_databaseManager = nullptr;

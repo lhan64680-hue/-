@@ -1,5 +1,6 @@
 #include "app/AppBootstrap.h"
 #include "app/AppContext.h"
+#include "app/SingleInstanceGuard.h"
 #if !CINEVAULT_BUILD_MINIMAL_GUI
 #include "application/UpdaterSession.h"
 #include "ui/widgets/UpdaterWindow.h"
@@ -10,10 +11,12 @@
 #include <QFile>
 #include <QIcon>
 #include <QMessageBox>
+#include <QStandardPaths>
 #include <QTextStream>
 #include <QTimer>
 
 #include <algorithm>
+#include <memory>
 
 namespace {
 QString argumentValue(const QStringList &arguments, const QString &prefix)
@@ -48,6 +51,13 @@ int main(int argc, char *argv[])
     QApplication::setQuitOnLastWindowClosed(false);
 
     const auto arguments = QCoreApplication::arguments();
+    const bool isolatedStartupProbe = arguments.contains(QStringLiteral("--quick-search-probe"),
+                                                          Qt::CaseInsensitive)
+        || arguments.contains(QStringLiteral("--search-assistant-startup-probe"),
+                              Qt::CaseInsensitive);
+    if (isolatedStartupProbe) {
+        QStandardPaths::setTestModeEnabled(true);
+    }
 #if !CINEVAULT_BUILD_MINIMAL_GUI
     const auto probeProjectPath = argumentValue(arguments, QStringLiteral("--analysis-probe-project="));
     const auto probeVideoKey = argumentValue(arguments, QStringLiteral("--analysis-probe-video-key="));
@@ -124,9 +134,40 @@ int main(int argc, char *argv[])
     }
 #endif
 
-    AppBootstrap bootstrap;
-    if (!bootstrap.run()) {
+    SingleInstanceGuard singleInstance;
+    QString singleInstanceError;
+    const auto instanceResult = singleInstance.start(&singleInstanceError);
+    if (instanceResult == SingleInstanceGuard::StartResult::SecondaryInstanceNotified) {
+        return 0;
+    }
+    if (instanceResult == SingleInstanceGuard::StartResult::Failed) {
+        QMessageBox::critical(nullptr,
+                              QStringLiteral("无法启动影资管家"),
+                              singleInstanceError.isEmpty()
+                                  ? QStringLiteral("单实例锁初始化失败。")
+                                  : singleInstanceError);
+        return 6;
+    }
+
+    std::unique_ptr<AppBootstrap> bootstrap;
+    bool activationPending = false;
+    QObject::connect(&singleInstance,
+                     &SingleInstanceGuard::activationRequested,
+                     &app,
+                     [&bootstrap, &activationPending]() {
+                         if (!bootstrap || !bootstrap->activateMainWindow()) {
+                             activationPending = true;
+                         }
+                     });
+
+    bootstrap = std::make_unique<AppBootstrap>();
+    if (!bootstrap->run()) {
         return 1;
+    }
+    if (activationPending) {
+        QTimer::singleShot(0, &app, [&bootstrap]() {
+            bootstrap->activateMainWindow();
+        });
     }
 
     return app.exec();

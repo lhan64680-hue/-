@@ -398,6 +398,10 @@ private slots:
                  qPrintable(errorMessage));
         QVERIFY2(insertBareVideoAsset(databaseManager.database(), sourceRootId, sourcePath, &errorMessage),
                  qPrintable(errorMessage));
+        QSqlQuery makePdf(databaseManager.database());
+        makePdf.prepare(QStringLiteral("UPDATE asset_file SET extension = 'pdf', asset_type = ?"));
+        makePdf.addBindValue(static_cast<int>(AssetType::Document));
+        QVERIFY2(makePdf.exec(), qPrintable(makePdf.lastError().text()));
 
         auto globalDb = globalDatabaseManager.database();
         QVERIFY2(syncProjectIntoGlobalForTest(globalDb, project, globalDatabaseManager.hasFts5(), &errorMessage),
@@ -405,7 +409,7 @@ private slots:
 
         QSqlQuery query(globalDb);
         query.prepare(QStringLiteral(
-            "SELECT technical_summary, technical_summary IS NULL, source_text, source_text IS NULL, error_message "
+            "SELECT technical_summary, technical_summary IS NULL, source_text, source_text IS NULL, error_message, analysis_status "
             "FROM global_video_asset WHERE project_uuid = ?"));
         query.addBindValue(project.id);
         QVERIFY2(query.exec(), qPrintable(query.lastError().text()));
@@ -415,7 +419,27 @@ private slots:
         QCOMPARE(query.value(2).toString(), QString());
         QCOMPARE(query.value(3).toInt(), 0);
         QCOMPARE(query.value(4).toString(), QString());
+        QCOMPARE(query.value(5).toInt(), static_cast<int>(VideoAnalysisStatus::Pending));
         QVERIFY(!query.next());
+
+        QSqlQuery downgradeStatus(globalDb);
+        downgradeStatus.prepare(QStringLiteral(
+            "UPDATE global_video_asset SET analysis_status = ? WHERE project_uuid = ?"));
+        downgradeStatus.addBindValue(static_cast<int>(VideoAnalysisStatus::IndexedOnly));
+        downgradeStatus.addBindValue(project.id);
+        QVERIFY2(downgradeStatus.exec(), qPrintable(downgradeStatus.lastError().text()));
+        QVERIFY2(syncProjectIntoGlobalForTest(globalDb,
+                                              project,
+                                              globalDatabaseManager.hasFts5(),
+                                              &errorMessage),
+                 qPrintable(errorMessage));
+        QSqlQuery upgradedStatus(globalDb);
+        upgradedStatus.prepare(QStringLiteral(
+            "SELECT analysis_status FROM global_video_asset WHERE project_uuid = ?"));
+        upgradedStatus.addBindValue(project.id);
+        QVERIFY2(upgradedStatus.exec(), qPrintable(upgradedStatus.lastError().text()));
+        QVERIFY(upgradedStatus.next());
+        QCOMPARE(upgradedStatus.value(0).toInt(), static_cast<int>(VideoAnalysisStatus::Pending));
 
         if (globalDatabaseManager.hasFts5()) {
             QSqlQuery ftsQuery(globalDb);
@@ -489,6 +513,35 @@ private slots:
         QCOMPARE(capture.value(2).toString(), QStringLiteral("quicktime_creation_date"));
         QCOMPARE(capture.value(3).toDouble(), 1.0);
         QVERIFY(capture.value(0).toString().startsWith(QStringLiteral("2026-07-13T23:30:00")));
+
+        QSqlQuery embedded(databaseManager.database());
+        embedded.prepare(QStringLiteral(
+            "INSERT INTO embedded_metadata "
+            "(asset_id, status, capture_time, camera_make, camera_model, width, height, search_text, raw_json, updated_at) "
+            "VALUES (?, ?, '2026-07-11T05:06:07+08:00', 'Sony', 'AlphaA7M4', 7680, 4320, "
+            "'EXIF:Make Sony EXIF:Model AlphaA7M4', '{}', '2026-07-15T10:02:00')"));
+        embedded.addBindValue(assetId);
+        embedded.addBindValue(static_cast<int>(ProbeStatus::Success));
+        QVERIFY2(embedded.exec(), qPrintable(embedded.lastError().text()));
+        QVERIFY2(syncProjectIntoGlobalForTest(globalDb,
+                                              project,
+                                              globalDatabaseManager.hasFts5(),
+                                              &errorMessage),
+                 qPrintable(errorMessage));
+
+        QSqlQuery embeddedCapture(globalDb);
+        embeddedCapture.prepare(QStringLiteral(
+            "SELECT capture_time, capture_date, capture_time_source, capture_time_confidence, "
+            "embedded_metadata_text, technical_summary FROM global_video_asset "
+            "WHERE project_uuid = 'project-capture-time'"));
+        QVERIFY2(embeddedCapture.exec(), qPrintable(embeddedCapture.lastError().text()));
+        QVERIFY(embeddedCapture.next());
+        QVERIFY(embeddedCapture.value(0).toString().startsWith(QStringLiteral("2026-07-11T05:06:07")));
+        QCOMPARE(embeddedCapture.value(1).toString(), QStringLiteral("2026-07-11"));
+        QCOMPARE(embeddedCapture.value(2).toString(), QStringLiteral("ExifTool"));
+        QCOMPARE(embeddedCapture.value(3).toDouble(), 0.99);
+        QVERIFY(embeddedCapture.value(4).toString().contains(QStringLiteral("AlphaA7M4")));
+        QVERIFY(embeddedCapture.value(5).toString().contains(QStringLiteral("7680×4320")));
 
         globalDatabaseManager.closeDatabase();
     }
@@ -857,7 +910,7 @@ private slots:
             QVERIFY2(version.exec(QStringLiteral("SELECT version FROM schema_version")),
                      qPrintable(version.lastError().text()));
             QVERIFY(version.next());
-            QCOMPARE(version.value(0).toInt(), 11);
+            QCOMPARE(version.value(0).toInt(), GlobalDatabaseManager::CurrentSchemaVersion);
 
             QSqlQuery states(db);
             QVERIFY2(states.exec(QStringLiteral(
