@@ -35,7 +35,6 @@ jobs:
       QT_ROOT: C:\Qt\6.6.3\msvc2019_64
       INNO_SETUP_VERSION: "6.7.1"
       FFMPEG_VERSION: "8.1.1"
-      QT_QPA_PLATFORM: offscreen
 
     steps:
       - name: 检出完整源码和标签
@@ -193,7 +192,7 @@ jobs:
               --test-dir dit-tools-src/cinevault-pro/build/windows-msvc-release-real `
               --build-config Release `
               --output-on-failure `
-              --parallel 2
+              --parallel 1
           if ($LASTEXITCODE -ne 0) {
               throw "CTest 回归测试失败。"
           }
