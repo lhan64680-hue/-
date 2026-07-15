@@ -224,6 +224,16 @@ jobs:
           }
           "created=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+          $releases = @(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0) {
+              throw "Draft Release 已创建，但无法读取 Release 列表。"
+          }
+          $drafts = @($releases | Where-Object { $_.tag_name -ceq $tag -and $_.draft })
+          if ($drafts.Count -ne 1) {
+              throw "无法唯一确定刚创建的 Draft Release。"
+          }
+          "release_id=$($drafts[0].id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
       - name: 上传 Release 资产
         if: steps.version.outputs.should_publish == 'true'
         run: |
@@ -244,12 +254,13 @@ jobs:
           $expectedChecksumName = "$expectedInstallerName.sha256"
           $expectedSize = [long]"${{ steps.artifact.outputs.installer_size }}"
           $expectedDigest = "sha256:${{ steps.artifact.outputs.installer_sha256 }}"
+          $releaseId = [long]"${{ steps.draft.outputs.release_id }}"
 
-          $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" | ConvertFrom-Json
+          $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/$releaseId" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) {
               throw "无法读取 Draft Release。"
           }
-          if (-not $release.draft -or $release.prerelease) {
+          if ($release.tag_name -cne $tag -or -not $release.draft -or $release.prerelease) {
               throw "Release 在复核前不是预期的正式版草稿状态。"
           }
 
@@ -266,26 +277,23 @@ jobs:
               throw "远端安装包 SHA-256 与本地不一致。"
           }
 
-          $remoteTag = git ls-remote origin "refs/tags/$tag"
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remoteTag)) {
-              throw "远端发布标签不存在。"
-          }
-          $remoteTagSha = ($remoteTag -split "\s+")[0]
-          if ($remoteTagSha -ne $env:GITHUB_SHA) {
-              throw "发布标签没有指向当前 push 提交。"
-          }
-
       - name: 发布并设为 Latest Release
         if: steps.version.outputs.should_publish == 'true'
         id: publish
         run: |
           $tag = "${{ steps.version.outputs.version_tag }}"
-          gh release edit $tag `
-              --repo $env:GITHUB_REPOSITORY `
-              --draft=false `
-              --latest
+          $releaseId = [long]"${{ steps.draft.outputs.release_id }}"
+          $release = gh api `
+              --method PATCH `
+              "repos/$env:GITHUB_REPOSITORY/releases/$releaseId" `
+              -F draft=false `
+              -F prerelease=false `
+              -f make_latest=true | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) {
               throw "正式发布 Release 失败。"
+          }
+          if ($release.tag_name -cne $tag -or $release.draft -or $release.prerelease) {
+              throw "GitHub 返回的正式发布状态不符合预期。"
           }
           "published=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
@@ -297,13 +305,63 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $latestTag -ne $expectedTag) {
               throw "GitHub latest Release 尚未切换到 $expectedTag。"
           }
+
+          $remoteTag = @(git ls-remote origin "refs/tags/$expectedTag" "refs/tags/$expectedTag^{}")
+          if ($LASTEXITCODE -ne 0 -or $remoteTag.Count -eq 0) {
+              throw "正式发布后远端标签不存在。"
+          }
+          $peeledTag = @($remoteTag | Where-Object { $_ -match "\^\{\}$" })
+          $resolvedTag = if ($peeledTag.Count -gt 0) { $peeledTag[0] } else { $remoteTag[0] }
+          $remoteTagSha = ($resolvedTag -split "\s+")[0]
+          if ($remoteTagSha -ne $env:GITHUB_SHA) {
+              throw "发布标签没有指向当前 push 提交。"
+          }
           Write-Host "Windows 自动发布完成：$latestTag"
 
       - name: 失败时清理当前草稿和标签
         if: failure() && steps.draft.outputs.created == 'true' && steps.publish.outputs.published != 'true'
         run: |
+          $ErrorActionPreference = "Continue"
           $tag = "${{ steps.version.outputs.version_tag }}"
-          gh release delete $tag `
-              --repo $env:GITHUB_REPOSITORY `
-              --yes `
-              --cleanup-tag
+          $releaseId = "${{ steps.draft.outputs.release_id }}"
+          $release = $null
+
+          if ($releaseId -match "^\d+$") {
+              $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/$releaseId" 2>$null | ConvertFrom-Json
+          }
+          if ($null -eq $release) {
+              $releases = @(gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" 2>$null | ConvertFrom-Json)
+              $matches = @($releases | Where-Object { $_.tag_name -ceq $tag -and $_.draft })
+              if ($matches.Count -eq 1) {
+                  $release = $matches[0]
+              }
+          }
+
+          $deletedDraft = $false
+          if ($null -ne $release -and $release.draft) {
+              gh api --method DELETE "repos/$env:GITHUB_REPOSITORY/releases/$($release.id)" | Out-Null
+              if ($LASTEXITCODE -eq 0) {
+                  $deletedDraft = $true
+                  Write-Host "已清理失败流水线创建的 Draft Release：$tag"
+              } else {
+                  Write-Warning "Draft Release 自动清理失败，请人工检查：$tag"
+              }
+          } elseif ($null -ne $release) {
+              Write-Warning "Release 已不再是草稿，为避免误删正式发布，跳过清理：$tag"
+          }
+
+          if ($deletedDraft) {
+              $remoteTag = git ls-remote origin "refs/tags/$tag"
+              if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($remoteTag)) {
+                  $remoteTagSha = ($remoteTag -split "\s+")[0]
+                  if ($remoteTagSha -eq $env:GITHUB_SHA) {
+                      git push origin ":refs/tags/$tag"
+                      if ($LASTEXITCODE -ne 0) {
+                          Write-Warning "残留标签自动清理失败，请人工检查：$tag"
+                      }
+                  } else {
+                      Write-Warning "同名标签没有指向当前提交，为避免误删已跳过：$tag"
+                  }
+              }
+          }
+          exit 0
