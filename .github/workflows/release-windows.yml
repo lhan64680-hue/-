@@ -34,7 +34,8 @@ jobs:
       QT_ARCH: win64_msvc2019_64
       QT_ROOT: C:\Qt\6.6.3\msvc2019_64
       INNO_SETUP_VERSION: "6.7.1"
-      FFMPEG_VERSION: "8.1.1"
+      FFMPEG_VERSION: "8.1.2"
+      FFMPEG_SHA256: db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec
 
     steps:
       - name: 检出完整源码和标签
@@ -161,20 +162,38 @@ jobs:
               throw "$Name $Version 连续 4 次安装失败。"
           }
 
-          Install-ChocolateyPackage -Name "innosetup" -Version $env:INNO_SETUP_VERSION
-          Install-ChocolateyPackage -Name "ffmpeg" -Version $env:FFMPEG_VERSION
-
-          $chocolateyRoot = if ([string]::IsNullOrWhiteSpace($env:ChocolateyInstall)) {
-              "C:\ProgramData\chocolatey"
-          } else {
-              $env:ChocolateyInstall
+          if ($null -eq (Get-Command ISCC.exe -ErrorAction SilentlyContinue)) {
+              Install-ChocolateyPackage -Name "innosetup" -Version $env:INNO_SETUP_VERSION
           }
-          $ffmpegToolsRoot = Join-Path $chocolateyRoot "lib\ffmpeg\tools"
-          $ffmpegExecutable = Get-ChildItem -LiteralPath $ffmpegToolsRoot -Recurse -Filter ffmpeg.exe -File |
+
+          $ffmpegAssetName = "ffmpeg-$env:FFMPEG_VERSION-essentials_build.zip"
+          $ffmpegUrl = "https://github.com/GyanD/codexffmpeg/releases/download/$env:FFMPEG_VERSION/$ffmpegAssetName"
+          $ffmpegArchive = Join-Path $env:RUNNER_TEMP $ffmpegAssetName
+          $ffmpegExtractRoot = Join-Path $env:RUNNER_TEMP "cinevault-ffmpeg-$env:FFMPEG_VERSION"
+          curl.exe `
+              --fail `
+              --location `
+              --retry 4 `
+              --retry-all-errors `
+              --retry-delay 5 `
+              --connect-timeout 30 `
+              --output $ffmpegArchive `
+              $ffmpegUrl
+          if ($LASTEXITCODE -ne 0) {
+              throw "FFmpeg 固定版本下载失败：$ffmpegUrl"
+          }
+
+          $actualFfmpegSha256 = (Get-FileHash -LiteralPath $ffmpegArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualFfmpegSha256 -ne $env:FFMPEG_SHA256.ToLowerInvariant()) {
+              throw "FFmpeg SHA-256 校验失败。实际：$actualFfmpegSha256"
+          }
+
+          Expand-Archive -LiteralPath $ffmpegArchive -DestinationPath $ffmpegExtractRoot -Force
+          $ffmpegExecutable = Get-ChildItem -LiteralPath $ffmpegExtractRoot -Recurse -Filter ffmpeg.exe -File |
               Where-Object { $_.Directory.Name -eq "bin" } |
               Select-Object -First 1
           if ($null -eq $ffmpegExecutable) {
-              throw "Chocolatey FFmpeg 运行时目录不存在。"
+              throw "FFmpeg 解压后未找到 ffmpeg.exe。"
           }
 
           $ffmpegRoot = Split-Path -Parent $ffmpegExecutable.Directory.FullName
