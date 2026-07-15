@@ -135,23 +135,34 @@ jobs:
       - name: 安装 Inno Setup 与 FFmpeg
         if: steps.version.outputs.should_publish == 'true'
         run: |
-          choco install innosetup `
-              --version=$env:INNO_SETUP_VERSION `
-              --yes `
-              --no-progress `
-              --allow-downgrade
-          if ($LASTEXITCODE -ne 0) {
-              throw "Inno Setup 安装失败。"
+          function Install-ChocolateyPackage {
+              param(
+                  [Parameter(Mandatory = $true)][string]$Name,
+                  [Parameter(Mandatory = $true)][string]$Version
+              )
+
+              foreach ($attempt in 1..4) {
+                  choco install $Name `
+                      --version=$Version `
+                      --yes `
+                      --no-progress `
+                      --allow-downgrade
+                  if ($LASTEXITCODE -eq 0) {
+                      return
+                  }
+
+                  if ($attempt -lt 4) {
+                      $delaySeconds = 10 * $attempt
+                      Write-Warning "$Name $Version 安装失败（第 $attempt 次），$delaySeconds 秒后重试。"
+                      Start-Sleep -Seconds $delaySeconds
+                  }
+              }
+
+              throw "$Name $Version 连续 4 次安装失败。"
           }
 
-          choco install ffmpeg `
-              --version=$env:FFMPEG_VERSION `
-              --yes `
-              --no-progress `
-              --allow-downgrade
-          if ($LASTEXITCODE -ne 0) {
-              throw "FFmpeg 安装失败。"
-          }
+          Install-ChocolateyPackage -Name "innosetup" -Version $env:INNO_SETUP_VERSION
+          Install-ChocolateyPackage -Name "ffmpeg" -Version $env:FFMPEG_VERSION
 
           $chocolateyRoot = if ([string]::IsNullOrWhiteSpace($env:ChocolateyInstall)) {
               "C:\ProgramData\chocolatey"
