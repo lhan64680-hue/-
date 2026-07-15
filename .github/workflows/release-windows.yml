@@ -46,6 +46,9 @@ jobs:
       - name: 验证版本算法
         run: ./tool/test_release_version.ps1
 
+      - name: 验证 Windows 工具链路径解析
+        run: ./tool/test_windows_toolchain.ps1
+
       - name: 计算下一个正式版本
         id: version
         run: ./tool/resolve_release_version.ps1

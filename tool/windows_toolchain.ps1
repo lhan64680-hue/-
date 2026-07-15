@@ -2,6 +2,22 @@ function Get-CineVaultRepoRoot {
     return Split-Path -Parent $PSScriptRoot
 }
 
+function Test-CineVaultPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [ValidateSet("Any", "Leaf", "Container")]
+        [string]$PathType = "Any"
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+
+    $testPathType = [Microsoft.PowerShell.Commands.TestPathType]::$PathType
+    return [bool](Test-Path -LiteralPath $Path -PathType $testPathType -ErrorAction SilentlyContinue)
+}
+
 function Get-VisualStudioInstallationPath {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path $vswhere)) {
@@ -72,8 +88,8 @@ function Resolve-QtRoot {
         if ([string]::IsNullOrWhiteSpace($candidate)) {
             continue
         }
-        $qtConfig = Join-Path $candidate "lib\cmake\Qt6\Qt6Config.cmake"
-        if (Test-Path $qtConfig) {
+        $qtConfig = [System.IO.Path]::Combine($candidate, "lib", "cmake", "Qt6", "Qt6Config.cmake")
+        if (Test-CineVaultPath -Path $qtConfig -PathType Leaf) {
             return $candidate
         }
     }
@@ -140,10 +156,12 @@ function Resolve-FfmpegDevRoot {
         if ([string]::IsNullOrWhiteSpace($candidate)) {
             continue
         }
-        $includeDir = Join-Path $candidate "include\libavformat\avformat.h"
-        $libDir = Join-Path $candidate "lib"
-        $binDir = Join-Path $candidate "bin"
-        if ((Test-Path $includeDir) -and (Test-Path $libDir) -and (Test-Path $binDir)) {
+        $includeDir = [System.IO.Path]::Combine($candidate, "include", "libavformat", "avformat.h")
+        $libDir = [System.IO.Path]::Combine($candidate, "lib")
+        $binDir = [System.IO.Path]::Combine($candidate, "bin")
+        if ((Test-CineVaultPath -Path $includeDir -PathType Leaf) -and
+            (Test-CineVaultPath -Path $libDir -PathType Container) -and
+            (Test-CineVaultPath -Path $binDir -PathType Container)) {
             return $candidate
         }
     }
@@ -171,9 +189,10 @@ function Resolve-FfmpegCliRoot {
             continue
         }
 
-        $ffmpegExe = Join-Path $candidate "ffmpeg.exe"
-        $ffprobeExe = Join-Path $candidate "ffprobe.exe"
-        if ((Test-Path $ffmpegExe) -and (Test-Path $ffprobeExe)) {
+        $ffmpegExe = [System.IO.Path]::Combine($candidate, "ffmpeg.exe")
+        $ffprobeExe = [System.IO.Path]::Combine($candidate, "ffprobe.exe")
+        if ((Test-CineVaultPath -Path $ffmpegExe -PathType Leaf) -and
+            (Test-CineVaultPath -Path $ffprobeExe -PathType Leaf)) {
             return Split-Path -Parent $candidate
         }
     }
@@ -200,10 +219,11 @@ function Resolve-FfmpegCliRoot {
             continue
         }
 
-        $binDir = Join-Path $candidate "bin"
-        $ffmpegExe = Join-Path $binDir "ffmpeg.exe"
-        $ffprobeExe = Join-Path $binDir "ffprobe.exe"
-        if ((Test-Path $ffmpegExe) -and (Test-Path $ffprobeExe)) {
+        $binDir = [System.IO.Path]::Combine($candidate, "bin")
+        $ffmpegExe = [System.IO.Path]::Combine($binDir, "ffmpeg.exe")
+        $ffprobeExe = [System.IO.Path]::Combine($binDir, "ffprobe.exe")
+        if ((Test-CineVaultPath -Path $ffmpegExe -PathType Leaf) -and
+            (Test-CineVaultPath -Path $ffprobeExe -PathType Leaf)) {
             return $candidate
         }
     }
