@@ -609,7 +609,7 @@ if(CINEVAULT_HAS_BUNDLED_WEBP)
 endif()
 
 if(CINEVAULT_HAS_BUNDLED_EXIFTOOL)
-    add_custom_command(TARGET CineVault POST_BUILD
+    add_custom_target(CineVaultStageExifTool
         COMMAND ${CMAKE_COMMAND} -E make_directory
                 "$<TARGET_FILE_DIR:CineVault>/exiftool"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -617,6 +617,7 @@ if(CINEVAULT_HAS_BUNDLED_EXIFTOOL)
                 "$<TARGET_FILE_DIR:CineVault>/exiftool"
         VERBATIM
     )
+    add_dependencies(CineVault CineVaultStageExifTool)
 endif()
 
 if(CINEVAULT_HAS_LOCAL_SEARCH_ASSISTANT)
@@ -739,14 +740,7 @@ if(BUILD_TESTING)
         )
         target_include_directories(ExifToolAdapterTest PRIVATE src)
         target_link_libraries(ExifToolAdapterTest PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
-        add_custom_command(TARGET ExifToolAdapterTest POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory
-                    "$<TARGET_FILE_DIR:ExifToolAdapterTest>/exiftool"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CINEVAULT_EXIFTOOL_RUNTIME_ROOT}"
-                    "$<TARGET_FILE_DIR:ExifToolAdapterTest>/exiftool"
-            VERBATIM
-        )
+        add_dependencies(ExifToolAdapterTest CineVaultStageExifTool)
         add_test(NAME ExifToolAdapterTest COMMAND ExifToolAdapterTest)
 
         qt_add_executable(MetadataExtractionServiceTest
@@ -761,14 +755,7 @@ if(BUILD_TESTING)
         target_include_directories(MetadataExtractionServiceTest PRIVATE src)
         target_link_libraries(MetadataExtractionServiceTest PRIVATE
             Qt6::Concurrent Qt6::Core Qt6::Gui Qt6::Sql Qt6::Test)
-        add_custom_command(TARGET MetadataExtractionServiceTest POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory
-                    "$<TARGET_FILE_DIR:MetadataExtractionServiceTest>/exiftool"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${CINEVAULT_EXIFTOOL_RUNTIME_ROOT}"
-                    "$<TARGET_FILE_DIR:MetadataExtractionServiceTest>/exiftool"
-            VERBATIM
-        )
+        add_dependencies(MetadataExtractionServiceTest CineVaultStageExifTool)
         add_test(NAME MetadataExtractionServiceTest COMMAND MetadataExtractionServiceTest)
     endif()
 
