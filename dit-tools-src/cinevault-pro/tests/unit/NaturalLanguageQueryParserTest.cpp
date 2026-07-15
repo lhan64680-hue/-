@@ -58,6 +58,18 @@ private slots:
         QVERIFY(query.strictEntities.isEmpty());
     }
 
+    void entityNameDoesNotCreateRedundantMaterialConstraint()
+    {
+        NaturalLanguageQueryParser parser;
+        const auto query = parser.parse(QStringLiteral("蓝色的牛仔裤"));
+
+        QCOMPARE(query.strictEntities.size(), 1);
+        QCOMPARE(query.strictEntities.first().label, QStringLiteral("牛仔裤"));
+        QCOMPARE(query.strictEntities.first().colors, QStringList{QStringLiteral("蓝色")});
+        QVERIFY(query.strictEntities.first().materials.isEmpty());
+        QVERIFY(!query.interpretationLabels.contains(QStringLiteral("同一对象：牛仔裤 蓝色 牛仔")));
+    }
+
     void captureDateIntentDoesNotBecomeRequiredKeyword()
     {
         NaturalLanguageQueryParser parser;
@@ -158,7 +170,7 @@ private slots:
         QCOMPARE(query.strictEntities.size(), 1);
         QCOMPARE(query.strictEntities.first().label, QStringLiteral("牛仔裤"));
         QCOMPARE(query.strictEntities.first().colors, QStringList{QStringLiteral("蓝色")});
-        QVERIFY(query.strictEntities.first().materials.contains(QStringLiteral("牛仔")));
+        QVERIFY(query.strictEntities.first().materials.isEmpty());
         QVERIFY(query.interpretationLabels.contains(QStringLiteral("目标：视觉帧")));
         QVERIFY(!query.lexicalTerms.contains(QStringLiteral("帧")));
     }

@@ -34,6 +34,17 @@ QStringList matchingTerms(const QString &text, const QStringList &dictionary)
     return uniqueTerms(matches);
 }
 
+void removeTermsImpliedByLabel(QStringList *terms, const QString &label)
+{
+    const auto normalizedLabel = label.simplified().toCaseFolded();
+    terms->erase(std::remove_if(terms->begin(), terms->end(), [&](const QString &term) {
+        const auto normalizedTerm = term.simplified().toCaseFolded();
+        return !normalizedTerm.isEmpty()
+            && normalizedLabel != normalizedTerm
+            && normalizedLabel.contains(normalizedTerm);
+    }), terms->end());
+}
+
 struct ParsedDateText {
     QString startDate;
     QString endDate;
@@ -389,11 +400,14 @@ ParsedMaterialQuery NaturalLanguageQueryParser::parse(const QString &text,
     }
 
     const auto colors = matchingTerms(working, colorDictionary());
-    const auto materials = matchingTerms(working, materialDictionary());
+    auto materials = matchingTerms(working, materialDictionary());
     const auto attributes = matchingTerms(working, attributeDictionary());
     const auto labels = matchingTerms(working, entityLabelDictionary());
     const auto visualTerms = matchingTerms(working, visualLexicalDictionary());
     query.ocrText = quotedOcrText(query.originalText);
+    if (!labels.isEmpty()) {
+        removeTermsImpliedByLabel(&materials, labels.first());
+    }
     if (!labels.isEmpty() && (!colors.isEmpty() || !materials.isEmpty() || !attributes.isEmpty())) {
         StrictEntityConstraint constraint;
         constraint.label = labels.first();

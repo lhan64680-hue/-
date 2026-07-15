@@ -901,7 +901,10 @@ bool MaterialCenterViewModel::canConfirmVisible() const
 bool MaterialCenterViewModel::hasAnalyzedVisible() const
 {
     for (const auto &asset : m_assets) {
-        if (asset.analysisStatus == VideoAnalysisStatus::Ready && canAnalyzeAsset(asset)) {
+        const bool hasExistingAnalysis = asset.analysisStatus == VideoAnalysisStatus::Ready
+            || asset.analysisStatus == VideoAnalysisStatus::Failed
+            || asset.analysisStatus == VideoAnalysisStatus::Running;
+        if (hasExistingAnalysis && canAnalyzeAsset(asset)) {
             return true;
         }
     }
@@ -1594,6 +1597,30 @@ void MaterialCenterViewModel::analyzeVisiblePending()
     }
 }
 
+void MaterialCenterViewModel::analyzeVisibleSupplement()
+{
+    if (!m_analysisService) {
+        return;
+    }
+
+    QStringList videoKeys;
+    for (const auto &asset : m_assets) {
+        if (canAnalyzeAsset(asset)) {
+            videoKeys.append(asset.videoKey);
+        }
+    }
+    if (videoKeys.isEmpty()) {
+        setMessage(QStringLiteral("当前结果没有可补充解析的素材。"));
+        return;
+    }
+
+    QString message;
+    m_analysisService->enqueueVideosForSupplement(videoKeys, &message);
+    setMessage(message.trimmed().isEmpty()
+                   ? QStringLiteral("当前结果中没有需要补充解析的素材。")
+                   : message);
+}
+
 void MaterialCenterViewModel::analyzeVisibleAll()
 {
     if (!m_analysisService) {
@@ -1612,12 +1639,10 @@ void MaterialCenterViewModel::analyzeVisibleAll()
     }
 
     QString message;
-    const auto accepted = m_analysisService->enqueueVideos(videoKeys, &message);
-    if (accepted > 0) {
-        setMessage(QStringLiteral("已加入 %1 条素材到解析队列。").arg(accepted));
-    } else {
-        setMessage(message.trimmed().isEmpty() ? QStringLiteral("当前结果没有可解析的素材。") : message);
-    }
+    m_analysisService->enqueueVideosForRebuild(videoKeys, &message);
+    setMessage(message.trimmed().isEmpty()
+                   ? QStringLiteral("当前结果没有可重新解析的素材。")
+                   : message);
 }
 
 void MaterialCenterViewModel::confirmVideo(const QString &videoKey)

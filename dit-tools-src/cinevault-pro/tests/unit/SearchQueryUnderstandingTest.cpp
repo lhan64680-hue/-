@@ -87,6 +87,26 @@ private slots:
         QVERIFY(merged.interpretationLabels.contains(QStringLiteral("视觉语言模型辅助理解")));
     }
 
+    void mergeRemovesMaterialAlreadyImpliedByEntityLabel()
+    {
+        NaturalLanguageQueryParser parser;
+        const auto local = parser.parse(QStringLiteral("蓝色牛仔裤"));
+        ModelSearchUnderstanding model;
+        model.confidence = 0.95;
+        StrictEntityConstraint entity;
+        entity.label = QStringLiteral("牛仔裤");
+        entity.colors = {QStringLiteral("蓝色")};
+        entity.materials = {QStringLiteral("牛仔")};
+        model.strictEntities = {entity};
+
+        const auto merged = SearchQueryUnderstanding::merge(local, model);
+
+        QCOMPARE(merged.strictEntities.size(), 1);
+        QCOMPARE(merged.strictEntities.first().label, QStringLiteral("牛仔裤"));
+        QVERIFY(merged.strictEntities.first().materials.isEmpty());
+        QVERIFY(merged.interpretationLabels.contains(QStringLiteral("同一对象：牛仔裤 蓝色")));
+    }
+
     void rejectsInvalidDatesAndUnknownTypes()
     {
         auto invalidDate = validPayload();

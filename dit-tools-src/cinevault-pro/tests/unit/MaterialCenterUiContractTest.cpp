@@ -276,6 +276,11 @@ private slots:
             QStringLiteral("viewModel.searchAssistantStatusText"),
             QStringLiteral("viewModel.searchEmptyReason"),
             QStringLiteral("viewModel.excludedPartialCount"),
+            QStringLiteral("id: searchInput"),
+            QStringLiteral("text: \"清空输入\""),
+            QStringLiteral("enabled: searchInput.text.length > 0"),
+            QStringLiteral("shellVm.globalSearchText = \"\""),
+            QStringLiteral("searchInput.forceActiveFocus()"),
             QStringLiteral("viewModel.openFolderProject(folderKey)"),
             QStringLiteral("viewModel.locateFolder(folderKey)"),
             QStringLiteral("viewModel.projectFilter"),
@@ -290,6 +295,53 @@ private slots:
         for (const auto &contract : contracts) {
             QVERIFY2(source.contains(contract), qPrintable(QStringLiteral("QML 缺少接口：%1").arg(contract)));
         }
+    }
+
+    void batchAnalysisRequiresExplicitSupplementOrRebuildPolicy()
+    {
+        const auto qml = sourceFile(QStringLiteral("src/ui/qml/workspaces/MaterialCenterWorkspace.qml"));
+        const auto viewModelHeader = sourceFile(QStringLiteral("src/ui/viewmodels/MaterialCenterViewModel.h"));
+        const auto viewModel = sourceFile(QStringLiteral("src/ui/viewmodels/MaterialCenterViewModel.cpp"));
+        const auto serviceHeader = sourceFile(QStringLiteral("src/application/VideoAnalysisService.h"));
+        const auto service = sourceFile(QStringLiteral("src/application/VideoAnalysisService.cpp"));
+        QVERIFY2(!qml.isEmpty() && !viewModelHeader.isEmpty() && !viewModel.isEmpty()
+                     && !serviceHeader.isEmpty() && !service.isEmpty(),
+                 "无法读取批量解析策略契约源码");
+
+        QVERIFY(qml.contains(QStringLiteral("选择批量解析方式")));
+        QVERIFY(qml.contains(QStringLiteral("补充解析（推荐）")));
+        QVERIFY(qml.contains(QStringLiteral("完整帧直接跳过")));
+        QVERIFY(qml.contains(QStringLiteral("viewModel.analyzeVisibleSupplement()")));
+        QVERIFY(qml.contains(QStringLiteral("viewModel.analyzeVisibleAll()")));
+        QVERIFY(qml.contains(QStringLiteral("Math.max(1, Math.min(620, root.width - 24))")));
+        QVERIFY(qml.contains(QStringLiteral("Math.max(1, Math.min(430, root.height - 24))")));
+        QVERIFY(qml.contains(QStringLiteral("id: batchAnalyzeScroll")));
+        QVERIFY(qml.contains(QStringLiteral("implicitHeight: supplementOptionContent.implicitHeight + 28")));
+        QVERIFY(!qml.contains(QStringLiteral("解析未完成素材")));
+
+        QVERIFY(viewModelHeader.contains(QStringLiteral("Q_INVOKABLE void analyzeVisibleSupplement()")));
+        QVERIFY(viewModel.contains(QStringLiteral("asset.analysisStatus == VideoAnalysisStatus::Failed")));
+        QVERIFY(viewModel.contains(QStringLiteral("asset.analysisStatus == VideoAnalysisStatus::Running")));
+        QVERIFY(viewModel.contains(QStringLiteral("enqueueVideosForSupplement(videoKeys, &message)")));
+        QVERIFY(viewModel.contains(QStringLiteral("enqueueVideosForRebuild(videoKeys, &message)")));
+        QVERIFY(serviceHeader.contains(QStringLiteral("enqueueVideosForSupplement")));
+        QVERIFY(serviceHeader.contains(QStringLiteral("enqueueVideosForRebuild")));
+
+        const auto supplement = sourceSection(
+            service,
+            QStringLiteral("int VideoAnalysisService::enqueueVideosForSupplement"),
+            QStringLiteral("int VideoAnalysisService::enqueueVideosForRebuild"));
+        QVERIFY(supplement.contains(QStringLiteral("hasIncompleteVisualFrames")));
+        QVERIFY(supplement.contains(QStringLiteral("AnalysisRunMode::Resume")));
+        QVERIFY(supplement.contains(QStringLiteral("if (!hasVisualGap)")));
+        QVERIFY(!supplement.contains(QStringLiteral("AnalysisRunMode::Rebuild")));
+        QVERIFY(!supplement.contains(QStringLiteral("deleteAnalysisArtifacts")));
+
+        const auto rebuild = sourceSection(
+            service,
+            QStringLiteral("int VideoAnalysisService::enqueueVideosForRebuild"),
+            QStringLiteral("bool VideoAnalysisService::retryFrame"));
+        QVERIFY(rebuild.contains(QStringLiteral("AnalysisRunMode::Rebuild")));
     }
 
     void searchSettingsExposePrivacyUnlimitedCallsAndQuickSearchContracts()

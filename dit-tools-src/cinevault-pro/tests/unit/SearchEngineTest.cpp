@@ -118,7 +118,7 @@ private:
             QStringLiteral(
                 "INSERT INTO video_analysis_result(video_key, search_text) VALUES "
                 "('asset-night-video', '上海夜景航拍 城市灯光'), "
-                "('asset-night-image', '上海夜景航拍 城市灯光')"),
+                "('asset-night-image', '上海夜景航拍')"),
             QStringLiteral(
                 "INSERT INTO video_frame_analysis(video_key, frame_number, timestamp_ms, image_path, caption, "
                 "tags_json, objects_json, entities_json, ocr_text, structured_profile_version, facts_complete, analysis_state) VALUES "
@@ -202,6 +202,27 @@ private slots:
         for (const auto &hit : result.hits) {
             QCOMPARE(hit.documentType, SearchDocumentType::Asset);
         }
+    }
+
+    void completeLexicalCoverageOutranksPartialCoverage()
+    {
+        Fixture fixture;
+        QVERIFY2(fixture.valid, qPrintable(fixture.errorMessage));
+        SearchEngine engine(&fixture.manager);
+
+        const auto result = engine.searchMaterials(QStringLiteral("上海 城市灯光"));
+
+        QCOMPARE(result.hits.first().entityKey, QStringLiteral("asset-night-video"));
+        const auto *complete = findHit(result,
+                                       SearchDocumentType::Asset,
+                                       QStringLiteral("asset-night-video"));
+        const auto *partial = findHit(result,
+                                      SearchDocumentType::Asset,
+                                      QStringLiteral("asset-night-image"));
+        QVERIFY(complete);
+        QVERIFY(partial);
+        QVERIFY(complete->lexicalScore > partial->lexicalScore);
+        QVERIFY(complete->reasons.contains(QStringLiteral("查询关键词完整覆盖")));
     }
 
     void captureDateTakesPriorityOverFileModifiedDate()

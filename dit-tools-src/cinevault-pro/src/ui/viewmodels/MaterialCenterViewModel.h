@@ -209,6 +209,7 @@ public:
     Q_INVOKABLE void analyzeSelectedDimensions(const QVariantList &dimensions);
     Q_INVOKABLE void analyzeVisibleDimensions(const QVariantList &dimensions);
     Q_INVOKABLE void analyzeVisiblePending();
+    Q_INVOKABLE void analyzeVisibleSupplement();
     Q_INVOKABLE void analyzeVisibleAll();
     Q_INVOKABLE void confirmVideo(const QString &videoKey);
     Q_INVOKABLE void confirmVisible();

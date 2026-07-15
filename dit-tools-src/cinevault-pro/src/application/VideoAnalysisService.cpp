@@ -1717,6 +1717,122 @@ int VideoAnalysisService::enqueueVideos(const QStringList &videoKeys, QString *e
     return accepted;
 }
 
+int VideoAnalysisService::enqueueVideosForSupplement(const QStringList &videoKeys, QString *message)
+{
+    int accepted = 0;
+    int alreadyComplete = 0;
+    QSet<QString> seen;
+    QStringList rejectedMessages;
+
+    if (!m_globalDatabaseManager || !m_globalDatabaseManager->isOpen()) {
+        if (message) {
+            *message = QStringLiteral("素材管理中心数据库未打开，请先同步当前项目。");
+        }
+        return 0;
+    }
+
+    auto db = m_globalDatabaseManager->database();
+    for (const auto &videoKey : videoKeys) {
+        const auto normalizedKey = videoKey.trimmed();
+        if (normalizedKey.isEmpty() || seen.contains(normalizedKey)) {
+            continue;
+        }
+        seen.insert(normalizedKey);
+
+        GlobalVideoAsset asset;
+        QString rejection;
+        if (!loadVideoAsset(db, normalizedKey, &asset, &rejection)) {
+            if (!rejection.trimmed().isEmpty()) {
+                rejectedMessages.append(rejection);
+            }
+            continue;
+        }
+
+        AnalysisJob job;
+        job.videoKey = normalizedKey;
+        if (asset.analysisStatus == VideoAnalysisStatus::Ready) {
+            const bool supportsStructuredFacts = asset.assetType == AssetType::Video
+                || asset.assetType == AssetType::Image;
+            if (!supportsStructuredFacts) {
+                ++alreadyComplete;
+                continue;
+            }
+
+            QString completenessError;
+            const auto hasVisualGap = hasIncompleteVisualFrames(db, normalizedKey, &completenessError);
+            if (!completenessError.trimmed().isEmpty()) {
+                rejectedMessages.append(completenessError);
+                continue;
+            }
+            if (!hasVisualGap) {
+                ++alreadyComplete;
+                continue;
+            }
+            job.mode = AnalysisRunMode::Resume;
+        } else if (asset.analysisStatus == VideoAnalysisStatus::Failed
+                   || asset.analysisStatus == VideoAnalysisStatus::Running) {
+            job.mode = AnalysisRunMode::Resume;
+        } else {
+            job.mode = AnalysisRunMode::Initial;
+        }
+
+        if (enqueueJob(job, &rejection)) {
+            ++accepted;
+        } else if (!rejection.trimmed().isEmpty()) {
+            rejectedMessages.append(rejection);
+        }
+    }
+
+    if (message) {
+        if (accepted > 0) {
+            *message = alreadyComplete > 0
+                ? QStringLiteral("已加入 %1 条素材进行补充解析，跳过 %2 条结构化维度已完整素材。")
+                      .arg(accepted)
+                      .arg(alreadyComplete)
+                : QStringLiteral("已加入 %1 条素材进行补充解析。").arg(accepted);
+        } else if (alreadyComplete > 0 && rejectedMessages.isEmpty()) {
+            *message = QStringLiteral("当前结果的结构化解析维度已完整，无需补充解析。");
+        } else if (!rejectedMessages.isEmpty()) {
+            *message = rejectedMessages.first();
+        } else {
+            *message = QStringLiteral("当前结果中没有需要补充解析的素材。");
+        }
+    }
+    return accepted;
+}
+
+int VideoAnalysisService::enqueueVideosForRebuild(const QStringList &videoKeys, QString *message)
+{
+    int accepted = 0;
+    QSet<QString> seen;
+    QStringList rejectedMessages;
+    for (const auto &videoKey : videoKeys) {
+        const auto normalizedKey = videoKey.trimmed();
+        if (normalizedKey.isEmpty() || seen.contains(normalizedKey)) {
+            continue;
+        }
+        seen.insert(normalizedKey);
+
+        QString rejection;
+        if (enqueueJob(AnalysisJob{normalizedKey, AnalysisRunMode::Rebuild, 0}, &rejection)) {
+            ++accepted;
+        } else if (!rejection.trimmed().isEmpty()) {
+            rejectedMessages.append(rejection);
+        }
+    }
+
+    if (message) {
+        if (accepted > 0) {
+            *message = QStringLiteral("已加入 %1 条素材进行全部重新解析。").arg(accepted);
+        } else if (!rejectedMessages.isEmpty()) {
+            *message = rejectedMessages.first();
+        } else {
+            *message = QStringLiteral("当前结果中没有可重新解析的素材。");
+        }
+    }
+    return accepted;
+}
+
 bool VideoAnalysisService::retryFrame(const QString &videoKey, int frameNumber, QString *errorMessage)
 {
     const auto normalizedKey = videoKey.trimmed();
