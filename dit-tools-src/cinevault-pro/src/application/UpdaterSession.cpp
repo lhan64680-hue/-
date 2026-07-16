@@ -24,6 +24,8 @@ constexpr auto kInstallRootArg = "--update-install-root=";
 constexpr auto kExecutableNameArg = "--update-executable-name=";
 constexpr auto kOldPidArg = "--update-old-pid=";
 constexpr qint64 kOldProcessWaitTimeoutMs = 120000;
+constexpr int kInstallProgressStart = 10;
+constexpr int kInstallProgressEnd = 90;
 
 QString sessionRoot(const QString &sessionId)
 {
@@ -162,6 +164,20 @@ bool UpdaterSessionRunner::launchDetached(const QString &versionTag,
 #endif
 }
 
+int UpdaterSessionRunner::parseInstallerProgress(const QByteArray &data)
+{
+    bool ok = false;
+    const int progress = QString::fromLatin1(data).trimmed().toInt(&ok);
+    return ok && progress >= 0 && progress <= 100 ? progress : -1;
+}
+
+int UpdaterSessionRunner::overallProgressForInstallerProgress(int installerProgress)
+{
+    const int boundedProgress = qBound(0, installerProgress, 100);
+    return kInstallProgressStart
+        + ((kInstallProgressEnd - kInstallProgressStart) * boundedProgress + 50) / 100;
+}
+
 void UpdaterSessionRunner::start(const UpdaterInstallSession &session)
 {
     if (m_started) {
@@ -180,6 +196,7 @@ void UpdaterSessionRunner::start(const UpdaterInstallSession &session)
     }
 
     emitProgress(0,
+                 2,
                  QStringLiteral("准备安装"),
                  QStringLiteral("正在准备独立更新器会话..."));
     QTimer::singleShot(300, this, &UpdaterSessionRunner::waitForOldProcess);
@@ -316,6 +333,7 @@ QString UpdaterSessionRunner::powerShellLiteral(const QString &value)
 }
 
 void UpdaterSessionRunner::emitProgress(int stepIndex,
+                                        int percentage,
                                         const QString &stepLabel,
                                         const QString &message,
                                         const QString &substep,
@@ -324,6 +342,8 @@ void UpdaterSessionRunner::emitProgress(int stepIndex,
 {
     UpdaterProgressEvent event;
     event.stepIndex = stepIndex;
+    m_lastPercentage = qBound(m_lastPercentage, percentage, 100);
+    event.percentage = m_lastPercentage;
     event.stepLabel = stepLabel;
     event.message = message;
     event.substep = substep;
@@ -335,6 +355,7 @@ void UpdaterSessionRunner::emitProgress(int stepIndex,
 void UpdaterSessionRunner::waitForOldProcess()
 {
     emitProgress(1,
+                 5,
                  QStringLiteral("关闭旧版本"),
                  QStringLiteral("正在等待旧版本退出..."),
                  QStringLiteral("主程序即将关闭，更新窗口会继续完成安装。"));
@@ -364,6 +385,7 @@ void UpdaterSessionRunner::startSilentInstaller()
     }
 
     emitProgress(2,
+                 kInstallProgressStart,
                  QStringLiteral("安装新版本"),
                  QStringLiteral("正在启动静默安装程序..."),
                  QStringLiteral("系统可能会请求管理员权限确认。"));
@@ -376,12 +398,15 @@ void UpdaterSessionRunner::startSilentInstaller()
 
     const auto installerLogPath = QDir(root).filePath(QStringLiteral("installer.log"));
     const auto updaterLogPath = QDir(root).filePath(QStringLiteral("updater.log"));
+    m_installProgressFilePath = QDir(root).filePath(QStringLiteral("install-progress.txt"));
+    QFile::remove(m_installProgressFilePath);
     const auto scriptPath = QDir(root).filePath(QStringLiteral("install-update.ps1"));
     const QStringList scriptLines{
         QStringLiteral("$ErrorActionPreference = 'Stop'"),
         QStringLiteral("$installerPath = %1").arg(powerShellLiteral(m_session.installerPath)),
         QStringLiteral("$appDir = %1").arg(powerShellLiteral(m_session.installRoot)),
         QStringLiteral("$installerLogPath = %1").arg(powerShellLiteral(installerLogPath)),
+        QStringLiteral("$installProgressPath = %1").arg(powerShellLiteral(m_installProgressFilePath)),
         QStringLiteral("$scriptLogPath = %1").arg(powerShellLiteral(updaterLogPath)),
         QStringLiteral("function Write-UpdateLog([string]$message) {"),
         QStringLiteral("    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'"),
@@ -398,7 +423,8 @@ void UpdaterSessionRunner::startSilentInstaller()
         QStringLiteral("        '/CLOSEAPPLICATIONS',"),
         QStringLiteral("        '/FORCECLOSEAPPLICATIONS',"),
         QStringLiteral("        ('/DIR=\"' + $appDir + '\"'),"),
-        QStringLiteral("        ('/LOG=\"' + $installerLogPath + '\"')"),
+        QStringLiteral("        ('/LOG=\"' + $installerLogPath + '\"'),"),
+        QStringLiteral("        ('/UPDATEPROGRESSFILE=\"' + $installProgressPath + '\"')"),
         QStringLiteral("    )"),
         QStringLiteral("    $process = Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Verb RunAs -Wait -PassThru"),
         QStringLiteral("    Write-UpdateLog ('安装进程已结束，ExitCode=' + $process.ExitCode)"),
@@ -447,12 +473,47 @@ void UpdaterSessionRunner::startSilentInstaller()
         }
     });
     m_installerProcess->start();
+
+    m_installProgressTimer = new QTimer(this);
+    m_installProgressTimer->setInterval(150);
+    connect(m_installProgressTimer,
+            &QTimer::timeout,
+            this,
+            &UpdaterSessionRunner::pollInstallerProgress);
+    m_installProgressTimer->start();
+}
+
+void UpdaterSessionRunner::pollInstallerProgress()
+{
+    QFile progressFile(m_installProgressFilePath);
+    if (!progressFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return;
+    }
+
+    const int installerProgress = parseInstallerProgress(progressFile.readAll());
+    if (installerProgress < 0) {
+        return;
+    }
+
+    const int overallProgress = overallProgressForInstallerProgress(installerProgress);
+    if (overallProgress <= m_lastPercentage) {
+        return;
+    }
+
+    emitProgress(2,
+                 overallProgress,
+                 QStringLiteral("安装新版本"),
+                 QStringLiteral("正在写入程序文件并配置组件..."),
+                 QStringLiteral("安装程序实际进度：%1%").arg(installerProgress));
 }
 
 void UpdaterSessionRunner::handleInstallerFinished(int exitCode)
 {
     if (m_finished) {
         return;
+    }
+    if (m_installProgressTimer) {
+        m_installProgressTimer->stop();
     }
     if (exitCode != 0) {
         completeFailure(QStringLiteral("安装程序退出码：%1").arg(exitCode),
@@ -461,6 +522,7 @@ void UpdaterSessionRunner::handleInstallerFinished(int exitCode)
     }
 
     emitProgress(3,
+                 95,
                  QStringLiteral("启动新版本"),
                  QStringLiteral("安装完成，正在启动新版本..."),
                  QStringLiteral("正在等待新版主程序可用。"));
@@ -472,8 +534,12 @@ void UpdaterSessionRunner::completeFailure(const QString &message, const QString
     if (m_finished) {
         return;
     }
+    if (m_installProgressTimer) {
+        m_installProgressTimer->stop();
+    }
     m_finished = true;
     emitProgress(2,
+                 m_lastPercentage,
                  QStringLiteral("安装新版本"),
                  message,
                  substep,
@@ -500,6 +566,7 @@ void UpdaterSessionRunner::completeSuccess()
 
     m_finished = true;
     emitProgress(4,
+                 100,
                  QStringLiteral("完成"),
                  QStringLiteral("已启动 %1").arg(m_session.versionTag),
                  QStringLiteral("更新完成。"),

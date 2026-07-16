@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -18,6 +19,7 @@ struct UpdaterInstallSession {
 
 struct UpdaterProgressEvent {
     int stepIndex = 0;
+    int percentage = 0;
     QString stepLabel;
     QString message;
     QString substep;
@@ -41,6 +43,8 @@ public:
                                const QString &sourceExecutablePath,
                                qint64 oldProcessId,
                                QString *errorMessage = nullptr);
+    static int parseInstallerProgress(const QByteArray &data);
+    static int overallProgressForInstallerProgress(int installerProgress);
 
     void start(const UpdaterInstallSession &session);
 
@@ -63,6 +67,7 @@ private:
     static QString powerShellLiteral(const QString &value);
 
     void emitProgress(int stepIndex,
+                      int percentage,
                       const QString &stepLabel,
                       const QString &message,
                       const QString &substep = QString(),
@@ -70,14 +75,18 @@ private:
                       bool isSuccess = false);
     void waitForOldProcess();
     void startSilentInstaller();
+    void pollInstallerProgress();
     void handleInstallerFinished(int exitCode);
     void completeFailure(const QString &message, const QString &substep = QString());
     void completeSuccess();
 
     UpdaterInstallSession m_session;
     QTimer *m_waitTimer = nullptr;
+    QTimer *m_installProgressTimer = nullptr;
     QProcess *m_installerProcess = nullptr;
+    QString m_installProgressFilePath;
     qint64 m_waitStartedAtMs = 0;
+    int m_lastPercentage = 0;
     bool m_started = false;
     bool m_finished = false;
 };

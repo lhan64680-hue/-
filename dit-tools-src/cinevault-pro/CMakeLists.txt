@@ -878,6 +878,9 @@ if(BUILD_TESTING)
         src/shared/Paths.cpp
     )
     target_include_directories(UpdateServiceTest PRIVATE src)
+    target_compile_definitions(UpdateServiceTest PRIVATE
+        CINEVAULT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     target_link_libraries(UpdateServiceTest PRIVATE Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME UpdateServiceTest COMMAND UpdateServiceTest)
 

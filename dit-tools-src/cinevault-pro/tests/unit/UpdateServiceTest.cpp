@@ -5,6 +5,7 @@
 #include <QNetworkProxy>
 #include <QProcessEnvironment>
 #include <QSettings>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -31,6 +32,8 @@ private slots:
     void localProxyCandidates_containsCommonPorts();
     void updaterSessionArguments_roundTripPathsWithSpaces();
     void updaterSessionArguments_rejectIncompleteSession();
+    void updaterSessionProgress_parsesAndMapsRealInstallerProgress();
+    void updaterProgressContract_usesDeterminateInstallerSignal();
     void updaterSessionRunner_reportsMissingInstaller();
     void appSettings_persistsUpdatePolicyAndClearsSchedule();
 };
@@ -284,6 +287,46 @@ void UpdateServiceTest::updaterSessionArguments_rejectIncompleteSession()
     QString errorMessage;
     QVERIFY(!UpdaterSessionRunner::parseArguments(arguments, &parsed, &errorMessage));
     QCOMPARE(errorMessage, QStringLiteral("更新会话参数不完整。"));
+}
+
+void UpdateServiceTest::updaterSessionProgress_parsesAndMapsRealInstallerProgress()
+{
+    QCOMPARE(UpdaterSessionRunner::parseInstallerProgress("0"), 0);
+    QCOMPARE(UpdaterSessionRunner::parseInstallerProgress("42\r\n"), 42);
+    QCOMPARE(UpdaterSessionRunner::parseInstallerProgress("100"), 100);
+    QCOMPARE(UpdaterSessionRunner::parseInstallerProgress("101"), -1);
+    QCOMPARE(UpdaterSessionRunner::parseInstallerProgress("invalid"), -1);
+
+    QCOMPARE(UpdaterSessionRunner::overallProgressForInstallerProgress(0), 10);
+    QCOMPARE(UpdaterSessionRunner::overallProgressForInstallerProgress(50), 50);
+    QCOMPARE(UpdaterSessionRunner::overallProgressForInstallerProgress(100), 90);
+    QCOMPARE(UpdaterSessionRunner::overallProgressForInstallerProgress(-10), 10);
+    QCOMPARE(UpdaterSessionRunner::overallProgressForInstallerProgress(110), 90);
+}
+
+void UpdateServiceTest::updaterProgressContract_usesDeterminateInstallerSignal()
+{
+    const auto readSource = [](const QString &relativePath) {
+        QFile file(QStringLiteral(CINEVAULT_SOURCE_DIR "/../../") + relativePath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return QByteArray{};
+        }
+        return file.readAll();
+    };
+
+    const auto installerScript = readSource(QStringLiteral("installer/windows/cinevault.iss"));
+    const auto updaterSource = readSource(QStringLiteral(
+        "dit-tools-src/cinevault-pro/src/application/UpdaterSession.cpp"));
+    const auto windowSource = readSource(QStringLiteral(
+        "dit-tools-src/cinevault-pro/src/ui/widgets/UpdaterWindow.cpp"));
+
+    QVERIFY(installerScript.contains("CurInstallProgressChanged"));
+    QVERIFY(installerScript.contains("UPDATEPROGRESSFILE"));
+    QVERIFY(updaterSource.contains("/UPDATEPROGRESSFILE="));
+    QVERIFY(updaterSource.contains("pollInstallerProgress"));
+    QVERIFY(windowSource.contains("setRange(0, 100)"));
+    QVERIFY(windowSource.contains(QStringLiteral("总进度").toUtf8()));
+    QVERIFY(!windowSource.contains("setRange(0, 0)"));
 }
 
 void UpdateServiceTest::updaterSessionRunner_reportsMissingInstaller()

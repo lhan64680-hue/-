@@ -51,3 +51,35 @@ Name: "{autodesktop}\影资管家"; Filename: "{app}\CineVault.exe"; Tasks: desk
 
 [Run]
 Filename: "{app}\CineVault.exe"; Description: "启动影资管家"; Flags: nowait postinstall skipifsilent
+
+[Code]
+var
+  UpdateProgressFilePath: String;
+  LastReportedInstallProgress: Integer;
+
+function InitializeSetup(): Boolean;
+begin
+  UpdateProgressFilePath := ExpandConstant('{param:UPDATEPROGRESSFILE|}');
+  LastReportedInstallProgress := -1;
+  Result := True;
+end;
+
+procedure CurInstallProgressChanged(CurProgress, MaxProgress: Integer);
+var
+  InstallProgress: Integer;
+begin
+  if (UpdateProgressFilePath = '') or (MaxProgress <= 0) then
+    Exit;
+
+  InstallProgress := Round((CurProgress / MaxProgress) * 100);
+  if InstallProgress < 0 then
+    InstallProgress := 0
+  else if InstallProgress > 100 then
+    InstallProgress := 100;
+
+  if InstallProgress <> LastReportedInstallProgress then
+  begin
+    SaveStringToFile(UpdateProgressFilePath, IntToStr(InstallProgress), False);
+    LastReportedInstallProgress := InstallProgress;
+  end;
+end;

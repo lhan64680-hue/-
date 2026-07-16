@@ -29,6 +29,7 @@ private:
     QLabel *m_titleLabel = nullptr;
     QLabel *m_messageLabel = nullptr;
     QLabel *m_substepLabel = nullptr;
+    QLabel *m_percentageLabel = nullptr;
     QLabel *m_footerLabel = nullptr;
     QProgressBar *m_progressBar = nullptr;
     QList<QLabel *> m_stepChips;

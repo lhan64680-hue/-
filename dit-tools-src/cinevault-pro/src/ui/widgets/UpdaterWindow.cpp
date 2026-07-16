@@ -105,8 +105,22 @@ UpdaterWindow::UpdaterWindow(const UpdaterInstallSession &session, QWidget *pare
     messageLayout->addWidget(m_substepLabel);
     panelLayout->addLayout(messageLayout);
 
+    auto *progressHeaderLayout = new QHBoxLayout;
+    progressHeaderLayout->setSpacing(8);
+    auto *progressTitleLabel = new QLabel(QStringLiteral("总进度"), panel);
+    progressTitleLabel->setStyleSheet(QStringLiteral("color: #b4bac2; font-size: 13px;"));
+    progressHeaderLayout->addWidget(progressTitleLabel);
+    progressHeaderLayout->addStretch(1);
+    m_percentageLabel = new QLabel(QStringLiteral("0%"), panel);
+    m_percentageLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_percentageLabel->setStyleSheet(QStringLiteral(
+        "color: #e8eaed; font-size: 22px; font-weight: 800;"));
+    progressHeaderLayout->addWidget(m_percentageLabel);
+    panelLayout->addLayout(progressHeaderLayout);
+
     m_progressBar = new QProgressBar(panel);
-    m_progressBar->setRange(0, 0);
+    m_progressBar->setRange(0, 100);
+    m_progressBar->setValue(0);
     m_progressBar->setTextVisible(false);
     panelLayout->addWidget(m_progressBar);
 
@@ -162,20 +176,21 @@ void UpdaterWindow::applyProgress(const UpdaterProgressEvent &event)
     m_messageLabel->setText(event.message);
     m_substepLabel->setText(event.substep);
     m_substepLabel->setVisible(!event.substep.trimmed().isEmpty());
+    m_progressBar->setValue(event.percentage);
+    m_percentageLabel->setText(QStringLiteral("%1%").arg(event.percentage));
     updateStepChips(event.stepIndex, accent);
 
     if (event.isError) {
         m_titleLabel->setText(QStringLiteral("更新失败"));
         m_iconLabel->setText(QStringLiteral("!"));
         m_footerLabel->setText(QStringLiteral("本次自动更新已停止，安装包和会话日志仍保留在更新目录中。"));
-        m_progressBar->setRange(0, 1);
-        m_progressBar->setValue(0);
+        m_percentageLabel->setText(QStringLiteral("%1% · 已停止").arg(event.percentage));
     } else if (event.isSuccess) {
         m_titleLabel->setText(QStringLiteral("更新完成"));
         m_iconLabel->setText(QStringLiteral("✓"));
         m_footerLabel->setText(QStringLiteral("新版本已启动，更新窗口即将自动关闭。"));
-        m_progressBar->setRange(0, 1);
-        m_progressBar->setValue(1);
+        m_progressBar->setValue(100);
+        m_percentageLabel->setText(QStringLiteral("100%"));
     }
 
     m_iconLabel->setStyleSheet(QStringLiteral(
