@@ -20,11 +20,19 @@ if (-not $AllowInstallerRegistration) {
 }
 
 $resolvedInstaller = (Resolve-Path -LiteralPath $InstallerPath -ErrorAction Stop).Path
-$temporaryRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\')
 $resolvedInstallRoot = [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
-$temporaryPrefix = $temporaryRoot + '\'
-if (-not $resolvedInstallRoot.StartsWith($temporaryPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Installer probe root must stay below the system temporary directory: $resolvedInstallRoot"
+$allowedTemporaryRoots = @([System.IO.Path]::GetTempPath())
+if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+    $allowedTemporaryRoots += $env:RUNNER_TEMP
+}
+$installRootIsTemporary = $allowedTemporaryRoots |
+    ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\') + '\' } |
+    Where-Object {
+        $resolvedInstallRoot.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase)
+    } |
+    Select-Object -First 1
+if ([string]::IsNullOrWhiteSpace($installRootIsTemporary)) {
+    throw "Installer probe root must stay below an approved temporary directory: $resolvedInstallRoot"
 }
 
 if (Test-Path -LiteralPath $resolvedInstallRoot) {
