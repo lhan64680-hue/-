@@ -12,10 +12,14 @@
 #include <QKeyCombination>
 #include <QKeySequence>
 #include <QMenu>
+#include <QPointer>
 #include <QSettings>
 #include <QScreen>
 #include <QSystemTrayIcon>
+#include <QTimer>
 #include <QWindow>
+
+#include <array>
 
 #ifdef Q_OS_WIN
 #define WIN32_LEAN_AND_MEAN
@@ -29,6 +33,7 @@ namespace {
 constexpr int kQuickSearchHotKeyId = 0x4356;
 constexpr auto kRunRegistryPath = "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr auto kRunRegistryValue = "CineVault";
+constexpr std::array<int, 4> kMainWindowRestoreRetryDelaysMs{0, 50, 150, 300};
 
 bool isModifierKey(Qt::Key key)
 {
@@ -113,13 +118,14 @@ bool restoreNativeWindowToForeground(HWND windowHandle)
     ShowWindow(windowHandle, IsIconic(windowHandle) ? SW_RESTORE : SW_SHOW);
 
     const auto foregroundWindow = GetForegroundWindow();
-    const auto currentThreadId = GetCurrentThreadId();
+    const auto windowThreadId = GetWindowThreadProcessId(windowHandle, nullptr);
     const auto foregroundThreadId = foregroundWindow
         ? GetWindowThreadProcessId(foregroundWindow, nullptr)
         : 0;
     const bool attachedToForeground = foregroundThreadId != 0
-        && foregroundThreadId != currentThreadId
-        && AttachThreadInput(currentThreadId, foregroundThreadId, TRUE) != FALSE;
+        && windowThreadId != 0
+        && foregroundThreadId != windowThreadId
+        && AttachThreadInput(windowThreadId, foregroundThreadId, TRUE) != FALSE;
 
     SetWindowPos(windowHandle,
                  HWND_TOP,
@@ -152,9 +158,16 @@ bool restoreNativeWindowToForeground(HWND windowHandle)
     }
 
     if (attachedToForeground) {
-        AttachThreadInput(currentThreadId, foregroundThreadId, FALSE);
+        AttachThreadInput(windowThreadId, foregroundThreadId, FALSE);
     }
-    return IsWindowVisible(windowHandle) != FALSE;
+    return GetForegroundWindow() == windowHandle;
+}
+
+bool isNativeWindowForeground(HWND windowHandle)
+{
+    return windowHandle
+        && IsWindow(windowHandle)
+        && GetForegroundWindow() == windowHandle;
 }
 #endif
 }
@@ -321,16 +334,81 @@ bool QuickSearchController::restoreMainWindow(QObject *windowObject)
         return false;
     }
 
+    const auto requestId = ++m_mainWindowRestoreRequestId;
+    restoreMainWindowOnce(window);
+    scheduleMainWindowRestore(window, requestId, 0);
+    return true;
+}
+
+bool QuickSearchController::isMainWindowForeground(QObject *windowObject) const
+{
+    auto *window = qobject_cast<QWindow *>(windowObject);
+    if (!window) {
+        return false;
+    }
+
+#ifdef Q_OS_WIN
+    const auto windowHandle = reinterpret_cast<HWND>(window->winId());
+    return isNativeWindowForeground(windowHandle);
+#else
+    return window->isVisible() && window->isActive();
+#endif
+}
+
+bool QuickSearchController::restoreMainWindowOnce(QWindow *window) const
+{
+    if (!window) {
+        return false;
+    }
+
     window->showNormal();
     window->raise();
 #ifdef Q_OS_WIN
     const auto windowHandle = reinterpret_cast<HWND>(window->winId());
-    const auto restored = restoreNativeWindowToForeground(windowHandle);
+    const auto foreground = restoreNativeWindowToForeground(windowHandle);
 #else
-    const auto restored = window->isVisible();
+    const auto foreground = window->isVisible() && window->isActive();
 #endif
     window->requestActivate();
-    return restored || window->isVisible();
+    return foreground || isMainWindowForeground(window);
+}
+
+void QuickSearchController::scheduleMainWindowRestore(QWindow *window,
+                                                       quint64 requestId,
+                                                       int attemptIndex)
+{
+    if (!window
+        || requestId != m_mainWindowRestoreRequestId
+        || attemptIndex < 0
+        || attemptIndex >= static_cast<int>(kMainWindowRestoreRetryDelaysMs.size())) {
+        return;
+    }
+
+    const QPointer<QWindow> guardedWindow(window);
+    QTimer::singleShot(kMainWindowRestoreRetryDelaysMs[attemptIndex],
+                       this,
+                       [this, guardedWindow, requestId, attemptIndex]() {
+        if (!guardedWindow || requestId != m_mainWindowRestoreRequestId) {
+            return;
+        }
+        if (isMainWindowForeground(guardedWindow)) {
+            emit mainWindowRestoreFinished(true);
+            return;
+        }
+
+        const bool foreground = restoreMainWindowOnce(guardedWindow);
+        if (foreground) {
+            emit mainWindowRestoreFinished(true);
+            return;
+        }
+
+        const int nextAttemptIndex = attemptIndex + 1;
+        if (nextAttemptIndex < static_cast<int>(kMainWindowRestoreRetryDelaysMs.size())) {
+            scheduleMainWindowRestore(guardedWindow, requestId, nextAttemptIndex);
+        } else {
+            emit mainWindowRestoreFinished(false);
+        }
+    });
 }
 
 QPoint QuickSearchController::restoredWindowPosition(int windowWidth, int windowHeight) const

@@ -143,6 +143,39 @@ Window {
         })
     }
 
+    function activateFolderResult(folderKeyValue, locateOnly) {
+        var viewModel = materialCenterViewModel
+        if (!viewModel || !folderKeyValue || folderKeyValue.length === 0) {
+            return
+        }
+        if (locateOnly) {
+            viewModel.locateFolder(folderKeyValue)
+            hideSearch()
+            return
+        }
+
+        // 打开工程会同步重建搜索模型，必须在不会随 delegate 销毁的根窗口上下文中继续恢复主窗口。
+        viewModel.openQuickSearchFolderResult(folderKeyValue)
+        showMainWindow(true)
+    }
+
+    function activatePrimaryResult(videoKeyValue, resultIndex, locateOnly) {
+        var viewModel = materialCenterViewModel
+        if (!viewModel || !videoKeyValue || videoKeyValue.length === 0) {
+            return
+        }
+        if (locateOnly) {
+            viewModel.selectVideo(videoKeyValue)
+            viewModel.locateSelectedSource()
+            hideSearch()
+            return
+        }
+
+        // 该调用可能同步销毁当前结果 delegate；后续动作只能依赖仍然存活的根窗口。
+        viewModel.openQuickSearchResultAtIndex(videoKeyValue, resultIndex)
+        showMainWindow(true)
+    }
+
     function activateCurrent(locateOnly) {
         clampSelection()
         if (totalResultCount <= 0) {
@@ -544,15 +577,7 @@ Window {
                             border.color: root.quickSelectedLine
 
                             function activate(locateOnly) {
-                                if (!root.materialCenterViewModel) return
-                                if (locateOnly) {
-                                    root.materialCenterViewModel.locateFolder(folderKeyValue)
-                                    root.hideSearch()
-                                } else {
-                                    if (root.materialCenterViewModel.openQuickSearchFolderResult(folderKeyValue)) {
-                                        root.showMainWindow(true)
-                                    }
-                                }
+                                root.activateFolderResult(folderKeyValue, locateOnly)
                             }
 
                             RowLayout {
@@ -694,18 +719,7 @@ Window {
                             border.color: root.quickSelectedLine
 
                             function activate(locateOnly) {
-                                if (!root.materialCenterViewModel || videoKeyValue.length === 0) return
-                                if (locateOnly) {
-                                    root.materialCenterViewModel.selectVideo(videoKeyValue)
-                                    root.materialCenterViewModel.locateSelectedSource()
-                                    root.hideSearch()
-                                } else {
-                                    if (root.materialCenterViewModel.openQuickSearchResultAtIndex(videoKeyValue, index)) {
-                                        root.showMainWindow(true)
-                                    } else {
-                                        root.showMainWindow(true)
-                                    }
-                                }
+                                root.activatePrimaryResult(videoKeyValue, index, locateOnly)
                             }
 
                             RowLayout {

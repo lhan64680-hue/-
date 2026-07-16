@@ -12,6 +12,7 @@ class QAction;
 class AppSettings;
 class QMenu;
 class QSystemTrayIcon;
+class QWindow;
 
 class QuickSearchController final : public QObject, public QAbstractNativeEventFilter {
     Q_OBJECT
@@ -44,6 +45,7 @@ public:
 
     Q_INVOKABLE void requestQuickSearch();
     Q_INVOKABLE bool restoreMainWindow(QObject *windowObject);
+    Q_INVOKABLE bool isMainWindowForeground(QObject *windowObject) const;
     Q_INVOKABLE QPoint restoredWindowPosition(int windowWidth, int windowHeight) const;
     Q_INVOKABLE QPoint rememberWindowPosition(int x, int y, int windowWidth, int windowHeight);
 
@@ -54,6 +56,7 @@ public:
 signals:
     void quickSearchRequested();
     void showMainWindowRequested();
+    void mainWindowRestoreFinished(bool foreground);
     void shortcutStatusChanged();
 
 private:
@@ -62,6 +65,8 @@ private:
     bool registerShortcut(const QString &shortcut, QString *errorMessage);
     void setShortcutStatusText(const QString &statusText);
     void updateTrayToolTip();
+    bool restoreMainWindowOnce(QWindow *window) const;
+    void scheduleMainWindowRestore(QWindow *window, quint64 requestId, int attemptIndex);
 
     AppSettings *m_settings = nullptr;
     QSystemTrayIcon *m_trayIcon = nullptr;
@@ -76,4 +81,5 @@ private:
     bool m_registered = false;
     bool m_enabled = false;
     bool m_startHidden = false;
+    quint64 m_mainWindowRestoreRequestId = 0;
 };

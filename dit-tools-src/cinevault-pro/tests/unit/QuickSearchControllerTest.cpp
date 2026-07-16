@@ -110,7 +110,45 @@ private slots:
 #ifdef Q_OS_WIN
         const auto windowHandle = reinterpret_cast<HWND>(mainWindow.winId());
         QVERIFY(IsWindowVisible(windowHandle));
+        QTRY_VERIFY_WITH_TIMEOUT(controller.isMainWindowForeground(&mainWindow), 2000);
+        QCOMPARE(GetForegroundWindow(), windowHandle);
+#else
+        QTRY_VERIFY_WITH_TIMEOUT(controller.isMainWindowForeground(&mainWindow), 2000);
 #endif
+        mainWindow.hide();
+    }
+
+    void retriesUntilHiddenMainWindowBecomesForeground()
+    {
+        AppSettings settings;
+        settings.setQuickSearchEnabled(false);
+        QuickSearchController controller(&settings);
+        QSignalSpy restoreSpy(&controller, &QuickSearchController::mainWindowRestoreFinished);
+
+        QWindow mainWindow;
+        mainWindow.resize(1, 1);
+        mainWindow.setPosition(-32000, -32000);
+        mainWindow.hide();
+
+        QWindow competingWindow;
+        competingWindow.resize(1, 1);
+        competingWindow.setPosition(-32000, -32000);
+        competingWindow.show();
+
+        QVERIFY(controller.restoreMainWindow(&mainWindow));
+#ifdef Q_OS_WIN
+        const auto competingHandle = reinterpret_cast<HWND>(competingWindow.winId());
+        ShowWindow(competingHandle, SW_SHOW);
+        QVERIFY(SetForegroundWindow(competingHandle));
+        QCOMPARE(GetForegroundWindow(), competingHandle);
+#else
+        competingWindow.raise();
+        competingWindow.requestActivate();
+#endif
+        QTRY_VERIFY_WITH_TIMEOUT(!restoreSpy.isEmpty(), 2000);
+        QCOMPARE(restoreSpy.constLast().constFirst().toBool(), true);
+        QVERIFY(controller.isMainWindowForeground(&mainWindow));
+        competingWindow.hide();
         mainWindow.hide();
     }
 

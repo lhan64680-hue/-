@@ -613,9 +613,13 @@ private slots:
             QStringLiteral("objectName: \"quickSearchPinButton\""),
             QStringLiteral("text: root.pinned ? \"已固定\" : \"固定显示\""),
             QStringLiteral("materialCenterViewModel.prepareGlobalQuickSearch()"),
-            QStringLiteral("materialCenterViewModel.openQuickSearchResultAtIndex(videoKeyValue, index)"),
+            QStringLiteral("function activatePrimaryResult(videoKeyValue, resultIndex, locateOnly)"),
+            QStringLiteral("viewModel.openQuickSearchResultAtIndex(videoKeyValue, resultIndex)"),
+            QStringLiteral("root.activatePrimaryResult(videoKeyValue, index, locateOnly)"),
             QStringLiteral("onDoubleClicked: resultDelegate.activate"),
-            QStringLiteral("openQuickSearchFolderResult"),
+            QStringLiteral("function activateFolderResult(folderKeyValue, locateOnly)"),
+            QStringLiteral("viewModel.openQuickSearchFolderResult(folderKeyValue)"),
+            QStringLiteral("root.activateFolderResult(folderKeyValue, locateOnly)"),
             QStringLiteral("required property string quickPreviewPath"),
             QStringLiteral("required property string quickDetail"),
             QStringLiteral("required property string quickMeta"),
@@ -650,12 +654,20 @@ private slots:
         QVERIFY(!quickSearchQml.contains(QStringLiteral("function enterMaterialCenter")));
         QVERIFY(!quickSearchQml.contains(QStringLiteral("dragOrigin")));
         QVERIFY(!quickSearchQml.contains(QStringLiteral("onTranslationChanged")));
+        QVERIFY(!quickSearchQml.contains(QStringLiteral(
+            "if (root.materialCenterViewModel.openQuickSearchResultAtIndex(videoKeyValue, index))")));
+        QVERIFY(!quickSearchQml.contains(QStringLiteral(
+            "if (root.materialCenterViewModel.openQuickSearchFolderResult(folderKeyValue))")));
         QVERIFY(controllerHeader.contains(
             QStringLiteral("Q_INVOKABLE bool restoreMainWindow(QObject *windowObject)")));
         QVERIFY(controllerSource.contains(QStringLiteral("restoreNativeWindowToForeground")));
         QVERIFY(controllerSource.contains(QStringLiteral("AttachThreadInput")));
         QVERIFY(controllerSource.contains(QStringLiteral("BringWindowToTop")));
         QVERIFY(controllerSource.contains(QStringLiteral("SetForegroundWindow")));
+        QVERIFY(controllerSource.contains(QStringLiteral("GetForegroundWindow() == windowHandle")));
+        QVERIFY(controllerSource.contains(QStringLiteral("kMainWindowRestoreRetryDelaysMs")));
+        QVERIFY(controllerHeader.contains(QStringLiteral("isMainWindowForeground")));
+        QVERIFY(controllerHeader.contains(QStringLiteral("mainWindowRestoreFinished")));
         QVERIFY(controllerSource.contains(QStringLiteral("HWND_TOPMOST")));
         QVERIFY(quickSearchQml.contains(
             QStringLiteral("controller.restoreMainWindow(mainWindow)")));
@@ -671,6 +683,16 @@ private slots:
             QStringLiteral("hideSearch()"),
             QStringLiteral("Qt.callLater(function()"),
             QStringLiteral("root.activateMainWindow()")
+        });
+        const auto rootResultActivation = sourceSection(
+            quickSearchQml,
+            QStringLiteral("function activateFolderResult(folderKeyValue, locateOnly)"),
+            QStringLiteral("function activateCurrent(locateOnly)"));
+        verifyOrdered(rootResultActivation, {
+            QStringLiteral("viewModel.openQuickSearchFolderResult(folderKeyValue)"),
+            QStringLiteral("showMainWindow(true)"),
+            QStringLiteral("viewModel.openQuickSearchResultAtIndex(videoKeyValue, resultIndex)"),
+            QStringLiteral("showMainWindow(true)")
         });
         const auto mainWindowRestore = sourceSection(
             mainQml,
