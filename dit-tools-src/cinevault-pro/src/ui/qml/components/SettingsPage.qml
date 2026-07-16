@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import CineVault
 
-Dialog {
+Item {
     id: root
 
     property var viewModel
@@ -31,16 +31,13 @@ Dialog {
     property int sectionPadding: 20
     property int formLabelWidth: 116
 
-    modal: true
-    width: 900
-    height: 700
-    padding: 0
-    leftPadding: 0
-    rightPadding: 0
-    topPadding: 0
-    bottomPadding: 0
+    readonly property bool opened: visible
 
-    onOpened: {
+    visible: false
+    enabled: visible
+    focus: visible
+
+    function reloadDrafts() {
         if (viewModel) {
             viewModel.refresh()
             draftVisionBaseUrl = viewModel.visionBaseUrl
@@ -64,11 +61,27 @@ Dialog {
         }
     }
 
-    background: Rectangle {
-        radius: 22
+    function openPage() {
+        reloadDrafts()
+        if (settingsScroll.contentItem) {
+            settingsScroll.contentItem.contentY = 0
+        }
+        visible = true
+        forceActiveFocus()
+    }
+
+    function closePage() {
+        visible = false
+    }
+
+    Keys.onEscapePressed: function(event) {
+        closePage()
+        event.accepted = true
+    }
+
+    Rectangle {
+        anchors.fill: parent
         color: Theme.bg
-        border.width: 1
-        border.color: Theme.line
     }
 
     ColumnLayout {
@@ -156,9 +169,9 @@ Dialog {
                 ActionButton {
                     Layout.preferredWidth: 78
                     Layout.preferredHeight: root.controlHeight
-                    text: "关闭"
+                    text: "返回"
                     textPixelSize: root.bodyFontSize
-                    onClicked: root.close()
+                    onClicked: root.closePage()
                 }
             }
         }
@@ -169,6 +182,17 @@ Dialog {
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
+            contentWidth: availableWidth
+            contentHeight: settingsColumn.implicitHeight + 40
+            contentItem.boundsBehavior: Flickable.StopAtBounds
+
+            ScrollBar.horizontal: ThemedScrollBar {
+                policy: ScrollBar.AlwaysOff
+            }
+
+            ScrollBar.vertical: ThemedScrollBar {
+                policy: ScrollBar.AsNeeded
+            }
 
             MiddleDragScrollHandler {
                 parent: settingsScroll.contentItem
@@ -176,11 +200,12 @@ Dialog {
             }
 
             ColumnLayout {
-                width: root.width
+                id: settingsColumn
+
+                x: 20
+                y: 20
+                width: Math.max(0, settingsScroll.availableWidth - 40)
                 spacing: 18
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 20
 
                 Rectangle {
                     Layout.fillWidth: true

@@ -562,7 +562,7 @@ qt_add_qml_module(CineVault
         src/ui/qml/components/StatusChip.qml
         src/ui/qml/components/AssetCard.qml
         src/ui/qml/components/VideoPreviewPlayer.qml
-        src/ui/qml/components/SettingsDialog.qml
+        src/ui/qml/components/SettingsPage.qml
         src/ui/qml/components/QuickSearchWindow.qml
         src/ui/qml/workspaces/ProjectLibraryWorkspace.qml
         src/ui/qml/workspaces/LibraryWorkspace.qml

@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
-import QtQuick.Effects
 import QtQuick.Layouts
 import CineVault
 
@@ -419,14 +418,14 @@ ApplicationWindow {
             sourcePathDialog.open()
         }
         function onOpenSettingsRequested() {
-            settingsDialog.open()
+            settingsPage.openPage()
         }
     }
 
-    SettingsDialog {
-        id: settingsDialog
-        parent: Overlay.overlay
-        anchors.centerIn: parent
+    SettingsPage {
+        id: settingsPage
+        anchors.fill: parent
+        z: 900
         viewModel: root.settingsViewModel
     }
 
@@ -434,6 +433,7 @@ ApplicationWindow {
         id: appContentLayer
 
         anchors.fill: parent
+        visible: !settingsPage.opened
 
         ColumnLayout {
             anchors.fill: parent
@@ -569,23 +569,6 @@ ApplicationWindow {
                 libraryViewModel: root.libraryViewModel
             }
         }
-    }
-
-    MultiEffect {
-        anchors.fill: appContentLayer
-        source: appContentLayer
-        visible: settingsDialog.opened
-        blurEnabled: true
-        blurMax: 32
-        blur: 0.72
-        z: 800
-    }
-
-    Rectangle {
-        anchors.fill: parent
-        visible: settingsDialog.opened
-        color: Qt.rgba(0, 0, 0, Theme.isDark ? 0.36 : 0.28)
-        z: 801
     }
 
     QuickSearchWindow {

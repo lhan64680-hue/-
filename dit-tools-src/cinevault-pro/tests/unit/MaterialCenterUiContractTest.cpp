@@ -377,7 +377,7 @@ private slots:
     {
         const auto header = sourceFile(QStringLiteral("src/ui/viewmodels/SettingsViewModel.h"));
         const auto implementation = sourceFile(QStringLiteral("src/ui/viewmodels/SettingsViewModel.cpp"));
-        const auto qml = sourceFile(QStringLiteral("src/ui/qml/components/SettingsDialog.qml"));
+        const auto qml = sourceFile(QStringLiteral("src/ui/qml/components/SettingsPage.qml"));
         const auto appContext = sourceFile(QStringLiteral("src/app/AppContext.cpp"));
         QVERIFY2(!header.isEmpty() && !implementation.isEmpty() && !qml.isEmpty()
                      && !appContext.isEmpty(),
@@ -435,7 +435,7 @@ private slots:
 
     void settingsSwitchLabelsFollowActiveTheme()
     {
-        const auto settingsQml = sourceFile(QStringLiteral("src/ui/qml/components/SettingsDialog.qml"));
+        const auto settingsQml = sourceFile(QStringLiteral("src/ui/qml/components/SettingsPage.qml"));
         const auto switchQml = sourceFile(QStringLiteral("src/ui/qml/components/ThemedSwitch.qml"));
         QVERIFY2(!settingsQml.isEmpty() && !switchQml.isEmpty(),
                  "无法读取设置页主题开关源码");
@@ -444,6 +444,33 @@ private slots:
         QVERIFY(switchQml.contains(QStringLiteral("color: control.enabled ? Theme.text : Theme.weak")));
         QVERIFY(switchQml.contains(QStringLiteral("palette.windowText: control.enabled ? Theme.text : Theme.weak")));
         QVERIFY(switchQml.contains(QStringLiteral("color: control.checked ? Theme.primaryBg : Theme.inputPressed")));
+    }
+
+    void settingsUsesFullScreenScrollablePage()
+    {
+        const auto mainQml = sourceFile(QStringLiteral("src/ui/qml/Main.qml"));
+        const auto settingsQml = sourceFile(QStringLiteral("src/ui/qml/components/SettingsPage.qml"));
+        QVERIFY2(!mainQml.isEmpty() && !settingsQml.isEmpty(),
+                 "无法读取全屏设置页源码");
+
+        QVERIFY(mainQml.contains(QStringLiteral("SettingsPage {")));
+        QVERIFY(mainQml.contains(QStringLiteral("settingsPage.openPage()")));
+        QVERIFY(mainQml.contains(QStringLiteral("visible: !settingsPage.opened")));
+        QVERIFY(!mainQml.contains(QStringLiteral(
+            "id: settingsPage\n        parent: Overlay.overlay")));
+        QVERIFY(!mainQml.contains(QStringLiteral("MultiEffect {")));
+
+        QVERIFY(settingsQml.contains(QStringLiteral("Item {\n    id: root")));
+        QVERIFY(!settingsQml.contains(QStringLiteral("Dialog {\n    id: root")));
+        QVERIFY(settingsQml.contains(QStringLiteral("readonly property bool opened: visible")));
+        QVERIFY(settingsQml.contains(QStringLiteral("function openPage()")));
+        QVERIFY(settingsQml.contains(QStringLiteral("function closePage()")));
+        QVERIFY(settingsQml.contains(QStringLiteral("contentWidth: availableWidth")));
+        QVERIFY(settingsQml.contains(QStringLiteral("contentHeight: settingsColumn.implicitHeight + 40")));
+        QVERIFY(settingsQml.contains(QStringLiteral("contentItem.boundsBehavior: Flickable.StopAtBounds")));
+        QVERIFY(settingsQml.contains(QStringLiteral("ScrollBar.vertical: ThemedScrollBar")));
+        QVERIFY(settingsQml.contains(QStringLiteral("policy: ScrollBar.AsNeeded")));
+        QVERIFY(settingsQml.contains(QStringLiteral("flickable: settingsScroll.contentItem")));
     }
 
     void sourceImportAcceptsTypedNetworkPaths()
@@ -472,7 +499,7 @@ private slots:
     void closeButtonOffersPromptTrayAndExitBehaviors()
     {
         const auto mainQml = sourceFile(QStringLiteral("src/ui/qml/Main.qml"));
-        const auto settingsQml = sourceFile(QStringLiteral("src/ui/qml/components/SettingsDialog.qml"));
+        const auto settingsQml = sourceFile(QStringLiteral("src/ui/qml/components/SettingsPage.qml"));
         const auto settingsHeader = sourceFile(QStringLiteral("src/ui/viewmodels/SettingsViewModel.h"));
         const auto trayHeader = sourceFile(QStringLiteral("src/ui/window/QuickSearchController.h"));
         QVERIFY2(!mainQml.isEmpty() && !settingsQml.isEmpty()
@@ -721,7 +748,7 @@ private slots:
         const auto settingsSource = sourceFile(
             QStringLiteral("src/ui/viewmodels/SettingsViewModel.cpp"));
         const auto settingsQml = sourceFile(
-            QStringLiteral("src/ui/qml/components/SettingsDialog.qml"));
+            QStringLiteral("src/ui/qml/components/SettingsPage.qml"));
         const auto appSettings = sourceFile(
             QStringLiteral("src/infrastructure/config/AppSettings.cpp"));
         const auto appContext = sourceFile(QStringLiteral("src/app/AppContext.cpp"));
@@ -871,7 +898,7 @@ private slots:
 
         const QStringList coveredQmlFiles = {
             QStringLiteral("src/ui/qml/components/QuickSearchWindow.qml"),
-            QStringLiteral("src/ui/qml/components/SettingsDialog.qml"),
+            QStringLiteral("src/ui/qml/components/SettingsPage.qml"),
             QStringLiteral("src/ui/qml/components/SourceRail.qml"),
             QStringLiteral("src/ui/qml/components/InspectorPane.qml"),
             QStringLiteral("src/ui/qml/components/JobProgressInspectorPane.qml"),
