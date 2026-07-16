@@ -116,6 +116,15 @@ bool AppBootstrap::run()
         return false;
     }
 
+    if (QCoreApplication::arguments().contains(QStringLiteral("--qml-startup-probe"),
+                                               Qt::CaseInsensitive)) {
+        appendQmlStartupLog(QStringLiteral("[qml-startup-probe] root-loaded"));
+        QTimer::singleShot(0, m_engine.get(), []() {
+            QCoreApplication::exit(0);
+        });
+        return true;
+    }
+
     m_context->startInteractiveServices();
 
     if (QCoreApplication::arguments().contains(QStringLiteral("--quick-search-probe"),

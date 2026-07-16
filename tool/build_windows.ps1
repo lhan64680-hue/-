@@ -191,6 +191,12 @@ if ($forbiddenInstallerFiles) {
     throw "Installer staging contains mutable user data and publishing was blocked:`n$forbiddenList"
 }
 
+& (Join-Path $context.RepoRoot "tool\test_cinevault_startup.ps1") `
+    -ApplicationPath $deployedExe
+if ($LASTEXITCODE -ne 0) {
+    throw "Deployed CineVault startup probe failed."
+}
+
 $installerScript = Join-Path $context.RepoRoot "installer\windows\cinevault.iss"
 if (-not (Test-Path $installerScript)) {
     throw "Installer script was not found: $installerScript"

@@ -54,6 +54,8 @@ int main(int argc, char *argv[])
     const bool isolatedStartupProbe = arguments.contains(QStringLiteral("--quick-search-probe"),
                                                           Qt::CaseInsensitive)
         || arguments.contains(QStringLiteral("--search-assistant-startup-probe"),
+                              Qt::CaseInsensitive)
+        || arguments.contains(QStringLiteral("--qml-startup-probe"),
                               Qt::CaseInsensitive);
     if (isolatedStartupProbe) {
         QStandardPaths::setTestModeEnabled(true);

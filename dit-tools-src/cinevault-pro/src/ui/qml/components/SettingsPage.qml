@@ -184,7 +184,6 @@ Item {
             clip: true
             contentWidth: availableWidth
             contentHeight: settingsColumn.implicitHeight + 40
-            contentItem.boundsBehavior: Flickable.StopAtBounds
 
             ScrollBar.horizontal: ThemedScrollBar {
                 policy: ScrollBar.AlwaysOff

@@ -467,10 +467,25 @@ private slots:
         QVERIFY(settingsQml.contains(QStringLiteral("function closePage()")));
         QVERIFY(settingsQml.contains(QStringLiteral("contentWidth: availableWidth")));
         QVERIFY(settingsQml.contains(QStringLiteral("contentHeight: settingsColumn.implicitHeight + 40")));
-        QVERIFY(settingsQml.contains(QStringLiteral("contentItem.boundsBehavior: Flickable.StopAtBounds")));
+        QVERIFY(!settingsQml.contains(QStringLiteral("contentItem.boundsBehavior")));
         QVERIFY(settingsQml.contains(QStringLiteral("ScrollBar.vertical: ThemedScrollBar")));
         QVERIFY(settingsQml.contains(QStringLiteral("policy: ScrollBar.AsNeeded")));
         QVERIFY(settingsQml.contains(QStringLiteral("flickable: settingsScroll.contentItem")));
+    }
+
+    void packagedStartupProbeLoadsTheRealQmlRoot()
+    {
+        const auto mainSource = sourceFile(QStringLiteral("src/app/main.cpp"));
+        const auto bootstrapSource = sourceFile(QStringLiteral("src/app/AppBootstrap.cpp"));
+        QVERIFY2(!mainSource.isEmpty() && !bootstrapSource.isEmpty(),
+                 "无法读取打包后启动探针源码");
+
+        QVERIFY(mainSource.contains(QStringLiteral("--qml-startup-probe")));
+        QVERIFY(bootstrapSource.contains(QStringLiteral("--qml-startup-probe")));
+        QVERIFY(bootstrapSource.contains(QStringLiteral("[qml-startup-probe] root-loaded")));
+        QVERIFY(bootstrapSource.contains(QStringLiteral("m_engine->loadFromModule(\"CineVault\", \"Main\")")));
+        QVERIFY(bootstrapSource.contains(QStringLiteral("QML root object load failed.")));
+        QVERIFY(bootstrapSource.contains(QStringLiteral("QCoreApplication::exit(0)")));
     }
 
     void sourceImportAcceptsTypedNetworkPaths()

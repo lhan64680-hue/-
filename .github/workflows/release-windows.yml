@@ -237,6 +237,15 @@ jobs:
               -VersionTag $tag `
               -InstallerPath "output/$tag/CineVault-Setup-$tag.exe"
 
+      - name: 安装并验证正式安装包可启动
+        if: steps.version.outputs.should_publish == 'true'
+        run: |
+          $tag = "${{ steps.version.outputs.version_tag }}"
+          ./tool/test_installer_startup.ps1 `
+              -InstallerPath "${{ steps.artifact.outputs.installer_path }}" `
+              -InstallRoot (Join-Path $env:RUNNER_TEMP "cinevault-installed-$tag") `
+              -AllowInstallerRegistration
+
       - name: 创建 Draft Release
         if: steps.version.outputs.should_publish == 'true'
         id: draft
