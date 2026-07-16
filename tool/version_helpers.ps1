@@ -98,7 +98,7 @@ function Get-NextCineVaultReleaseVersion {
         [Parameter(Mandatory = $true)]
         [string]$LatestVersion,
 
-        [string]$MinimumVersion = 'v0.1.168'
+        [string]$MinimumVersion = 'v0.1.169'
     )
 
     $latest = ConvertTo-CineVaultVersionParts -Version $LatestVersion

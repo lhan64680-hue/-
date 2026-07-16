@@ -26,7 +26,7 @@ Assert-Equal `
     'Version normalization failed.'
 Assert-Equal `
     (Get-NextCineVaultReleaseVersion -LatestVersion 'v0.1.156') `
-    'v0.1.168' `
+    'v0.1.169' `
     'The first automated release floor was not applied.'
 Assert-Equal `
     (Get-NextCineVaultReleaseVersion -LatestVersion 'v0.1.168') `

@@ -2,7 +2,7 @@
 param(
     [string]$Repository = $env:GITHUB_REPOSITORY,
     [string]$LatestVersion,
-    [string]$MinimumVersion = 'v0.1.168',
+    [string]$MinimumVersion = 'v0.1.169',
     [string]$CommitSha = $env:GITHUB_SHA,
     [string]$GitHubOutput = $env:GITHUB_OUTPUT,
     [switch]$SkipExistingCommitCheck
