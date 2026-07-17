@@ -596,6 +596,11 @@ HttpResult postChatPayload(const QString &endpoint,
                            QJsonObject payload,
                            int timeoutSec)
 {
+    if (endpoint.contains(QStringLiteral("127.0.0.1"), Qt::CaseInsensitive)
+        || endpoint.contains(QStringLiteral("localhost"), Qt::CaseInsensitive)
+        || apiKey.startsWith(QStringLiteral("sk-lm-"), Qt::CaseSensitive)) {
+        payload.remove(QStringLiteral("response_format"));
+    }
     auto result = postJson(endpoint, apiKey, payload, timeoutSec);
     if (!result.success && isResponseFormatRejected(result)) {
         payload.insert(QStringLiteral("response_format"), textResponseFormat());
@@ -966,7 +971,7 @@ std::optional<VisionFrameAnalysis> VisionApiClient::analyzeFrame(const QString &
                                         apiKey,
                                         makeChatPayload(model,
                                                         content,
-                                                        300,
+                                                        4096,
                                                         QStringLiteral("vision_frame_analysis"),
                                                         frameAnalysisSchema()),
                                         timeoutSec);
@@ -1273,7 +1278,7 @@ std::optional<VisionVideoSummary> VisionApiClient::summarizeText(const QString &
                                         apiKey,
                                         makeChatPayload(model,
                                                         content,
-                                                        800,
+                                                        4096,
                                                         QStringLiteral("vision_video_summary"),
                                                         videoSummarySchema()),
                                         timeoutSec);

@@ -408,6 +408,8 @@ bool UpdateService::hasPendingUpdate() const
 
 void UpdateService::beginStartupFlow()
 {
+    return; // disabled for standalone copy
+
     clearPendingUpdateIfCurrentOrMissing();
 
     QString versionTag;

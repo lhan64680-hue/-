@@ -337,7 +337,15 @@ std::optional<QString> VisionResponseParser::extractAssistantContent(const QByte
     }
 
     const auto message = choices.first().toObject().value(QStringLiteral("message")).toObject();
-    return extractMessageContent(message.value(QStringLiteral("content")));
+    auto content = extractMessageContent(message.value(QStringLiteral("content")));
+    if (!content.trimmed().isEmpty()) {
+        return content;
+    }
+    const auto reasoning = message.value(QStringLiteral("reasoning_content")).toString().trimmed();
+    if (!reasoning.isEmpty()) {
+        return reasoning;
+    }
+    return QString();
 }
 
 std::optional<QJsonObject> VisionResponseParser::parseAssistantJson(const QByteArray &responseBody,

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(CineVault VERSION 0.1.97 LANGUAGES CXX)
+project(CineVault VERSION 1.1.188 LANGUAGES CXX)
 
 include(CTest)
 
