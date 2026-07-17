@@ -1323,6 +1323,11 @@ Rectangle {
                     anchors.fill: parent
                     anchors.margins: 14
                     clip: true
+                    contentWidth: availableWidth
+
+                    ScrollBar.vertical: ThemedScrollBar {
+                        policy: ScrollBar.AsNeeded
+                    }
 
                     MiddleDragScrollHandler {
                         parent: detailScroll.contentItem
