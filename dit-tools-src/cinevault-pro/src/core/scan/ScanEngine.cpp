@@ -499,6 +499,12 @@ void ScanEngine::runScan(SourceRoot sourceRoot,
                 }
                 ++batch.totalFolders;
             } else if (it->is_regular_file(typeError) && !typeError) {
+                const auto assetType = FileTypeService::classify(QFileInfo(absolutePath).fileName());
+                if (assetType != AssetType::Video && assetType != AssetType::Image) {
+                    it.increment(iteratorError);
+                    if (iteratorError) { ++batch.warningCount; iteratorError.clear(); }
+                    continue;
+                }
                 AssetFile file;
                 file.sourceRootId = sourceRoot.id;
                 file.name = QFileInfo(absolutePath).fileName();
@@ -506,7 +512,7 @@ void ScanEngine::runScan(SourceRoot sourceRoot,
                 file.absolutePath = absolutePath;
                 file.relativePath = FolderPathMetadata::normalizeRelativePath(relativePath);
                 file.parentPath = QFileInfo(absolutePath).absolutePath();
-                file.assetType = FileTypeService::classify(file.name);
+                file.assetType = assetType;
                 std::error_code metadataError;
                 file.sizeBytes = static_cast<qint64>(it->file_size(metadataError));
                 if (metadataError) {
